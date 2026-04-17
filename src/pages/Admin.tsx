@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { auth, db, storage } from "../lib/firebase";
-import { onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut } from "firebase/auth";
+import { onAuthStateChanged, signInWithRedirect, getRedirectResult, GoogleAuthProvider, signOut } from "firebase/auth";
 import { collection, query, orderBy, onSnapshot, doc, updateDoc, deleteDoc, addDoc, serverTimestamp } from "firebase/firestore";
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
@@ -34,6 +34,7 @@ export default function Admin() {
   const isAdmin = user?.email === "phajuquick37@gmail.com";
 
   useEffect(() => {
+    getRedirectResult(auth).catch(() => {});
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       setUser(u);
       setLoading(false);
@@ -59,7 +60,7 @@ export default function Admin() {
 
   const handleLogin = async () => {
     try {
-      await signInWithPopup(auth, new GoogleAuthProvider());
+      await signInWithRedirect(auth, new GoogleAuthProvider());
     } catch (e) {
       console.error(e);
     }
