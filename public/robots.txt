@@ -1,0 +1,17 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /admin/
+
+# 사이트맵
+Sitemap: https://15887185.co.kr/sitemap.xml
+
+# 주요 검색엔진 크롤러 허용
+User-agent: Googlebot
+Allow: /
+
+User-agent: Yeti
+Allow: /
+
+User-agent: NaverBot
+Allow: /

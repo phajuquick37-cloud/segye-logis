@@ -1,0 +1,39 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isAdmin() {
+      return isAuthenticated() && 
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         request.auth.token.email == "phajuquick37@gmail.com");
+    }
+
+    function isValidInquiry(data) {
+      return data.companyName is string && data.companyName.size() > 0 && data.companyName.size() < 100 &&
+             data.email is string && data.email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$") &&
+             data.managerName is string && data.managerName.size() > 0 && data.managerName.size() < 50 &&
+             data.phone is string && data.phone.size() > 0 && data.phone.size() < 20 &&
+             data.items is string && data.items.size() > 0 && data.items.size() < 1000 &&
+             data.content is string && data.content.size() > 0 && data.content.size() < 5000;
+    }
+
+    // Inquiries
+    match /inquiries/{inquiryId} {
+      allow read: if isAdmin();
+      allow create: if isValidInquiry(request.resource.data);
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Users
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow write: if isAdmin();
+    }
+  }
+}

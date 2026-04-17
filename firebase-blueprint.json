@@ -1,0 +1,45 @@
+{
+  "entities": {
+    "Inquiry": {
+      "title": "Inquiry",
+      "description": "Customer inquiry for contract or general questions",
+      "type": "object",
+      "properties": {
+        "companyName": { "type": "string", "description": "Name of the company" },
+        "email": { "type": "string", "format": "email", "description": "Contact email" },
+        "managerName": { "type": "string", "description": "Name of the manager" },
+        "phone": { "type": "string", "description": "Phone number" },
+        "regions": { "type": "array", "items": { "type": "string" }, "description": "Selected regions" },
+        "vehicles": { "type": "array", "items": { "type": "string" }, "description": "Selected vehicles" },
+        "monthlyAmount": { "type": "string", "description": "Estimated monthly usage amount" },
+        "paymentDate": { "type": "array", "items": { "type": "string" }, "description": "Preferred payment dates" },
+        "items": { "type": "string", "description": "Types of items to transport" },
+        "content": { "type": "string", "description": "Detailed inquiry content" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Timestamp of inquiry" },
+        "status": { "type": "string", "enum": ["pending", "contacted", "completed"], "description": "Current status of the inquiry" }
+      },
+      "required": ["companyName", "email", "managerName", "phone", "items", "content", "createdAt"]
+    },
+    "User": {
+      "title": "User",
+      "description": "User profile and roles",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["admin", "user"] },
+        "displayName": { "type": "string" }
+      },
+      "required": ["email", "role"]
+    }
+  },
+  "firestore": {
+    "/inquiries/{inquiryId}": {
+      "schema": "Inquiry",
+      "description": "Collection of customer inquiries"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Collection of user profiles for access control"
+    }
+  }
+}
