@@ -4,7 +4,7 @@ Disallow: /admin
 Disallow: /admin/
 
 # 사이트맵
-Sitemap: https://15887185.co.kr/sitemap.xml
+Sitemap: https://xn--vk1b88f7uf0b7kda.com/sitemap.xml
 
 # 주요 검색엔진 크롤러 허용
 User-agent: Googlebot
