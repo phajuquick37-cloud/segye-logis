@@ -68,7 +68,7 @@ export default function Footer() {
               <span><span className="text-slate-400 font-semibold">인천영업소</span>: 인천 남동구 남동대로 922번길16</span>
             </div>
           </div>
-          <p className="shrink-0 text-center md:text-right">© 2024 세계로지스. All Right Reserved.</p>
+          <Link to="/admin" className="shrink-0 text-center md:text-right text-slate-400 hover:text-slate-400 cursor-default select-none">© 2024 세계로지스. All Right Reserved.</Link>
         </div>
       </div>
     </footer>
