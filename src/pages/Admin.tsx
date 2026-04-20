@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/ca
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
-import { LogIn, LogOut, Trash2, CheckCircle, Clock, PlusCircle, FileUp, X, Lock } from "lucide-react";
+import { LogIn, LogOut, Trash2, CheckCircle, Clock, PlusCircle, FileUp, X, Lock, Eye } from "lucide-react";
 
 type Tab = "inquiries" | "notices";
 
@@ -22,6 +22,9 @@ export default function Admin() {
   const [notices, setNotices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>("inquiries");
+
+  // 상세보기 모달 상태
+  const [selectedInquiry, setSelectedInquiry] = useState<any>(null);
 
   // 비밀번호 입력 상태
   const [passwordInput, setPasswordInput] = useState("");
@@ -340,7 +343,7 @@ export default function Admin() {
                     </TableHeader>
                     <TableBody>
                       {inquiries.map((item) => (
-                        <TableRow key={item.id}>
+                        <TableRow key={item.id} className="cursor-pointer hover:bg-blue-50 transition-colors" onClick={() => setSelectedInquiry(item)}>
                           <TableCell className="text-xs text-slate-500">
                             {new Date(item.createdAt).toLocaleString()}
                           </TableCell>
@@ -364,13 +367,16 @@ export default function Admin() {
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-2">
-                              <Button size="sm" variant="ghost" className="text-blue-600" onClick={() => updateStatus(item.id, "contacted")}>
+                              <Button size="sm" variant="ghost" className="text-slate-500" onClick={(e) => { e.stopPropagation(); setSelectedInquiry(item); }}>
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                              <Button size="sm" variant="ghost" className="text-blue-600" onClick={(e) => { e.stopPropagation(); updateStatus(item.id, "contacted"); }}>
                                 <Clock className="h-4 w-4" />
                               </Button>
-                              <Button size="sm" variant="ghost" className="text-green-600" onClick={() => updateStatus(item.id, "completed")}>
+                              <Button size="sm" variant="ghost" className="text-green-600" onClick={(e) => { e.stopPropagation(); updateStatus(item.id, "completed"); }}>
                                 <CheckCircle className="h-4 w-4" />
                               </Button>
-                              <Button size="sm" variant="ghost" className="text-red-600" onClick={() => deleteInquiry(item.id)}>
+                              <Button size="sm" variant="ghost" className="text-red-600" onClick={(e) => { e.stopPropagation(); deleteInquiry(item.id); }}>
                                 <Trash2 className="h-4 w-4" />
                               </Button>
                             </div>
@@ -549,6 +555,78 @@ export default function Admin() {
           </div>
         )}
       </div>
+
+      {/* 문의 상세 모달 */}
+      {selectedInquiry && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setSelectedInquiry(null)}>
+          <div className="w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            {/* 모달 헤더 */}
+            <div className="flex items-center justify-between bg-blue-600 px-6 py-4">
+              <h2 className="text-lg font-bold text-white">문의 상세 내용</h2>
+              <button onClick={() => setSelectedInquiry(null)} className="text-white/80 hover:text-white transition-colors">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* 모달 내용 */}
+            <div className="p-6 space-y-4">
+              <div className="flex items-center gap-2 mb-2">
+                {selectedInquiry.status === "completed" ? (
+                  <Badge className="bg-green-100 text-green-700">완료</Badge>
+                ) : selectedInquiry.status === "contacted" ? (
+                  <Badge className="bg-blue-100 text-blue-700">연락중</Badge>
+                ) : (
+                  <Badge className="bg-orange-100 text-orange-700">대기</Badge>
+                )}
+                <span className="text-xs text-slate-400">{new Date(selectedInquiry.createdAt).toLocaleString()}</span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <p className="text-xs font-semibold text-slate-400 uppercase mb-1">회사명</p>
+                  <p className="font-bold text-slate-800">{selectedInquiry.companyName}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-slate-400 uppercase mb-1">담당자</p>
+                  <p className="font-medium text-slate-800">{selectedInquiry.managerName}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-slate-400 uppercase mb-1">이메일</p>
+                  <p className="font-medium text-slate-800">{selectedInquiry.email}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-slate-400 uppercase mb-1">연락처</p>
+                  <p className="font-medium text-slate-800">{selectedInquiry.phone}</p>
+                </div>
+                <div className="col-span-2">
+                  <p className="text-xs font-semibold text-slate-400 uppercase mb-1">품목</p>
+                  <p className="font-medium text-slate-800">{selectedInquiry.items}</p>
+                </div>
+                <div className="col-span-2">
+                  <p className="text-xs font-semibold text-slate-400 uppercase mb-1">문의 내용</p>
+                  <p className="text-slate-700 bg-slate-50 rounded-lg p-3 whitespace-pre-wrap text-sm leading-relaxed">{selectedInquiry.content}</p>
+                </div>
+              </div>
+
+              {/* 상태 변경 버튼 */}
+              <div className="flex gap-2 pt-2 border-t border-slate-100">
+                <Button size="sm" variant="outline" className="flex-1 text-blue-600 border-blue-200 hover:bg-blue-50"
+                  onClick={() => { updateStatus(selectedInquiry.id, "contacted"); setSelectedInquiry({...selectedInquiry, status: "contacted"}); }}>
+                  <Clock className="h-4 w-4 mr-1" /> 연락중
+                </Button>
+                <Button size="sm" variant="outline" className="flex-1 text-green-600 border-green-200 hover:bg-green-50"
+                  onClick={() => { updateStatus(selectedInquiry.id, "completed"); setSelectedInquiry({...selectedInquiry, status: "completed"}); }}>
+                  <CheckCircle className="h-4 w-4 mr-1" /> 완료 처리
+                </Button>
+                <Button size="sm" variant="outline" className="text-red-600 border-red-200 hover:bg-red-50"
+                  onClick={() => { deleteInquiry(selectedInquiry.id); setSelectedInquiry(null); }}>
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
