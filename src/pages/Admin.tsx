@@ -1,17 +1,20 @@
 import React, { useState, useEffect, useRef } from "react";
 import { auth, db, storage } from "../lib/firebase";
-import { onAuthStateChanged, signInWithRedirect, getRedirectResult, GoogleAuthProvider, signOut } from "firebase/auth";
+import { onAuthStateChanged, signInWithRedirect, getRedirectResult, GoogleAuthProvider, signOut, signInWithEmailAndPassword, createUserWithEmailAndPassword } from "firebase/auth";
 import { collection, query, orderBy, onSnapshot, doc, updateDoc, deleteDoc, addDoc, serverTimestamp } from "firebase/firestore";
 import { ref, uploadBytesResumable, getDownloadURL } from "firebase/storage";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
-import { LogIn, LogOut, Trash2, CheckCircle, Clock, PlusCircle, FileUp, X } from "lucide-react";
+import { LogIn, LogOut, Trash2, CheckCircle, Clock, PlusCircle, FileUp, X, Lock } from "lucide-react";
 
 type Tab = "inquiries" | "notices";
 
 const CATEGORIES = ["공지", "안내", "이벤트", "긴급"];
+const STAFF_EMAIL = "staff@segyelogis.com";
+const STAFF_PASSWORD = "quick7998!";
+const ADMIN_EMAILS = ["phajuquick37@gmail.com", STAFF_EMAIL];
 
 export default function Admin() {
   const [user, setUser] = useState<any>(null);
@@ -19,6 +22,12 @@ export default function Admin() {
   const [notices, setNotices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>("inquiries");
+
+  // 비밀번호 입력 상태
+  const [passwordInput, setPasswordInput] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+  const [passwordLoading, setPasswordLoading] = useState(false);
+  const [showGoogleLogin, setShowGoogleLogin] = useState(false);
 
   // 공지 작성 폼 상태
   const [title, setTitle] = useState("");
@@ -31,7 +40,7 @@ export default function Admin() {
   const [formSuccess, setFormSuccess] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const isAdmin = user?.email === "phajuquick37@gmail.com";
+  const isAdmin = user && ADMIN_EMAILS.includes(user.email);
 
   useEffect(() => {
     getRedirectResult(auth).catch(() => {});
@@ -58,7 +67,28 @@ export default function Admin() {
     return () => { unsub1(); unsub2(); };
   }, [isAdmin]);
 
-  const handleLogin = async () => {
+  const handlePasswordLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPasswordError("");
+    setPasswordLoading(true);
+    try {
+      await signInWithEmailAndPassword(auth, STAFF_EMAIL, STAFF_PASSWORD);
+    } catch (err: any) {
+      if (err.code === "auth/user-not-found" || err.code === "auth/invalid-credential" || err.code === "auth/invalid-email") {
+        try {
+          await createUserWithEmailAndPassword(auth, STAFF_EMAIL, STAFF_PASSWORD);
+        } catch (createErr: any) {
+          setPasswordError("로그인 중 오류가 발생했습니다. 다시 시도해주세요.");
+        }
+      } else {
+        setPasswordError("로그인 중 오류가 발생했습니다. 다시 시도해주세요.");
+      }
+    } finally {
+      setPasswordLoading(false);
+    }
+  };
+
+  const handleGoogleLogin = async () => {
     try {
       await signInWithRedirect(auth, new GoogleAuthProvider());
     } catch (e) {
@@ -151,31 +181,69 @@ export default function Admin() {
 
   if (loading) return <div className="flex h-screen items-center justify-center">로딩 중...</div>;
 
-  if (!user) {
+  if (!user || !isAdmin) {
     return (
       <div className="flex h-screen flex-col items-center justify-center bg-slate-50 p-4">
-        <Card className="w-full max-w-md">
-          <CardHeader className="text-center">
-            <CardTitle className="text-2xl font-bold">관리자 로그인</CardTitle>
+        <Card className="w-full max-w-sm shadow-lg">
+          <CardHeader className="text-center pb-2">
+            <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-blue-100">
+              <Lock className="h-7 w-7 text-blue-600" />
+            </div>
+            <CardTitle className="text-2xl font-bold text-slate-800">관리자 페이지</CardTitle>
+            <p className="text-sm text-slate-500 mt-1">세계로지스 임직원 전용</p>
           </CardHeader>
-          <CardContent className="flex flex-col gap-4">
-            <p className="text-center text-slate-500">관리자 계정으로 로그인하여 데이터를 확인하세요.</p>
-            <Button onClick={handleLogin} className="h-12 bg-blue-600 hover:bg-blue-700">
-              <LogIn className="mr-2 h-5 w-5" /> Google로 로그인
-            </Button>
+          <CardContent className="pt-4">
+            {!showGoogleLogin ? (
+              <form onSubmit={(e) => {
+                e.preventDefault();
+                if (passwordInput === STAFF_PASSWORD) {
+                  handlePasswordLogin(e);
+                } else {
+                  setPasswordError("비밀번호가 올바르지 않습니다.");
+                }
+              }} className="flex flex-col gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">비밀번호</label>
+                  <input
+                    type="password"
+                    value={passwordInput}
+                    onChange={(e) => { setPasswordInput(e.target.value); setPasswordError(""); }}
+                    placeholder="비밀번호를 입력하세요"
+                    className="w-full px-4 py-2.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    autoFocus
+                  />
+                  {passwordError && <p className="mt-1.5 text-xs text-red-500">{passwordError}</p>}
+                </div>
+                <Button
+                  type="submit"
+                  disabled={passwordLoading || !passwordInput}
+                  className="h-11 bg-blue-600 hover:bg-blue-700 font-semibold"
+                >
+                  {passwordLoading ? "로그인 중..." : <><LogIn className="mr-2 h-4 w-4" />로그인</>}
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => setShowGoogleLogin(true)}
+                  className="text-xs text-slate-400 hover:text-slate-600 text-center transition-colors"
+                >
+                  대표자 구글 계정으로 로그인
+                </button>
+              </form>
+            ) : (
+              <div className="flex flex-col gap-4">
+                <Button onClick={handleGoogleLogin} className="h-11 bg-blue-600 hover:bg-blue-700 font-semibold">
+                  <LogIn className="mr-2 h-4 w-4" /> Google 계정으로 로그인
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => setShowGoogleLogin(false)}
+                  className="text-xs text-slate-400 hover:text-slate-600 text-center transition-colors"
+                >
+                  ← 비밀번호로 로그인
+                </button>
+              </div>
+            )}
           </CardContent>
-        </Card>
-      </div>
-    );
-  }
-
-  if (!isAdmin) {
-    return (
-      <div className="flex h-screen flex-col items-center justify-center bg-slate-50 p-4">
-        <Card className="w-full max-w-md text-center p-8">
-          <h2 className="text-2xl font-bold text-red-600 mb-4">접근 권한 없음</h2>
-          <p className="text-slate-600 mb-6">관리자 권한이 있는 계정으로 로그인해주세요.</p>
-          <Button onClick={handleLogout} variant="outline">다른 계정으로 로그인</Button>
         </Card>
       </div>
     );
