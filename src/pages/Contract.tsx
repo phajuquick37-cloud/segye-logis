@@ -35,6 +35,31 @@ export default function Contract() {
         createdAt: new Date().toISOString(),
         status: "pending"
       });
+
+      // 관리자 이메일 알림 발송
+      await addDoc(collection(db, "mail"), {
+        to: "phajuquick37@gmail.com",
+        message: {
+          subject: `[세계로지스] 새 문의 접수 - ${formData.companyName}`,
+          html: `
+            <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
+              <h2 style="color: #1e40af; border-bottom: 2px solid #1e40af; padding-bottom: 10px;">📦 새 문의가 접수되었습니다</h2>
+              <table style="width: 100%; border-collapse: collapse; margin-top: 16px;">
+                <tr><td style="padding: 8px; background: #f8fafc; font-weight: bold; width: 30%;">회사명</td><td style="padding: 8px;">${formData.companyName}</td></tr>
+                <tr><td style="padding: 8px; background: #f8fafc; font-weight: bold;">담당자</td><td style="padding: 8px;">${formData.managerName}</td></tr>
+                <tr><td style="padding: 8px; background: #f8fafc; font-weight: bold;">이메일</td><td style="padding: 8px;">${formData.email}</td></tr>
+                <tr><td style="padding: 8px; background: #f8fafc; font-weight: bold;">연락처</td><td style="padding: 8px;">${formData.phone}</td></tr>
+                <tr><td style="padding: 8px; background: #f8fafc; font-weight: bold;">품목</td><td style="padding: 8px;">${formData.items}</td></tr>
+                <tr><td style="padding: 8px; background: #f8fafc; font-weight: bold; vertical-align: top;">문의 내용</td><td style="padding: 8px; white-space: pre-wrap;">${formData.content}</td></tr>
+              </table>
+              <div style="margin-top: 20px; text-align: center;">
+                <a href="https://xn--989ax3tm6gxob89q.com/admin" style="background: #1e40af; color: white; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: bold;">관리자 페이지 바로가기</a>
+              </div>
+            </div>
+          `
+        }
+      });
+
       alert("문의가 정상적으로 접수되었습니다. 곧 연락드리겠습니다.");
       setFormData({
         companyName: "",
