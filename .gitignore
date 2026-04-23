@@ -10,3 +10,9 @@ coverage/
 *.zip
 
 .vercel
+
+# 세금계산서 봇 - 민감 파일
+tax-invoice-automation/google_credentials.json
+tax-invoice-automation/output/
+tax-invoice-automation/logs/
+tax-invoice-automation/__pycache__/

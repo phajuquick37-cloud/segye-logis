@@ -1,0 +1,132 @@
+# 세계로지스 세금계산서 자동화 툴
+
+한메일에서 포워딩된 세금계산서 메일을 자동으로 읽어  
+보안 링크를 열고, 사업자번호를 입력 후 화면을 캡처하고  
+추출된 데이터를 JSON으로 저장합니다.
+
+---
+
+## 📁 파일 구조
+
+```
+tax-invoice-automation/
+├── main.py               ← 실행 파일
+├── config.py             ← 설정 (이메일, 사업자번호 등)
+├── email_reader.py       ← Gmail IMAP 이메일 읽기
+├── browser_automation.py ← Playwright 브라우저 자동화
+├── data_extractor.py     ← 데이터 추출 및 JSON 저장
+├── requirements.txt      ← 필요 패키지
+├── output/               ← 저장 결과 (자동 생성)
+│   └── {년}/{월}/{발신자}/
+│       ├── 01_initial.png
+│       ├── 02_after_input.png
+│       ├── 03_final.png
+│       └── {날짜}_{문서번호}.json
+└── logs/                 ← 실행 로그 (자동 생성)
+```
+
+---
+
+## ⚙️ 최초 설치
+
+```bash
+# 1. 패키지 설치
+pip install -r requirements.txt
+
+# 2. Playwright 브라우저 설치
+playwright install chromium
+```
+
+---
+
+## 🔧 설정 방법 (config.py)
+
+### 1. 이메일 설정
+```python
+EMAIL_CONFIG = {
+    "email_address": "phajuquick37@gmail.com",
+    "app_password": "xxxx xxxx xxxx xxxx",  # Gmail 앱 비밀번호
+}
+```
+
+### 2. 사업자번호 설정
+```python
+BUSINESS_CONFIG = {
+    "business_number": "1418142581",  # 실제 사업자번호
+    "company_name": "세계로지스",
+}
+```
+
+### 3. 이메일 발신자 필터 (중요!)
+```python
+EMAIL_FILTER = {
+    "from_addresses": [
+        "noreply@세금계산서발송사이트.co.kr",  # 실제 발신 주소로 변경
+    ],
+}
+```
+
+---
+
+## ▶️ 실행 방법
+
+```bash
+# 이메일 자동 수집 + 처리
+python main.py
+
+# 특정 URL 직접 처리 (테스트용)
+python main.py --url "https://세금계산서링크주소"
+
+# Gmail 연결 테스트만
+python main.py --test
+```
+
+---
+
+## 📊 출력 결과
+
+### 스크린샷
+- `01_initial.png` : 링크 열었을 때 초기 화면
+- `02_after_input.png` : 사업자번호 입력 후
+- `03_final.png` : 최종 세금계산서 화면
+- `04_fullpage.png` : 전체 페이지 캡처 (긴 페이지의 경우)
+
+### JSON 데이터
+```json
+{
+  "invoice_data": {
+    "invoice_number": "20240101-12345678",
+    "issue_date": "2024-01-01",
+    "supply_amount": 1000000,
+    "tax_amount": 100000,
+    "total_amount": 1100000,
+    "supplier": {
+      "name": "공급사명",
+      "business_number": "123-45-67890"
+    },
+    "buyer": {
+      "name": "세계로지스",
+      "business_number": "141-81-42581"
+    },
+    "items": [...]
+  },
+  "screenshots": ["경로/01_initial.png", ...],
+  "url": "https://...",
+  "success": true
+}
+```
+
+---
+
+## ❗ 주의사항
+
+1. **Gmail 앱 비밀번호** 필요 (일반 비밀번호 아님)
+   - Google 계정 → 보안 → 2단계 인증 → 앱 비밀번호에서 발급
+
+2. **한메일 → Gmail 포워딩** 설정 필요
+   - 한메일(Daum) → 환경설정 → 메일 관리 → 다른 메일로 전달
+
+3. **세금계산서 사이트별 선택자** 조정 필요
+   - `config.py`의 `SITE_SELECTORS` 에서 실제 사이트 구조에 맞게 수정
+
+4. **첫 실행 시** `headless: False` 로 설정하여 브라우저 동작 확인 권장

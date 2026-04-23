@@ -7,9 +7,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/ca
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
-import { LogIn, LogOut, Trash2, CheckCircle, Clock, PlusCircle, FileUp, X, Lock, Eye } from "lucide-react";
+import { LogIn, LogOut, Trash2, CheckCircle, Clock, PlusCircle, FileUp, X, Lock, Eye, Receipt, DollarSign, ChevronLeft, ChevronRight, ZoomIn } from "lucide-react";
 
-type Tab = "inquiries" | "notices";
+type Tab = "inquiries" | "notices" | "taxinvoices";
 
 const CATEGORIES = ["공지", "안내", "이벤트", "긴급"];
 const STAFF_EMAIL = "staff@segyelogis.com";
@@ -20,11 +20,21 @@ export default function Admin() {
   const [user, setUser] = useState<any>(null);
   const [inquiries, setInquiries] = useState<any[]>([]);
   const [notices, setNotices] = useState<any[]>([]);
+  const [taxInvoices, setTaxInvoices] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>("inquiries");
 
-  // 상세보기 모달 상태
+  // 문의 상세보기 모달
   const [selectedInquiry, setSelectedInquiry] = useState<any>(null);
+
+  // 세금계산서 상세 모달
+  const [selectedInvoice, setSelectedInvoice] = useState<any>(null);
+  const [invoiceImageIdx, setInvoiceImageIdx] = useState(0);
+  const [zoomedImage, setZoomedImage] = useState<string | null>(null);
+  // 입금 처리 폼 상태
+  const [payerName, setPayerName] = useState("");
+  const [payMemo, setPayMemo] = useState("");
+  const [payLoading, setPayLoading] = useState(false);
 
   // 비밀번호 입력 상태
   const [passwordInput, setPasswordInput] = useState("");
@@ -67,7 +77,12 @@ export default function Admin() {
       setNotices(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     });
 
-    return () => { unsub1(); unsub2(); };
+    const q3 = query(collection(db, "tax_invoices"), orderBy("created_at", "desc"));
+    const unsub3 = onSnapshot(q3, (snap) => {
+      setTaxInvoices(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    });
+
+    return () => { unsub1(); unsub2(); unsub3(); };
   }, [isAdmin]);
 
   const handlePasswordLogin = async (e: React.FormEvent) => {
@@ -114,6 +129,28 @@ export default function Admin() {
   const deleteNotice = async (id: string) => {
     if (window.confirm("공지사항을 삭제하시겠습니까?")) {
       await deleteDoc(doc(db, "notices", id));
+    }
+  };
+
+  const openInvoiceModal = (invoice: any) => {
+    setSelectedInvoice(invoice);
+    setInvoiceImageIdx(0);
+    setPayerName(invoice.payer_name || "");
+    setPayMemo(invoice.pay_memo || "");
+  };
+
+  const handlePayment = async (invoice: any) => {
+    setPayLoading(true);
+    try {
+      await updateDoc(doc(db, "tax_invoices", invoice.id), {
+        status: "paid",
+        payer_name: payerName,
+        pay_memo: payMemo,
+        updated_at: new Date(),
+      });
+      setSelectedInvoice({ ...invoice, status: "paid", payer_name: payerName, pay_memo: payMemo });
+    } finally {
+      setPayLoading(false);
     }
   };
 
@@ -268,26 +305,31 @@ export default function Admin() {
 
         {/* 탭 */}
         <div className="flex gap-2 border-b border-slate-200">
-          <button
-            onClick={() => setTab("inquiries")}
-            className={`px-5 py-2.5 text-sm font-semibold border-b-2 transition-colors ${
-              tab === "inquiries"
-                ? "border-blue-600 text-blue-600"
-                : "border-transparent text-slate-500 hover:text-slate-700"
-            }`}
-          >
-            접수 문의 관리
-          </button>
-          <button
-            onClick={() => setTab("notices")}
-            className={`px-5 py-2.5 text-sm font-semibold border-b-2 transition-colors ${
-              tab === "notices"
-                ? "border-blue-600 text-blue-600"
-                : "border-transparent text-slate-500 hover:text-slate-700"
-            }`}
-          >
-            공지사항 관리
-          </button>
+          {(["inquiries", "notices", "taxinvoices"] as Tab[]).map((t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={`flex items-center gap-1.5 px-5 py-2.5 text-sm font-semibold border-b-2 transition-colors ${
+                tab === t
+                  ? "border-blue-600 text-blue-600"
+                  : "border-transparent text-slate-500 hover:text-slate-700"
+              }`}
+            >
+              {t === "inquiries" && "접수 문의 관리"}
+              {t === "notices" && "공지사항 관리"}
+              {t === "taxinvoices" && (
+                <>
+                  <Receipt className="h-4 w-4" />
+                  세금계산서
+                  {taxInvoices.filter((i) => i.status === "pending").length > 0 && (
+                    <span className="ml-1 rounded-full bg-red-500 text-white text-xs w-5 h-5 flex items-center justify-center">
+                      {taxInvoices.filter((i) => i.status === "pending").length}
+                    </span>
+                  )}
+                </>
+              )}
+            </button>
+          ))}
         </div>
 
         {/* 접수 문의 탭 */}
@@ -554,6 +596,120 @@ export default function Admin() {
             </Card>
           </div>
         )}
+      {/* 세금계산서 탭 */}
+      {tab === "taxinvoices" && (
+        <>
+          {/* 요약 카드 */}
+          <div className="grid gap-6 md:grid-cols-4">
+            {[
+              { label: "전체", value: taxInvoices.length, color: "text-slate-800" },
+              { label: "미처리", value: taxInvoices.filter((i) => i.status === "pending").length, color: "text-orange-600" },
+              { label: "입금 완료", value: taxInvoices.filter((i) => i.status === "paid").length, color: "text-green-600" },
+              {
+                label: "이번달 합계",
+                value: (() => {
+                  const now = new Date();
+                  const total = taxInvoices
+                    .filter((i) => i.issue_date?.startsWith(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`))
+                    .reduce((sum, i) => sum + (i.total_amount || 0), 0);
+                  return total.toLocaleString() + "원";
+                })(),
+                color: "text-blue-600",
+              },
+            ].map(({ label, value, color }) => (
+              <Card key={label}>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-medium text-slate-500">{label}</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className={`text-2xl font-bold ${color}`}>{value}</div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          {/* 목록 */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Receipt className="h-5 w-5 text-blue-600" />
+                수집된 세금계산서 목록
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>발행일</TableHead>
+                      <TableHead>발행출처</TableHead>
+                      <TableHead>공급자</TableHead>
+                      <TableHead className="text-right">합계금액</TableHead>
+                      <TableHead>비고</TableHead>
+                      <TableHead>상태</TableHead>
+                      <TableHead className="text-right">관리</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {taxInvoices.map((inv) => (
+                      <TableRow
+                        key={inv.id}
+                        className="cursor-pointer hover:bg-blue-50 transition-colors"
+                        onClick={() => openInvoiceModal(inv)}
+                      >
+                        <TableCell className="text-xs text-slate-500 whitespace-nowrap">
+                          {inv.issue_date || "?"}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="text-xs whitespace-nowrap">{inv.platform || "기타"}</Badge>
+                        </TableCell>
+                        <TableCell>
+                          <div className="font-medium text-sm">{inv.supplier_name || "-"}</div>
+                          <div className="text-xs text-slate-400">{inv.supplier_biz_no || ""}</div>
+                        </TableCell>
+                        <TableCell className="text-right font-bold whitespace-nowrap">
+                          {inv.total_amount ? `${Number(inv.total_amount).toLocaleString()}원` : "-"}
+                        </TableCell>
+                        <TableCell className="max-w-xs">
+                          <p className="truncate text-xs text-slate-500">{inv.note || "-"}</p>
+                        </TableCell>
+                        <TableCell>
+                          {inv.status === "paid" ? (
+                            <Badge className="bg-green-100 text-green-700 hover:bg-green-100 whitespace-nowrap">
+                              <DollarSign className="h-3 w-3 mr-1" />입금완료
+                            </Badge>
+                          ) : (
+                            <Badge className="bg-orange-100 text-orange-700 hover:bg-orange-100">미처리</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-slate-500"
+                            onClick={(e) => { e.stopPropagation(); openInvoiceModal(inv); }}
+                          >
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    {taxInvoices.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={7} className="text-center py-12 text-slate-400">
+                          수집된 세금계산서가 없습니다.
+                          <br />
+                          <span className="text-xs">Python 봇을 실행하면 자동으로 수집됩니다.</span>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        </>
+      )}
       </div>
 
       {/* 문의 상세 모달 */}
@@ -625,6 +781,162 @@ export default function Admin() {
               </div>
             </div>
           </div>
+        </div>
+      )}
+      {/* 세금계산서 상세 모달 */}
+      {selectedInvoice && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => setSelectedInvoice(null)}
+        >
+          <div
+            className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* 모달 헤더 */}
+            <div className="flex items-center justify-between bg-blue-600 px-6 py-4 shrink-0">
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                <Receipt className="h-5 w-5" /> 세금계산서 상세
+              </h2>
+              <div className="flex items-center gap-3">
+                <Badge className={selectedInvoice.status === "paid"
+                  ? "bg-green-400 text-white"
+                  : "bg-orange-400 text-white"}>
+                  {selectedInvoice.status === "paid" ? "입금완료" : "미처리"}
+                </Badge>
+                <button onClick={() => setSelectedInvoice(null)} className="text-white/80 hover:text-white">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="overflow-y-auto flex-1 p-6 space-y-5">
+              {/* 기본 정보 */}
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                {[
+                  ["발행출처", selectedInvoice.platform],
+                  ["발행일자", selectedInvoice.issue_date],
+                  ["승인번호", selectedInvoice.invoice_number || "-"],
+                  ["공급자", selectedInvoice.supplier_name || "-"],
+                  ["사업자번호", selectedInvoice.supplier_biz_no || "-"],
+                  ["공급가액", selectedInvoice.supply_amount ? `${Number(selectedInvoice.supply_amount).toLocaleString()}원` : "-"],
+                  ["세액", selectedInvoice.tax_amount ? `${Number(selectedInvoice.tax_amount).toLocaleString()}원` : "-"],
+                  ["합계금액", selectedInvoice.total_amount ? `${Number(selectedInvoice.total_amount).toLocaleString()}원` : "-"],
+                ].map(([label, value]) => (
+                  <div key={label}>
+                    <p className="text-xs font-semibold text-slate-400 uppercase mb-0.5">{label}</p>
+                    <p className="font-semibold text-slate-800">{value}</p>
+                  </div>
+                ))}
+                <div className="col-span-2">
+                  <p className="text-xs font-semibold text-slate-400 uppercase mb-0.5">비고</p>
+                  <p className="text-slate-700 bg-slate-50 rounded p-2 text-sm">{selectedInvoice.note || "-"}</p>
+                </div>
+              </div>
+
+              {/* 스크린샷 뷰어 */}
+              {selectedInvoice.screenshot_urls?.length > 0 && (
+                <div className="border border-slate-200 rounded-xl overflow-hidden">
+                  <div className="bg-slate-50 px-4 py-2 flex items-center justify-between text-sm text-slate-600 font-medium">
+                    <span>원본 이미지 ({invoiceImageIdx + 1} / {selectedInvoice.screenshot_urls.length})</span>
+                    <div className="flex gap-2">
+                      <button
+                        className="p-1 rounded hover:bg-slate-200 disabled:opacity-30"
+                        disabled={invoiceImageIdx === 0}
+                        onClick={() => setInvoiceImageIdx((i) => i - 1)}
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </button>
+                      <button
+                        className="p-1 rounded hover:bg-slate-200 disabled:opacity-30"
+                        disabled={invoiceImageIdx === selectedInvoice.screenshot_urls.length - 1}
+                        onClick={() => setInvoiceImageIdx((i) => i + 1)}
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
+                      <button
+                        className="p-1 rounded hover:bg-slate-200"
+                        onClick={() => setZoomedImage(selectedInvoice.screenshot_urls[invoiceImageIdx])}
+                      >
+                        <ZoomIn className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                  <img
+                    src={selectedInvoice.screenshot_urls[invoiceImageIdx]}
+                    alt="세금계산서 캡처"
+                    className="w-full object-contain max-h-72 cursor-zoom-in"
+                    onClick={() => setZoomedImage(selectedInvoice.screenshot_urls[invoiceImageIdx])}
+                  />
+                </div>
+              )}
+
+              {/* 입금 처리 폼 */}
+              <div className="border border-slate-200 rounded-xl p-4 space-y-3 bg-slate-50">
+                <p className="text-sm font-bold text-slate-700 flex items-center gap-1.5">
+                  <DollarSign className="h-4 w-4 text-green-600" /> 입금 처리
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">입금자 이름</label>
+                    <input
+                      type="text"
+                      value={payerName}
+                      onChange={(e) => setPayerName(e.target.value)}
+                      placeholder="홍길동"
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-slate-600 mb-1">입금 메모</label>
+                    <input
+                      type="text"
+                      value={payMemo}
+                      onChange={(e) => setPayMemo(e.target.value)}
+                      placeholder="4월 운임 정산"
+                      className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                    />
+                  </div>
+                </div>
+                <Button
+                  onClick={() => handlePayment(selectedInvoice)}
+                  disabled={payLoading}
+                  className={`w-full font-bold ${
+                    selectedInvoice.status === "paid"
+                      ? "bg-green-600 hover:bg-green-700"
+                      : "bg-blue-600 hover:bg-blue-700"
+                  }`}
+                >
+                  {payLoading ? "처리 중..." : selectedInvoice.status === "paid" ? "✓ 입금 완료됨 (재저장)" : "입금 완료 처리"}
+                </Button>
+              </div>
+
+              {/* 원본 링크 */}
+              {selectedInvoice.source_url && (
+                <a
+                  href={selectedInvoice.source_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block text-xs text-blue-500 hover:underline truncate"
+                >
+                  원본 URL: {selectedInvoice.source_url}
+                </a>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 이미지 전체화면 줌 */}
+      {zoomedImage && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/90 p-4 cursor-zoom-out"
+          onClick={() => setZoomedImage(null)}
+        >
+          <img src={zoomedImage} alt="확대 보기" className="max-w-full max-h-full object-contain rounded-lg shadow-2xl" />
+          <button className="absolute top-4 right-4 text-white/80 hover:text-white" onClick={() => setZoomedImage(null)}>
+            <X className="h-8 w-8" />
+          </button>
         </div>
       )}
     </div>

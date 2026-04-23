@@ -48,5 +48,13 @@ service cloud.firestore {
       allow create: if true;
       allow read, update, delete: if isAdmin();
     }
+
+    // 세금계산서 (Python 봇이 Firebase Admin SDK로 쓰기, 관리자만 읽기/수정)
+    match /tax_invoices/{invoiceId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
   }
 }

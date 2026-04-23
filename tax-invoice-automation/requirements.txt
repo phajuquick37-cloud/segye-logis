@@ -1,0 +1,28 @@
+# 브라우저 자동화
+playwright>=1.40.0
+
+# HTML 파싱
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+
+# OCR (Tesseract 별도 설치 필요)
+pytesseract>=0.3.10
+Pillow>=10.0.0
+
+# Firebase Admin SDK (Firestore + Storage)
+firebase-admin>=6.4.0
+
+# FastAPI 서버
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+
+# 스케줄러
+apscheduler>=3.10.0
+
+# Google Sheets 백업 (선택)
+gspread>=6.0.0
+google-auth>=2.27.0
+google-auth-oauthlib>=1.2.0
+
+# 유틸
+python-dateutil>=2.9.0
