@@ -47,6 +47,8 @@ interface ArRecord {
   contact_email?: string;
   split_from?: string;
   source_file?: string;
+  item_count?: number;       // 신용건수
+  delivery_fee?: number;     // 탁송료
   created_at?: any;
   updated_at?: any;
 }
@@ -344,15 +346,8 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
 
       preview.forEach((aggregated) => {
         const arRef = doc(collection(db, "ar_records"));
-        batch.set(arRef, {
-          ...aggregated,
-          checked: false,
-          source_file: srcFile,
-          created_at: serverTimestamp(),
-          updated_at: serverTimestamp(),
-        });
 
-        // 세부 거래 내역 (items 서브컬렉션)
+        // 세부 거래 내역 먼저 계산 (item_count 를 batch.set 에 포함하기 위해)
         const matching = splitRows.filter((row) => {
           const rowMonth = (row.date ?? "").slice(0, 7) || billingMonth;
           return (
@@ -360,11 +355,19 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
             row.clientName.trim() === aggregated.client_name.trim()
           );
         });
-
-        // matching이 없을 경우 집계 단일 행 저장
         const rowsToSave = matching.length > 0
           ? matching
           : [{ date: `${aggregated.billing_month}-01`, memo: "", amount: aggregated.total_amount, clientName: aggregated.client_name }];
+
+        batch.set(arRef, {
+          ...aggregated,
+          checked:      false,
+          source_file:  srcFile,
+          item_count:   rowsToSave.length,
+          delivery_fee: 0,
+          created_at:   serverTimestamp(),
+          updated_at:   serverTimestamp(),
+        });
 
         rowsToSave.forEach((row) => {
           batch.set(doc(collection(db, "ar_records", arRef.id, "items")), {
@@ -728,8 +731,8 @@ export default function Settlement() {
             {/* 신용내역 테이블 */}
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
               <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-3">
-                <h2 className="font-bold text-slate-800">
-                  {filterMonth} 신용내역
+                <h2 className="font-bold text-slate-800 text-base">
+                  {filterMonth.split("-")[0]}년 {filterMonth.split("-")[1]}월 신용내역
                   {search && <span className="ml-2 text-sm text-blue-600 font-normal">"{search}" 검색 중</span>}
                 </h2>
                 <span className="text-sm text-slate-400">{filtered.length}개 거래처</span>
@@ -748,119 +751,153 @@ export default function Settlement() {
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="bg-slate-50 border-b border-slate-100">
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider w-14">입금 확인</th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">거래처명</th>
-                      <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">청구금액</th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">확인자 / 시각</th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">상태</th>
-                      <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider w-28">비고</th>
-                      <th className="text-center px-2 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider w-14">내역</th>
-                      <th className="w-10 px-2"></th>
+                    <tr className="bg-slate-800 text-white">
+                      <th className="text-left px-4 py-3 text-xs font-bold tracking-wide">거래처명</th>
+                      <th className="text-center px-3 py-3 text-xs font-bold tracking-wide w-16">신용건수</th>
+                      <th className="text-right px-4 py-3 text-xs font-bold tracking-wide">요금</th>
+                      <th className="text-right px-4 py-3 text-xs font-bold tracking-wide">탁송료</th>
+                      <th className="text-right px-4 py-3 text-xs font-bold tracking-wide">합계(부가포함)</th>
+                      <th className="text-left px-4 py-3 text-xs font-bold tracking-wide w-24">비고</th>
+                      <th className="text-center px-4 py-3 text-xs font-bold tracking-wide w-28">결제일</th>
+                      <th className="text-center px-3 py-3 text-xs font-bold tracking-wide w-16">입금확인</th>
+                      <th className="w-16 px-2"></th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {sorted.map((r) => {
-                      const isOverdue = !r.checked && r.due_date && r.due_date < new Date().toISOString().slice(0, 10);
+                      const deliveryFee = r.delivery_fee ?? 0;
+                      const grandTotal  = r.total_amount + deliveryFee;
+                      const isOverdue   = !r.checked && r.due_date && r.due_date < new Date().toISOString().slice(0, 10);
+                      const isExpanded  = expandedId === r.id;
                       return (
                         <React.Fragment key={r.id}>
-                        <tr className={`transition-colors ${r.checked ? "bg-emerald-50/60 text-slate-400" : isOverdue ? "bg-red-50 hover:bg-red-100/70" : "hover:bg-slate-50"}`}>
+                        <tr className={`transition-colors ${r.checked ? "bg-emerald-50/60" : isOverdue ? "bg-red-50 hover:bg-red-100/60" : "hover:bg-slate-50"}`}>
+
+                          {/* 거래처명 — 클릭 시 세부 내역 펼치기 */}
                           <td className="px-4 py-3">
-                            <div
-                              onClick={() => handleCheck(r)}
-                              className={`w-7 h-7 rounded-lg border-2 flex items-center justify-center transition-all cursor-pointer ${
-                                currentMonthClosed ? "opacity-40 cursor-not-allowed" :
-                                r.checked ? "bg-emerald-500 border-emerald-500 shadow-md shadow-emerald-200" : "border-slate-300 bg-white hover:border-blue-400"
-                              }`}
-                            >
-                              {r.checked && <CheckCircle className="h-4 w-4 text-white" />}
-                              {currentMonthClosed && !r.checked && <Lock className="h-3 w-3 text-slate-400" />}
-                            </div>
-                          </td>
-                          <td className="px-4 py-3">
-                            <button onClick={() => setSelectedRecord(r)}
-                              className={`text-left group font-semibold hover:underline hover:text-blue-600 transition-colors ${r.checked ? "text-slate-400 line-through decoration-slate-300" : "text-slate-800"}`}
-                              title="클릭 → 거래명세서">
-                              {r.client_name}
-                              <span className="ml-1.5 text-[10px] text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity font-normal no-underline">명세서▶</span>
-                            </button>
-                            {r.client_biz_no && <div className="text-xs text-slate-400 mt-0.5">{r.client_biz_no}</div>}
-                            {r.split_from && <div className="text-[10px] text-orange-500 mt-0.5">← {r.split_from}</div>}
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <span className={`font-mono font-bold tabular-nums ${r.checked ? "text-slate-400" : "text-slate-800"}`}>{r.total_amount.toLocaleString()}</span>
-                            <span className="text-xs text-slate-400 ml-0.5">원</span>
-                          </td>
-                          <td className="px-4 py-3">
-                            {r.checked && r.checked_by ? (
-                              <div className="space-y-0.5">
-                                <div className="flex items-center gap-1.5 text-emerald-700 font-semibold text-xs"><User className="h-3 w-3" />{r.checked_by}</div>
-                                {r.checked_at && <div className="text-[11px] text-slate-400 font-mono">{fmtDateTime(r.checked_at)}</div>}
-                              </div>
-                            ) : (
-                              <span className={`inline-flex items-center gap-1 text-xs rounded-full px-2 py-0.5 font-medium ${isOverdue ? "bg-red-100 text-red-600" : "bg-slate-100 text-slate-400"}`}>
-                                {isOverdue ? <><AlertCircle className="h-3 w-3" />연체</> : "미확인"}
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-4 py-3">
-                            {r.checked ? <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-100 gap-1"><CheckCircle className="h-3 w-3" />입금완료</Badge>
-                              : isOverdue ? <Badge className="bg-red-100 text-red-700 hover:bg-red-100 gap-1"><AlertCircle className="h-3 w-3" />연체</Badge>
-                              : <Badge className="bg-orange-100 text-orange-700 hover:bg-orange-100 gap-1"><Clock className="h-3 w-3" />미납</Badge>}
-                          </td>
-                          <td className="px-4 py-3 text-xs text-slate-400 truncate max-w-[112px]">{r.memo || "-"}</td>
-                          {/* 세부 내역 펼치기 버튼 */}
-                          <td className="px-2 py-3 text-center">
                             <button
                               onClick={() => toggleExpand(r)}
-                              className={`text-xs px-2 py-1 rounded-lg border font-medium transition-colors ${
-                                expandedId === r.id
-                                  ? "bg-blue-600 text-white border-blue-600"
-                                  : "text-slate-400 border-slate-200 hover:border-blue-400 hover:text-blue-500"
-                              }`}
-                              title="세부 거래 내역 펼치기"
+                              className={`text-left font-bold hover:text-blue-600 transition-colors flex items-center gap-1.5 ${r.checked ? "text-slate-400 line-through decoration-slate-300" : "text-slate-800"}`}
                             >
-                              {expandedId === r.id ? "▲" : "▼"}
+                              <span className={`text-[10px] transition-transform ${isExpanded ? "rotate-90" : ""}`}>▶</span>
+                              {r.client_name}
                             </button>
+                            {r.client_biz_no && <div className="text-xs text-slate-400 mt-0.5 ml-4">{r.client_biz_no}</div>}
                           </td>
+
+                          {/* 신용건수 */}
+                          <td className="px-3 py-3 text-center">
+                            <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-slate-100 text-slate-700 text-xs font-bold">
+                              {r.item_count ?? "-"}
+                            </span>
+                          </td>
+
+                          {/* 요금 */}
+                          <td className="px-4 py-3 text-right font-mono tabular-nums text-slate-700">
+                            {r.total_amount.toLocaleString()}<span className="text-xs text-slate-400 ml-0.5">원</span>
+                          </td>
+
+                          {/* 탁송료 */}
+                          <td className="px-4 py-3 text-right font-mono tabular-nums text-slate-500">
+                            {deliveryFee > 0 ? <>{deliveryFee.toLocaleString()}<span className="text-xs text-slate-400 ml-0.5">원</span></> : <span className="text-slate-300">-</span>}
+                          </td>
+
+                          {/* 합계(부가포함) */}
+                          <td className="px-4 py-3 text-right">
+                            <span className={`font-mono font-black tabular-nums text-base ${r.checked ? "text-emerald-600" : isOverdue ? "text-red-600" : "text-slate-900"}`}>
+                              {grandTotal.toLocaleString()}
+                            </span>
+                            <span className="text-xs text-slate-400 ml-0.5">원</span>
+                          </td>
+
+                          {/* 비고 (빈칸) */}
+                          <td className="px-4 py-3 text-xs text-slate-300"></td>
+
+                          {/* 결제일 */}
+                          <td className="px-4 py-3 text-center">
+                            <span className={`text-xs font-mono ${isOverdue ? "text-red-600 font-bold" : "text-slate-500"}`}>
+                              {r.due_date || "-"}
+                            </span>
+                            {isOverdue && <div className="text-[10px] text-red-500 font-semibold mt-0.5">연체</div>}
+                          </td>
+
+                          {/* 입금확인 체크박스 */}
+                          <td className="px-3 py-3 text-center">
+                            <div className="flex flex-col items-center gap-0.5">
+                              <div
+                                onClick={() => handleCheck(r)}
+                                className={`w-7 h-7 rounded-lg border-2 flex items-center justify-center transition-all cursor-pointer ${
+                                  currentMonthClosed ? "opacity-40 cursor-not-allowed" :
+                                  r.checked ? "bg-emerald-500 border-emerald-500 shadow-md shadow-emerald-200" : "border-slate-300 bg-white hover:border-blue-400"
+                                }`}
+                              >
+                                {r.checked && <CheckCircle className="h-4 w-4 text-white" />}
+                                {currentMonthClosed && !r.checked && <Lock className="h-3 w-3 text-slate-400" />}
+                              </div>
+                              {r.checked && r.checked_by && (
+                                <span className="text-[9px] text-emerald-600 font-semibold leading-tight">{r.checked_by}</span>
+                              )}
+                            </div>
+                          </td>
+
+                          {/* 액션 버튼 (명세서 + 삭제) */}
                           <td className="px-2 py-3">
-                            <button onClick={() => handleDelete(r.id)} className="text-slate-200 hover:text-red-500 transition-colors p-1 rounded"><Trash2 className="h-3.5 w-3.5" /></button>
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => setSelectedRecord(r)}
+                                className="text-slate-300 hover:text-blue-500 transition-colors p-1 rounded"
+                                title="거래명세서 보기"
+                              >
+                                <FileText className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleDelete(r.id)}
+                                className="text-slate-200 hover:text-red-500 transition-colors p-1 rounded"
+                                title="삭제"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
+
                         {/* ── 세부 내역 서브행 ── */}
-                        {expandedId === r.id && (
+                        {isExpanded && (
                           <tr>
-                            <td colSpan={9} className="bg-slate-50 border-b border-slate-100 px-6 py-3">
+                            <td colSpan={9} className="bg-blue-50/50 border-b border-blue-100 px-8 py-4">
+                              <p className="text-xs font-bold text-blue-700 mb-2">
+                                {r.client_name} · {filterMonth.split("-")[0]}년 {filterMonth.split("-")[1]}월 마감 내역
+                              </p>
                               {!itemsCache[r.id] ? (
                                 <p className="text-xs text-slate-400 animate-pulse">내역 로딩 중...</p>
                               ) : itemsCache[r.id].length === 0 ? (
                                 <p className="text-xs text-slate-400">등록된 세부 내역이 없습니다.</p>
                               ) : (
-                                <table className="w-full text-xs">
+                                <table className="w-full text-xs border-collapse">
                                   <thead>
-                                    <tr className="text-slate-500 border-b border-slate-200">
-                                      <th className="text-left pb-1.5 pr-4 font-semibold">날짜</th>
-                                      <th className="text-left pb-1.5 pr-4 font-semibold">내용</th>
-                                      <th className="text-right pb-1.5 pr-4 font-semibold">금액</th>
-                                      <th className="text-left pb-1.5 font-semibold">비고</th>
+                                    <tr className="bg-blue-100 text-blue-800">
+                                      <th className="text-left px-3 py-2 font-semibold rounded-l">날짜</th>
+                                      <th className="text-left px-3 py-2 font-semibold">내용 / 구간</th>
+                                      <th className="text-right px-3 py-2 font-semibold">요금</th>
+                                      <th className="text-left px-3 py-2 font-semibold rounded-r">비고</th>
                                     </tr>
                                   </thead>
                                   <tbody>
                                     {itemsCache[r.id].map((item: any, i: number) => (
-                                      <tr key={i} className="border-b border-slate-100 last:border-0">
-                                        <td className="py-1.5 pr-4 text-slate-500 font-mono">{item.date}</td>
-                                        <td className="py-1.5 pr-4 text-slate-700">{item.description}</td>
-                                        <td className="py-1.5 pr-4 text-right font-mono font-semibold text-slate-800">
+                                      <tr key={i} className={`${i % 2 === 0 ? "bg-white" : "bg-blue-50/30"}`}>
+                                        <td className="px-3 py-1.5 text-slate-500 font-mono">{item.date}</td>
+                                        <td className="px-3 py-1.5 text-slate-700">{item.description}</td>
+                                        <td className="px-3 py-1.5 text-right font-mono font-semibold text-slate-800">
                                           {(item.supply_amount ?? item.total_amount ?? 0).toLocaleString()}원
                                         </td>
-                                        <td className="py-1.5 text-slate-400">{item.memo || "-"}</td>
+                                        <td className="px-3 py-1.5 text-slate-400">{item.memo || ""}</td>
                                       </tr>
                                     ))}
                                   </tbody>
                                   <tfoot>
-                                    <tr className="border-t border-slate-300 font-bold text-slate-700">
-                                      <td colSpan={2} className="pt-2 pr-4">소계</td>
-                                      <td className="pt-2 pr-4 text-right font-mono">
+                                    <tr className="bg-slate-100 font-bold text-slate-700 border-t border-slate-200">
+                                      <td colSpan={2} className="px-3 py-2">소 계 ({itemsCache[r.id].length}건)</td>
+                                      <td className="px-3 py-2 text-right font-mono text-blue-700">
                                         {itemsCache[r.id].reduce((s: number, it: any) => s + (it.supply_amount ?? it.total_amount ?? 0), 0).toLocaleString()}원
                                       </td>
                                       <td></td>
@@ -884,26 +921,30 @@ export default function Settlement() {
                       </tr>
                     )}
                     {sorted.length > 0 && (() => {
-                      const totalAll     = sorted.reduce((s, r) => s + r.total_amount, 0);
-                      const totalPaid    = sorted.filter(r => r.checked).reduce((s, r) => s + r.total_amount, 0);
-                      const totalUnpaid  = sorted.filter(r => !r.checked).reduce((s, r) => s + r.total_amount, 0);
+                      const totalFee      = sorted.reduce((s, r) => s + r.total_amount, 0);
+                      const totalDelivery = sorted.reduce((s, r) => s + (r.delivery_fee ?? 0), 0);
+                      const totalGrand    = totalFee + totalDelivery;
+                      const totalPaid     = sorted.filter(r => r.checked).reduce((s, r) => s + r.total_amount + (r.delivery_fee ?? 0), 0);
+                      const totalUnpaid   = totalGrand - totalPaid;
                       return (
-                        <tr className="bg-slate-100 border-t-2 border-slate-300 font-bold text-sm">
-                          <td className="px-4 py-3"></td>
-                          <td className="px-4 py-3 text-slate-700">
+                        <tr className="bg-slate-800 text-white font-bold text-sm border-t-2 border-slate-600">
+                          <td className="px-4 py-3">
                             합 계 <span className="font-normal text-xs text-slate-400 ml-1">{sorted.length}개 거래처</span>
                           </td>
-                          <td className="px-4 py-3 text-right">
-                            <div className="font-mono text-slate-800">{totalAll.toLocaleString()}<span className="text-xs font-normal text-slate-400 ml-0.5">원</span></div>
-                            <div className="text-[11px] font-normal mt-0.5 space-x-2">
-                              <span className="text-emerald-600">입금 {totalPaid.toLocaleString()}원</span>
-                              <span className="text-red-500">미수 {totalUnpaid.toLocaleString()}원</span>
+                          <td className="px-3 py-3 text-center text-slate-300 text-xs">
+                            {sorted.reduce((s, r) => s + (r.item_count ?? 0), 0)}건
+                          </td>
+                          <td className="px-4 py-3 text-right font-mono">{totalFee.toLocaleString()}원</td>
+                          <td className="px-4 py-3 text-right font-mono text-slate-300">{totalDelivery > 0 ? totalDelivery.toLocaleString() + "원" : "-"}</td>
+                          <td className="px-4 py-3 text-right font-mono text-lg">{totalGrand.toLocaleString()}원</td>
+                          <td className="px-4 py-3"></td>
+                          <td className="px-4 py-3 text-center">
+                            <div className="text-[10px] font-normal space-y-0.5">
+                              <div className="text-emerald-400">입금 {totalPaid.toLocaleString()}원</div>
+                              <div className="text-red-400">미수 {totalUnpaid.toLocaleString()}원</div>
                             </div>
                           </td>
-                          <td className="px-4 py-3"></td>
-                          <td className="px-4 py-3"></td>
-                          <td className="px-4 py-3"></td>
-                          <td className="px-2 py-3"></td>
+                          <td className="px-3 py-3"></td>
                           <td className="px-2 py-3"></td>
                         </tr>
                       );
