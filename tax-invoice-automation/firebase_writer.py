@@ -7,9 +7,13 @@ Firebase 연동 모듈
 
 import logging
 import mimetypes
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
+
+# 스크립트 위치 기준으로 credentials 파일 절대경로 설정
+_BASE_DIR = Path(__file__).parent
 
 logger = logging.getLogger(__name__)
 
@@ -29,13 +33,30 @@ def _init_firebase():
         from config import FIREBASE_ADMIN_CONFIG
 
         if not firebase_admin._apps:
-            cred = credentials.Certificate(FIREBASE_ADMIN_CONFIG["credentials_file"])
+            # 절대경로로 credentials 파일 탐색
+            cred_file = FIREBASE_ADMIN_CONFIG["credentials_file"]
+            cred_path = Path(cred_file)
+            if not cred_path.is_absolute():
+                # 스크립트 위치 기준 → 현재 작업 디렉토리 순으로 탐색
+                candidates = [
+                    _BASE_DIR / cred_file,
+                    Path.cwd() / cred_file,
+                    Path.home() / cred_file,
+                ]
+                for c in candidates:
+                    if c.exists():
+                        cred_path = c
+                        break
+            logger.info(f"credentials 파일 경로: {cred_path}")
+            cred = credentials.Certificate(str(cred_path))
             firebase_admin.initialize_app(
                 cred,
                 {"storageBucket": FIREBASE_ADMIN_CONFIG["storage_bucket"]},
             )
 
-        _firestore_client = firestore.client()
+        # 커스텀 데이터베이스 ID 지원
+        db_id = FIREBASE_ADMIN_CONFIG.get("database_id")
+        _firestore_client = firestore.client(database_id=db_id) if db_id else firestore.client()
         _storage_bucket = fb_storage.bucket()
         logger.info("✅ Firebase Admin SDK 초기화 완료")
         return True

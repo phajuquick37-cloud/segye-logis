@@ -123,12 +123,17 @@ CONFIRM_BUTTON_SELECTORS = [
 ]
 
 # --- OCR 설정 ---
+import platform as _platform
 OCR_CONFIG = {
     "enabled": True,
     # "tesseract" 또는 "easyocr"
     "engine": "tesseract",
-    # tesseract 설치 경로 (Windows 기본 경로)
-    "tesseract_path": r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+    # OS에 따라 자동으로 tesseract 경로 설정
+    "tesseract_path": (
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+        if _platform.system() == "Windows"
+        else "/usr/bin/tesseract"
+    ),
     # 언어 설정
     "languages": "kor+eng",
     # 테이블 캡처 여부
