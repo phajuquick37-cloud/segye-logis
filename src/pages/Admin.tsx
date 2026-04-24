@@ -77,7 +77,8 @@ export default function Admin() {
       setNotices(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     });
 
-    const q3 = query(collection(db, "tax_invoices"), orderBy("created_at", "desc"));
+    // 세금계산서 작성일(issue_date) 기준 정렬 — 이메일 수신일과 무관하게 계산서 날짜순
+    const q3 = query(collection(db, "tax_invoices"), orderBy("issue_date", "desc"));
     const unsub3 = onSnapshot(q3, (snap) => {
       setTaxInvoices(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     });

@@ -296,8 +296,10 @@ def process_and_save(email_info: Dict, browser_results: List[Dict]) -> List[Dict
             email_info=email_info,
         )
 
-        # 저장
-        out_dir = get_output_dir(br.get("platform", "기타"), email_info.get("date", ""))
+        # 저장 경로는 세금계산서 작성일(issue_date) 기준으로 분류
+        # (이메일 수신일이 4월이어도 계산서 작성일이 3월이면 3월 폴더에 저장)
+        invoice_date = record.get("issue_date") or email_info.get("date", "")
+        out_dir = get_output_dir(br.get("platform", "기타"), invoice_date)
         json_path = save_json(record, out_dir)
 
         finals.append({
