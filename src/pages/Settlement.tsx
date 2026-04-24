@@ -865,22 +865,15 @@ export default function Settlement() {
                   <thead>
                     <tr className="bg-slate-800 text-white select-none">
                       {[
-                        { label: "거래처명",    align: "left"   },
-                        { label: "신용건수",    align: "center" },
-                        { label: "요금",        align: "right"  },
-                        { label: "탁송료",      align: "right"  },
-                        { label: "합계(부가포함)", align: "right"},
-                        { label: "비고",        align: "left"   },
-                        { label: "결제일",      align: "center" },
-                        { label: "입금확인",    align: "center" },
-                        { label: "",            align: "center" },
-                      ].map(({ label, align }, idx) => (
+                        "거래처명", "신용건수", "요금", "탁송료",
+                        "합계(부가포함)", "비고", "결제일", "입금확인", "",
+                      ].map((label, idx) => (
                         <th
                           key={idx}
-                          className={`text-${align} px-3 py-3 text-xs font-bold tracking-wide relative overflow-hidden`}
+                          className="px-3 py-3 text-xs font-bold tracking-wide relative overflow-hidden"
                           style={{ width: colWidths[idx] }}
                         >
-                          <span className="truncate block">{label}</span>
+                          <span className="block text-center truncate">{label}</span>
                           {/* 드래그 핸들 */}
                           {idx < 8 && (
                             <div
