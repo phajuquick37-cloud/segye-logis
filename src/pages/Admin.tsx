@@ -11,6 +11,20 @@ import { LogIn, LogOut, Trash2, CheckCircle, Clock, PlusCircle, FileUp, X, Lock,
 
 type Tab = "inquiries" | "notices" | "taxinvoices";
 
+// 검색어 하이라이트 컴포넌트
+function HighlightText({ text, query }: { text: string; query: string }) {
+  if (!query.trim()) return <>{text}</>;
+  const idx = text.toLowerCase().indexOf(query.toLowerCase());
+  if (idx === -1) return <>{text}</>;
+  return (
+    <>
+      {text.slice(0, idx)}
+      <mark className="bg-yellow-200 text-yellow-900 rounded px-0.5">{text.slice(idx, idx + query.length)}</mark>
+      {text.slice(idx + query.length)}
+    </>
+  );
+}
+
 const CATEGORIES = ["공지", "안내", "이벤트", "긴급"];
 const STAFF_EMAIL = "staff@segyelogis.com";
 const STAFF_PASSWORD = "quick7998!";
@@ -37,6 +51,9 @@ export default function Admin() {
   const [payLoading, setPayLoading] = useState(false);
   // 지급 확인/취소 다이얼로그
   const [payConfirm, setPayConfirm] = useState<null | "pay" | "cancel">(null);
+  // 세금계산서 검색 + 필터
+  const [invoiceSearch, setInvoiceSearch] = useState("");
+  const [invoiceStatusFilter, setInvoiceStatusFilter] = useState<"all" | "pending" | "paid">("all");
 
   // 비밀번호 입력 상태
   const [passwordInput, setPasswordInput] = useState("");
@@ -656,27 +673,90 @@ export default function Admin() {
           {/* 목록 */}
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Receipt className="h-5 w-5 text-blue-600" />
-                수집된 세금계산서 목록
-              </CardTitle>
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <CardTitle className="flex items-center gap-2">
+                  <Receipt className="h-5 w-5 text-blue-600" />
+                  수집된 세금계산서 목록
+                </CardTitle>
+                {/* 검색창 + 상태 필터 */}
+                <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
+                  <div className="relative">
+                    <svg className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z" />
+                    </svg>
+                    <input
+                      type="text"
+                      value={invoiceSearch}
+                      onChange={(e) => setInvoiceSearch(e.target.value)}
+                      placeholder="상호명·입금자·비고 검색"
+                      className="pl-9 pr-4 py-2 border border-slate-200 rounded-lg text-sm w-full sm:w-56 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    {invoiceSearch && (
+                      <button
+                        onClick={() => setInvoiceSearch("")}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex rounded-lg border border-slate-200 overflow-hidden text-sm">
+                    {(["all", "pending", "paid"] as const).map((s) => (
+                      <button
+                        key={s}
+                        onClick={() => setInvoiceStatusFilter(s)}
+                        className={`px-3 py-2 font-medium transition-colors ${
+                          invoiceStatusFilter === s
+                            ? "bg-blue-600 text-white"
+                            : "bg-white text-slate-500 hover:bg-slate-50"
+                        }`}
+                      >
+                        {s === "all" ? "전체" : s === "pending" ? "미처리" : "입금완료"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
             </CardHeader>
             <CardContent>
+              {(() => {
+                const q = invoiceSearch.trim().toLowerCase();
+                const filtered = taxInvoices.filter((inv) => {
+                  const matchStatus =
+                    invoiceStatusFilter === "all" || inv.status === invoiceStatusFilter;
+                  const matchSearch =
+                    !q ||
+                    (inv.supplier_name || "").toLowerCase().includes(q) ||
+                    (inv.payer_name || "").toLowerCase().includes(q) ||
+                    (inv.note || "").toLowerCase().includes(q) ||
+                    (inv.platform || "").toLowerCase().includes(q) ||
+                    (inv.invoice_number || "").toLowerCase().includes(q) ||
+                    (inv.supplier_biz_no || "").replace(/-/g, "").includes(q.replace(/-/g, ""));
+                  return matchStatus && matchSearch;
+                });
+                return (
               <div className="overflow-x-auto">
+                {q && (
+                  <p className="mb-3 text-sm text-slate-500">
+                    <span className="font-semibold text-blue-600">"{invoiceSearch}"</span> 검색 결과{" "}
+                    <span className="font-bold">{filtered.length}건</span>
+                    {filtered.length === 0 && " — 일치하는 세금계산서가 없습니다."}
+                  </p>
+                )}
                 <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>발행일</TableHead>
                       <TableHead>발행출처</TableHead>
-                      <TableHead>공급자</TableHead>
+                      <TableHead>공급자 (상호명)</TableHead>
                       <TableHead className="text-right">합계금액</TableHead>
-                      <TableHead>비고</TableHead>
+                      <TableHead>입금자</TableHead>
                       <TableHead>상태</TableHead>
                       <TableHead className="text-right">관리</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {taxInvoices.map((inv) => (
+                    {filtered.map((inv) => (
                       <TableRow
                         key={inv.id}
                         className="cursor-pointer hover:bg-blue-50 transition-colors"
@@ -689,14 +769,29 @@ export default function Admin() {
                           <Badge variant="outline" className="text-xs whitespace-nowrap">{inv.platform || "기타"}</Badge>
                         </TableCell>
                         <TableCell>
-                          <div className="font-medium text-sm">{inv.supplier_name || "-"}</div>
+                          <div className="font-medium text-sm">
+                            {q && (inv.supplier_name || "").toLowerCase().includes(q)
+                              ? <HighlightText text={inv.supplier_name || "-"} query={invoiceSearch} />
+                              : inv.supplier_name || "-"}
+                          </div>
                           <div className="text-xs text-slate-400">{inv.supplier_biz_no || ""}</div>
                         </TableCell>
                         <TableCell className="text-right font-bold whitespace-nowrap">
                           {inv.total_amount ? `${Number(inv.total_amount).toLocaleString()}원` : "-"}
                         </TableCell>
-                        <TableCell className="max-w-xs">
-                          <p className="truncate text-xs text-slate-500">{inv.note || "-"}</p>
+                        <TableCell>
+                          {inv.payer_name ? (
+                            <div>
+                              <div className="text-sm font-medium text-green-700">
+                                {q && inv.payer_name.toLowerCase().includes(q)
+                                  ? <HighlightText text={inv.payer_name} query={invoiceSearch} />
+                                  : inv.payer_name}
+                              </div>
+                              {inv.pay_memo && <div className="text-xs text-slate-400 truncate max-w-[120px]">{inv.pay_memo}</div>}
+                            </div>
+                          ) : (
+                            <span className="text-xs text-slate-300">-</span>
+                          )}
                         </TableCell>
                         <TableCell>
                           {inv.status === "paid" ? (
@@ -719,18 +814,24 @@ export default function Admin() {
                         </TableCell>
                       </TableRow>
                     ))}
-                    {taxInvoices.length === 0 && (
+                    {filtered.length === 0 && (
                       <TableRow>
                         <TableCell colSpan={7} className="text-center py-12 text-slate-400">
-                          수집된 세금계산서가 없습니다.
+                          {q || invoiceStatusFilter !== "all"
+                            ? "검색 조건에 맞는 세금계산서가 없습니다."
+                            : "수집된 세금계산서가 없습니다."}
                           <br />
-                          <span className="text-xs">Python 봇을 실행하면 자동으로 수집됩니다.</span>
+                          {!q && invoiceStatusFilter === "all" && (
+                            <span className="text-xs">Python 봇을 실행하면 자동으로 수집됩니다.</span>
+                          )}
                         </TableCell>
                       </TableRow>
                     )}
                   </TableBody>
                 </Table>
               </div>
+                );
+              })()}
             </CardContent>
           </Card>
         </>
