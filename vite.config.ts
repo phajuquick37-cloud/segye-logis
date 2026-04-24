@@ -15,6 +15,29 @@ export default defineConfig(({mode}) => {
         '@': path.resolve(__dirname, '.'),
       },
     },
+    build: {
+      chunkSizeWarningLimit: 1100,
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            // React 코어
+            'vendor-react':    ['react', 'react-dom', 'react-router-dom'],
+            // Firebase (auth/firestore/storage 분리)
+            'vendor-firebase': ['firebase/app', 'firebase/auth', 'firebase/firestore', 'firebase/storage'],
+            // xlsx 단독 분리 (자체 1MB급 대형 라이브러리)
+            'vendor-xlsx':     ['xlsx'],
+            // PDF·캡처 도구
+            'vendor-pdf':      ['jspdf', 'html2canvas'],
+            // 애니메이션
+            'vendor-motion':   ['motion'],
+            // Gemini AI SDK
+            'vendor-genai':    ['@google/genai'],
+            // UI 유틸리티
+            'vendor-ui':       ['lucide-react', 'clsx', 'tailwind-merge', 'class-variance-authority'],
+          },
+        },
+      },
+    },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
       // Do not modifyâfile watching is disabled to prevent flickering during agent edits.

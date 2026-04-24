@@ -7,7 +7,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/ca
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
-import { LogIn, LogOut, Trash2, CheckCircle, Clock, PlusCircle, FileUp, X, Lock, Eye, Receipt, DollarSign, ChevronLeft, ChevronRight, ZoomIn } from "lucide-react";
+import { LogIn, LogOut, Trash2, CheckCircle, Clock, PlusCircle, FileUp, X, Lock, Eye, Receipt, DollarSign, ChevronLeft, ChevronRight, ZoomIn, BarChart3 } from "lucide-react";
+import { Link } from "react-router-dom";
 
 type Tab = "inquiries" | "notices" | "taxinvoices";
 
@@ -344,6 +345,15 @@ export default function Admin() {
             </Button>
           </div>
         </div>
+
+        {/* 정산 관리 바로가기 */}
+        <Link
+          to="/admin/settlement"
+          className="flex items-center gap-2 px-4 py-3 bg-blue-50 border border-blue-200 rounded-xl text-blue-700 font-semibold text-sm hover:bg-blue-100 transition-colors w-full md:w-auto"
+        >
+          <BarChart3 className="h-4 w-4" />
+          월별 마감 · 미수금 관리 →
+        </Link>
 
         {/* 탭 */}
         <div className="flex gap-2 border-b border-slate-200">

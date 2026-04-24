@@ -6,6 +6,7 @@ import Order from "./pages/Order";
 import Notice from "./pages/Notice";
 import Contract from "./pages/Contract";
 import Admin from "./pages/Admin";
+import Settlement from "./pages/Settlement";
 import ApiPage from "./pages/ApiPage";
 import Vehicles from "./pages/Vehicles";
 import Faq from "./pages/Faq";
@@ -26,6 +27,7 @@ export default function App() {
             <Route path="/notice" element={<Notice />} />
             <Route path="/contract" element={<Contract />} />
             <Route path="/admin" element={<Admin />} />
+            <Route path="/admin/settlement" element={<Settlement />} />
             <Route path="/api-integration" element={<ApiPage />} />
             <Route path="/vehicles" element={<Vehicles />} />
             <Route path="/faq" element={<Faq />} />

@@ -56,5 +56,25 @@ service cloud.firestore {
       allow update: if isAdmin();
       allow delete: if isAdmin();
     }
+
+    // 미수금 정산 레코드 — Settlement 페이지
+    match /ar_records/{arId} {
+      allow read, write: if true;
+
+      // 거래 명세 서브컬렉션 (거래명세서 라인 아이템)
+      match /items/{itemId} {
+        allow read, write: if true;
+      }
+    }
+
+    // 담당자 프로필 — 기기별 UUID 키, 이름·최근접속 저장
+    match /staff_profiles/{deviceId} {
+      allow read, write: if true;
+    }
+
+    // 월별 마감 확정 — billing_month를 문서 ID로 사용
+    match /ar_closures/{month} {
+      allow read, write: if true;
+    }
   }
 }
