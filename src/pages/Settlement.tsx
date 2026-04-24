@@ -617,6 +617,44 @@ export default function Settlement() {
     }
   };
 
+  // ── 컬럼 너비 조절 ──
+  const COL_KEYS = ["거래처명","신용건수","요금","탁송료","합계","비고","결제일","입금확인","액션"] as const;
+  const DEFAULT_COL_W = [220, 72, 130, 110, 150, 80, 120, 76, 68];
+  const [colWidths, setColWidths] = useState<number[]>(() => {
+    try {
+      const s = localStorage.getItem("settlement_col_widths");
+      const parsed = s ? JSON.parse(s) : null;
+      return Array.isArray(parsed) && parsed.length === DEFAULT_COL_W.length ? parsed : DEFAULT_COL_W;
+    } catch { return DEFAULT_COL_W; }
+  });
+  const resizeDrag = useRef<{ idx: number; x0: number; w0: number } | null>(null);
+  const startResize = useCallback((e: React.MouseEvent, idx: number) => {
+    e.preventDefault();
+    resizeDrag.current = { idx, x0: e.clientX, w0: colWidths[idx] };
+    const onMove = (ev: MouseEvent) => {
+      if (!resizeDrag.current) return;
+      const { idx: ci, x0, w0 } = resizeDrag.current;
+      const newW = Math.max(48, w0 + ev.clientX - x0);
+      setColWidths((prev) => {
+        const next = [...prev];
+        next[ci] = newW;
+        localStorage.setItem("settlement_col_widths", JSON.stringify(next));
+        return next;
+      });
+    };
+    const onUp = () => {
+      resizeDrag.current = null;
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, [colWidths]);
+  const resetColWidths = () => {
+    setColWidths(DEFAULT_COL_W);
+    localStorage.removeItem("settlement_col_widths");
+  };
+
   // 세부 내역 확장
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [itemsCache, setItemsCache] = useState<Record<string, any[]>>({});
@@ -796,6 +834,13 @@ export default function Settlement() {
                   {search && <span className="ml-2 text-sm text-blue-600 font-normal">"{search}" 검색 중</span>}
                 </h2>
                 <span className="text-sm text-slate-400">{filtered.length}개 거래처</span>
+                <button
+                  onClick={resetColWidths}
+                  title="컬럼 너비 초기화"
+                  className="text-[11px] text-slate-400 hover:text-slate-600 border border-slate-200 rounded px-2 py-0.5 hover:bg-slate-50 transition-colors"
+                >
+                  ↔ 너비 초기화
+                </button>
                 {currentMonthClosed && (
                   <span className="ml-auto text-xs text-slate-500 bg-slate-100 border border-slate-200 rounded-full px-3 py-1 flex items-center gap-1">
                     <Lock className="h-3 w-3" />마감 확정 — 수정 차단 중 (월별 이력에서 해제 가능)
@@ -809,18 +854,45 @@ export default function Settlement() {
               </div>
 
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                {/* 컬럼 너비 드래그 조절: 헤더 오른쪽 경계를 드래그하세요 */}
+                <table
+                  className="text-sm"
+                  style={{ tableLayout: "fixed", width: colWidths.reduce((a, b) => a + b, 0) }}
+                >
+                  <colgroup>
+                    {colWidths.map((w, i) => <col key={i} style={{ width: w }} />)}
+                  </colgroup>
                   <thead>
-                    <tr className="bg-slate-800 text-white">
-                      <th className="text-left px-4 py-3 text-xs font-bold tracking-wide">거래처명</th>
-                      <th className="text-center px-3 py-3 text-xs font-bold tracking-wide w-16">신용건수</th>
-                      <th className="text-right px-4 py-3 text-xs font-bold tracking-wide">요금</th>
-                      <th className="text-right px-4 py-3 text-xs font-bold tracking-wide">탁송료</th>
-                      <th className="text-right px-4 py-3 text-xs font-bold tracking-wide">합계(부가포함)</th>
-                      <th className="text-left px-4 py-3 text-xs font-bold tracking-wide w-24">비고</th>
-                      <th className="text-center px-4 py-3 text-xs font-bold tracking-wide w-28">결제일</th>
-                      <th className="text-center px-3 py-3 text-xs font-bold tracking-wide w-16">입금확인</th>
-                      <th className="w-16 px-2"></th>
+                    <tr className="bg-slate-800 text-white select-none">
+                      {[
+                        { label: "거래처명",    align: "left"   },
+                        { label: "신용건수",    align: "center" },
+                        { label: "요금",        align: "right"  },
+                        { label: "탁송료",      align: "right"  },
+                        { label: "합계(부가포함)", align: "right"},
+                        { label: "비고",        align: "left"   },
+                        { label: "결제일",      align: "center" },
+                        { label: "입금확인",    align: "center" },
+                        { label: "",            align: "center" },
+                      ].map(({ label, align }, idx) => (
+                        <th
+                          key={idx}
+                          className={`text-${align} px-3 py-3 text-xs font-bold tracking-wide relative overflow-hidden`}
+                          style={{ width: colWidths[idx] }}
+                        >
+                          <span className="truncate block">{label}</span>
+                          {/* 드래그 핸들 */}
+                          {idx < 8 && (
+                            <div
+                              onMouseDown={(e) => startResize(e, idx)}
+                              className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize flex items-center justify-center group"
+                              title="드래그하여 너비 조절"
+                            >
+                              <div className="w-0.5 h-4 bg-white/25 rounded-full group-hover:bg-white/70 transition-colors" />
+                            </div>
+                          )}
+                        </th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
