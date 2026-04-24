@@ -301,9 +301,11 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
   const [saving, setSaving]       = useState(false);
   const [saved, setSaved]         = useState(false);
   const [saveError, setSaveErr]   = useState("");
+  const autoSaveRef               = useRef(false); // 자동저장 중복 방지
 
   const handleFiles = async (incoming: File[]) => {
-    setParsing(true); setErr(""); setSaved(false);
+    autoSaveRef.current = false; // 새 파일이면 자동저장 플래그 초기화
+    setParsing(true); setErr(""); setSaved(false); setSaveErr("");
     try {
       const results = await Promise.all(incoming.map(parseFile));
       setFiles(incoming); setPR(results); setFileIdx(0); setColOv({});
@@ -336,6 +338,15 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
       return aliases.map((kw) => existing.get(kw) ?? { keyword: kw, enabled: false, amountMode: "full" as const });
     });
   }, [currentResult]);
+
+  // ── 파일 파싱 완료 후 자동저장 ──
+  useEffect(() => {
+    if (preview.length > 0 && !autoSaveRef.current && !saving && !saved) {
+      autoSaveRef.current = true;
+      handleSave();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preview]);
 
   const handleSave = async () => {
     if (!preview.length) return;
@@ -464,21 +475,38 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
         )}
         {preview.length > 0 && (
           <div className="space-y-2">
-            <div className="flex items-center gap-3">
-              {saved ? (
+            {/* 자동저장 상태 표시 */}
+            {saving && (
+              <div className="flex items-center gap-2 text-blue-700 bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 text-sm font-semibold">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                자동 저장 중... ({preview.length}개 거래처)
+              </div>
+            )}
+            {saved && (
+              <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-3">
                 <div className="flex items-center gap-2 text-emerald-700 font-bold text-sm">
-                  <CheckCircle className="h-5 w-5" />{preview.length}개 거래처 저장 완료! → 목록에서 확인하세요.
+                  <CheckCircle className="h-5 w-5" />
+                  자동 저장 완료! {preview.length}개 거래처 → 목록에서 확인하세요.
                 </div>
-              ) : (
-                <Button onClick={handleSave} disabled={saving} className="bg-blue-600 hover:bg-blue-700 font-bold gap-2">
-                  <Save className="h-4 w-4" />{saving ? "저장 중..." : `${preview.length}건 저장`}
-                </Button>
-              )}
-              <p className="text-xs text-slate-400">저장 후 목록에서 수정·삭제 가능합니다.</p>
-            </div>
+                <button onClick={onClose} className="text-xs text-emerald-600 border border-emerald-300 rounded-lg px-3 py-1 hover:bg-emerald-100">
+                  닫기
+                </button>
+              </div>
+            )}
+            {!saving && !saved && (
+              <Button onClick={handleSave} className="bg-blue-600 hover:bg-blue-700 font-bold gap-2 w-full">
+                <Save className="h-4 w-4" />수동 저장 ({preview.length}건)
+              </Button>
+            )}
             {saveError && (
-              <div className="flex items-center gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-                <AlertTriangle className="h-4 w-4 shrink-0" />{saveError}
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                  <AlertTriangle className="h-4 w-4 shrink-0" />{saveError}
+                </div>
+                <Button onClick={() => { autoSaveRef.current = false; setSaveErr(""); setSaved(false); handleSave(); }}
+                  className="bg-red-600 hover:bg-red-700 gap-2 w-full font-bold">
+                  <Save className="h-4 w-4" />다시 저장 시도
+                </Button>
               </div>
             )}
           </div>
@@ -570,6 +598,24 @@ export default function Settlement() {
   const [showUpload, setUpload]   = useState(false);
   const [showAdd, setAdd]         = useState(false);
   const [selectedRecord, setSelectedRecord] = useState<ArRecord | null>(null);
+
+  // ── 이 달 전체 삭제 ──
+  const [deleting, setDeleting] = useState(false);
+  const handleDeleteMonth = async () => {
+    const monthRecords = records.filter((r) => r.billing_month === filterMonth);
+    if (monthRecords.length === 0) return;
+    if (!window.confirm(
+      `${filterMonth.split("-")[0]}년 ${filterMonth.split("-")[1]}월 신용내역 ${monthRecords.length}건을 전체 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`
+    )) return;
+    setDeleting(true);
+    try {
+      await Promise.all(monthRecords.map((r) => deleteDoc(doc(db, "ar_records", r.id))));
+    } catch (e) {
+      alert(`삭제 실패: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   // 세부 내역 확장
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -706,16 +752,30 @@ export default function Settlement() {
                   className="pl-8 pr-8 py-1.5 border border-slate-200 rounded-lg text-sm w-44 focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 {search && <button onClick={() => setSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>}
               </div>
-              {!currentMonthClosed && (
-                <div className="ml-auto flex gap-2">
-                  <Button variant="outline" size="sm" className="gap-1.5" onClick={() => { setUpload((v) => !v); setAdd(false); }}>
-                    <Upload className="h-4 w-4" />{showUpload ? "닫기" : "파일 업로드"}
+              <div className="ml-auto flex gap-2 flex-wrap">
+                {filtered.length > 0 && (
+                  <Button
+                    variant="outline" size="sm"
+                    className="gap-1.5 border-red-300 text-red-600 hover:bg-red-50"
+                    onClick={handleDeleteMonth}
+                    disabled={deleting || currentMonthClosed}
+                    title="이 달 업로드 데이터 전체 삭제"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    {deleting ? "삭제 중..." : "업로드 삭제"}
                   </Button>
-                  <Button size="sm" className="gap-1.5 bg-blue-600 hover:bg-blue-700" onClick={() => { setAdd((v) => !v); setUpload(false); }}>
-                    <Plus className="h-4 w-4" />직접 등록
-                  </Button>
-                </div>
-              )}
+                )}
+                {!currentMonthClosed && (
+                  <>
+                    <Button variant="outline" size="sm" className="gap-1.5" onClick={() => { setUpload((v) => !v); setAdd(false); }}>
+                      <Upload className="h-4 w-4" />{showUpload ? "닫기" : "파일 업로드"}
+                    </Button>
+                    <Button size="sm" className="gap-1.5 bg-blue-600 hover:bg-blue-700" onClick={() => { setAdd((v) => !v); setUpload(false); }}>
+                      <Plus className="h-4 w-4" />직접 등록
+                    </Button>
+                  </>
+                )}
+              </div>
             </div>
 
             {showUpload && (
