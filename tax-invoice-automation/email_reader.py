@@ -152,6 +152,40 @@ def get_email_body(msg) -> Dict[str, str]:
     return body
 
 
+def extract_inline_images(msg) -> List[Dict]:
+    """
+    이메일에서 인라인/첨부 이미지 추출.
+    이미지형 세금계산서 메일 (링크 없이 이미지만 있는 경우) 대응.
+    Returns: [{"data": bytes, "ext": str, "content_type": str}, ...]
+    """
+    images = []
+    if not msg.is_multipart():
+        return images
+
+    for part in msg.walk():
+        ct = part.get_content_type()
+        if not ct.startswith("image/"):
+            continue
+
+        try:
+            data = part.get_payload(decode=True)
+            if not data:
+                continue
+
+            # 확장자 결정
+            ext = ct.split("/")[-1].lower()
+            ext_map = {"jpeg": "jpg", "jpg": "jpg", "png": "png",
+                       "gif": "gif", "webp": "webp", "tiff": "tif"}
+            ext = ext_map.get(ext, "png")
+
+            images.append({"data": data, "ext": ext, "content_type": ct})
+            logger.debug(f"이미지 파트 발견: {ct} ({len(data)} bytes)")
+        except Exception as e:
+            logger.warning(f"이미지 파트 추출 실패: {e}")
+
+    return images
+
+
 # ─── 메인 리더 클래스 ─────────────────────────────────────────────────────────
 
 class EmailReader:
@@ -232,30 +266,38 @@ class EmailReader:
                     if body["html"]:
                         links = extract_button_links(body["html"])
 
-                    # 2순위: fallback - 모든 링크에서 필터링
+                    # 2순위: fallback — 모든 링크에서 세금계산서 관련 URL 필터링
                     if not links:
                         all_links = extract_all_links(body["html"], body["text"])
                         tax_kws = ["invoice", "세금", "tax", "bill", "계산서",
                                    "hometax", "onebill", "tax12", "tax15", "loginote"]
-                        links = [l for l in all_links
-                                 if any(kw in l["url"].lower() for kw in tax_kws)]
+                        links = [lnk for lnk in all_links
+                                 if any(kw in lnk["url"].lower() for kw in tax_kws)]
 
-                    if not links:
-                        logger.warning(f"링크 없음 - [{subject}]")
+                    # 3순위: 이미지형 메일 — 인라인/첨부 이미지 추출
+                    images = extract_inline_images(msg)
+
+                    # 링크도 없고 이미지도 없으면 건너뜀
+                    if not links and not images:
+                        logger.warning(f"링크·이미지 모두 없음 — [{subject}]")
                         continue
 
+                    email_type = "link" if links else "image"
                     email_info = {
                         "msg_id": msg_id.decode(),
                         "subject": subject,
                         "from": from_addr,
                         "date": received_date.isoformat(),
                         "links": links,          # [{"url":..., "text":..., "priority":...}]
+                        "images": images,        # [{"data": bytes, "ext": str, ...}]
+                        "email_type": email_type,
                         "html_body": body["html"],
                         "text_body": body["text"],
                     }
                     results.append(email_info)
                     logger.info(
-                        f"📧 [{subject[:40]}] | 발신: {from_addr[:30]} | 링크 {len(links)}개"
+                        f"📧 [{subject[:40]}] | 발신: {from_addr[:30]} "
+                        f"| 유형: {email_type} | 링크 {len(links)}개 | 이미지 {len(images)}개"
                     )
 
                     if EMAIL_FILTER.get("mark_as_read"):

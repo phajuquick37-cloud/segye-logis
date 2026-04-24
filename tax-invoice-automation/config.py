@@ -77,7 +77,7 @@ BROWSER_CONFIG = {
     "browser": "chromium",
     "headless": True,           # Linux 서버에서는 True (창 없이 실행)
     "viewport": {"width": 1280, "height": 900},
-    "timeout": 30000,
+    "timeout": 60000,
     "slow_mo": 400,
     "full_page_screenshot": True,
 }

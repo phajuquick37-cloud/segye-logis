@@ -304,9 +304,25 @@ class TaxInvoiceBrowser:
         page = await self.context.new_page()
 
         try:
-            # 1. 페이지 열기
+            # 1. 페이지 열기 — networkidle 우선, 타임아웃 시 domcontentloaded 폴백
             logger.info(f"🔗 링크 열기: {url[:80]}")
-            await page.goto(url, timeout=BROWSER_CONFIG["timeout"], wait_until="domcontentloaded")
+            try:
+                await page.goto(
+                    url,
+                    timeout=BROWSER_CONFIG["timeout"],
+                    wait_until="networkidle",
+                )
+            except Exception as nav_err:
+                logger.warning(f"⚠️ networkidle 대기 초과, domcontentloaded 폴백: {nav_err}")
+                try:
+                    await page.goto(
+                        url,
+                        timeout=BROWSER_CONFIG["timeout"],
+                        wait_until="domcontentloaded",
+                    )
+                except Exception as nav_err2:
+                    logger.warning(f"⚠️ domcontentloaded도 초과 — 현재 상태로 계속 진행: {nav_err2}")
+                    # 페이지가 부분 로드된 경우에도 계속 처리
             await asyncio.sleep(2)
 
             # 2. 팝업 처리
@@ -372,11 +388,65 @@ class TaxInvoiceBrowser:
 
         return result
 
+    async def process_image_email(self, email_info: Dict, output_dir: Path) -> List[Dict]:
+        """
+        이미지형 메일 처리 — 링크 없이 첨부/인라인 이미지만 있는 세금계산서 메일.
+        이미지를 디스크에 저장하고 OCR 대상 스크린샷으로 등록한다.
+        """
+        images = email_info.get("images", [])
+        if not images:
+            logger.info("이미지형 메일이지만 추출된 이미지 없음 — 건너뜀")
+            return []
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+        result: Dict = {
+            "url": "",
+            "link_text": "이미지형 세금계산서",
+            "success": True,
+            "screenshots": [],
+            "dom_data": {
+                "full_text": "",
+                "tables": [],
+                "page_url": "",
+                "page_title": "이미지형 세금계산서",
+            },
+            "platform": email_info.get("platform", "이미지형"),
+            "error": None,
+            "email_type": "image",
+            "email_subject": email_info.get("subject"),
+            "email_from": email_info.get("from"),
+            "email_date": email_info.get("date"),
+        }
+
+        for idx, img_data in enumerate(images, 1):
+            try:
+                ext = img_data.get("ext", "png")
+                path = output_dir / f"invoice_image_{idx}.{ext}"
+                path.write_bytes(img_data["data"])
+                result["screenshots"].append(str(path))
+                logger.info(f"📷 이미지 저장 완료: {path}")
+            except Exception as e:
+                logger.warning(f"이미지 저장 실패 (#{idx}): {e}")
+
+        logger.info(
+            f"✅ 이미지형 메일 처리 완료 | 이미지 {len(result['screenshots'])}개 저장"
+        )
+        return [result]
+
     async def process_email(self, email_info: Dict, base_output_dir: Path) -> List[Dict]:
-        """이메일의 모든 링크 순서대로 처리"""
+        """이메일의 모든 링크(또는 이미지) 순서대로 처리"""
         results = []
         links = email_info.get("links", [])
 
+        # ── 이미지형 메일: 링크 없이 첨부 이미지만 있는 경우 ──
+        if not links:
+            if email_info.get("images"):
+                logger.info(f"📷 이미지형 메일 감지: [{email_info.get('subject', '')}]")
+                return await self.process_image_email(email_info, base_output_dir)
+            logger.warning(f"링크도 이미지도 없는 메일 건너뜀: [{email_info.get('subject', '')}]")
+            return []
+
+        # ── 링크형 메일: 각 링크별 브라우저 처리 ──
         for idx, link_info in enumerate(links, 1):
             safe_subject = re.sub(r'[\\/:*?"<>|]', '_', email_info.get("subject", "unknown"))[:40]
             link_dir = base_output_dir / f"{safe_subject}_link{idx}"
