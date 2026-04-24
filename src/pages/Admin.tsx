@@ -35,6 +35,8 @@ export default function Admin() {
   const [payerName, setPayerName] = useState("");
   const [payMemo, setPayMemo] = useState("");
   const [payLoading, setPayLoading] = useState(false);
+  // 지급 확인/취소 다이얼로그
+  const [payConfirm, setPayConfirm] = useState<null | "pay" | "cancel">(null);
 
   // 비밀번호 입력 상태
   const [passwordInput, setPasswordInput] = useState("");
@@ -138,9 +140,12 @@ export default function Admin() {
     setInvoiceImageIdx(0);
     setPayerName(invoice.payer_name || "");
     setPayMemo(invoice.pay_memo || "");
+    setPayConfirm(null);
   };
 
+  // 지급 승인 확인 후 처리
   const handlePayment = async (invoice: any) => {
+    setPayConfirm(null);
     setPayLoading(true);
     try {
       await updateDoc(doc(db, "tax_invoices", invoice.id), {
@@ -150,6 +155,25 @@ export default function Admin() {
         updated_at: new Date(),
       });
       setSelectedInvoice({ ...invoice, status: "paid", payer_name: payerName, pay_memo: payMemo });
+    } finally {
+      setPayLoading(false);
+    }
+  };
+
+  // 지급 취소 확인 후 처리
+  const handlePayCancel = async (invoice: any) => {
+    setPayConfirm(null);
+    setPayLoading(true);
+    try {
+      await updateDoc(doc(db, "tax_invoices", invoice.id), {
+        status: "pending",
+        payer_name: "",
+        pay_memo: "",
+        updated_at: new Date(),
+      });
+      setPayerName("");
+      setPayMemo("");
+      setSelectedInvoice({ ...invoice, status: "pending", payer_name: "", pay_memo: "" });
     } finally {
       setPayLoading(false);
     }
@@ -788,7 +812,7 @@ export default function Admin() {
       {selectedInvoice && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-          onClick={() => setSelectedInvoice(null)}
+          onClick={() => { setSelectedInvoice(null); setPayConfirm(null); }}
         >
           <div
             className="w-full max-w-2xl bg-white rounded-2xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col"
@@ -805,7 +829,7 @@ export default function Admin() {
                   : "bg-orange-400 text-white"}>
                   {selectedInvoice.status === "paid" ? "입금완료" : "미처리"}
                 </Badge>
-                <button onClick={() => setSelectedInvoice(null)} className="text-white/80 hover:text-white">
+                <button onClick={() => { setSelectedInvoice(null); setPayConfirm(null); }} className="text-white/80 hover:text-white">
                   <X className="h-5 w-5" />
                 </button>
               </div>
@@ -899,17 +923,91 @@ export default function Admin() {
                     />
                   </div>
                 </div>
-                <Button
-                  onClick={() => handlePayment(selectedInvoice)}
-                  disabled={payLoading}
-                  className={`w-full font-bold ${
-                    selectedInvoice.status === "paid"
-                      ? "bg-green-600 hover:bg-green-700"
-                      : "bg-blue-600 hover:bg-blue-700"
-                  }`}
-                >
-                  {payLoading ? "처리 중..." : selectedInvoice.status === "paid" ? "✓ 입금 완료됨 (재저장)" : "입금 완료 처리"}
-                </Button>
+
+                <div className="flex gap-2">
+                  {/* 입금 완료 버튼 */}
+                  <Button
+                    onClick={() => setPayConfirm("pay")}
+                    disabled={payLoading}
+                    className="flex-1 font-bold bg-blue-600 hover:bg-blue-700"
+                  >
+                    {payLoading && payConfirm === null
+                      ? "처리 중..."
+                      : selectedInvoice.status === "paid"
+                      ? "✓ 입금정보 수정"
+                      : "입금 완료 처리"}
+                  </Button>
+
+                  {/* 입금 취소 버튼 (입금완료 상태일 때만 표시) */}
+                  {selectedInvoice.status === "paid" && (
+                    <Button
+                      onClick={() => setPayConfirm("cancel")}
+                      disabled={payLoading}
+                      variant="outline"
+                      className="font-bold text-red-600 border-red-300 hover:bg-red-50"
+                    >
+                      입금 취소
+                    </Button>
+                  )}
+                </div>
+
+                {/* 지급 승인 확인 다이얼로그 */}
+                {payConfirm === "pay" && (
+                  <div className="border border-blue-200 rounded-xl bg-blue-50 p-4 space-y-3">
+                    <p className="text-sm font-bold text-blue-800">지급 승인 확인</p>
+                    <div className="text-sm text-blue-700 space-y-1">
+                      <p>• 공급자: <span className="font-semibold">{selectedInvoice.supplier_name || "-"}</span></p>
+                      <p>• 합계금액: <span className="font-semibold">{selectedInvoice.total_amount ? `${Number(selectedInvoice.total_amount).toLocaleString()}원` : "-"}</span></p>
+                      <p>• 입금자: <span className="font-semibold">{payerName || "(미입력)"}</span></p>
+                      <p>• 메모: <span className="font-semibold">{payMemo || "(없음)"}</span></p>
+                    </div>
+                    <p className="text-xs text-blue-600">위 내용으로 입금 완료 처리하시겠습니까?</p>
+                    <div className="flex gap-2">
+                      <Button
+                        onClick={() => handlePayment(selectedInvoice)}
+                        disabled={payLoading}
+                        className="flex-1 bg-blue-600 hover:bg-blue-700 font-bold"
+                      >
+                        {payLoading ? "처리 중..." : "확인 - 입금 완료"}
+                      </Button>
+                      <Button
+                        onClick={() => setPayConfirm(null)}
+                        variant="outline"
+                        className="flex-1"
+                      >
+                        취소
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* 지급 취소 확인 다이얼로그 */}
+                {payConfirm === "cancel" && (
+                  <div className="border border-red-200 rounded-xl bg-red-50 p-4 space-y-3">
+                    <p className="text-sm font-bold text-red-800">입금 취소 확인</p>
+                    <div className="text-sm text-red-700 space-y-1">
+                      <p>• 공급자: <span className="font-semibold">{selectedInvoice.supplier_name || "-"}</span></p>
+                      <p>• 합계금액: <span className="font-semibold">{selectedInvoice.total_amount ? `${Number(selectedInvoice.total_amount).toLocaleString()}원` : "-"}</span></p>
+                    </div>
+                    <p className="text-xs text-red-600 font-medium">입금 완료 상태를 취소하고 미처리로 되돌립니다.</p>
+                    <div className="flex gap-2">
+                      <Button
+                        onClick={() => handlePayCancel(selectedInvoice)}
+                        disabled={payLoading}
+                        className="flex-1 bg-red-600 hover:bg-red-700 font-bold"
+                      >
+                        {payLoading ? "처리 중..." : "확인 - 입금 취소"}
+                      </Button>
+                      <Button
+                        onClick={() => setPayConfirm(null)}
+                        variant="outline"
+                        className="flex-1"
+                      >
+                        닫기
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* 원본 링크 */}
