@@ -36,7 +36,7 @@ steps:
       - '--image'
       - 'gcr.io/$PROJECT_ID/tax-automation:$COMMIT_SHA'
       - '--region'
-      - 'asia-northeast3'                          # 서울 리전
+      - 'asia-northeast3'                          # Cloud Run 배포 리전 (서울 유지)
       - '--platform'
       - 'managed'
       - '--no-allow-unauthenticated'               # 외부 직접 호출 차단 (API 키 없이 호출 불가)
