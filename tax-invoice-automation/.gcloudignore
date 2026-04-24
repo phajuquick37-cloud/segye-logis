@@ -1,0 +1,26 @@
+# Cloud Build 에 업로드하지 않을 파일 목록
+
+# 민감 정보 (로컬 전용 — Cloud Run 에서는 Secret Manager 사용)
+google_credentials.json
+*.env
+.env*
+secrets/
+
+# 개발/테스트 산출물
+output/
+logs/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+
+# 로컬 가상환경
+.venv/
+venv/
+env/
+
+# 기타
+.DS_Store
+Thumbs.db
+*.log

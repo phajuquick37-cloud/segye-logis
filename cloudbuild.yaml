@@ -1,0 +1,65 @@
+# ============================================================
+# Google Cloud Build — 자동 빌드 + Cloud Run 배포
+# 트리거: GitHub master 브랜치에 push 될 때마다 실행
+# ============================================================
+
+steps:
+  # ── Step 1: Docker 이미지 빌드 ──────────────────────────────
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'build'
+    args:
+      - 'build'
+      - '--file=tax-invoice-automation/Dockerfile'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/tax-automation:$COMMIT_SHA'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/tax-automation:latest'
+      - './tax-invoice-automation'
+
+  # ── Step 2: 이미지 → Container Registry 에 push ─────────────
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-sha'
+    args: ['push', 'gcr.io/$PROJECT_ID/tax-automation:$COMMIT_SHA']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    id: 'push-latest'
+    args: ['push', 'gcr.io/$PROJECT_ID/tax-automation:latest']
+
+  # ── Step 3: Cloud Run 에 배포 ────────────────────────────────
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: 'deploy'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'tax-automation'                           # Cloud Run 서비스 이름
+      - '--image'
+      - 'gcr.io/$PROJECT_ID/tax-automation:$COMMIT_SHA'
+      - '--region'
+      - 'asia-northeast3'                          # 서울 리전
+      - '--platform'
+      - 'managed'
+      - '--no-allow-unauthenticated'               # 외부 직접 호출 차단 (API 키 없이 호출 불가)
+      - '--memory'
+      - '2Gi'                                      # Playwright + OCR 에 충분한 메모리
+      - '--cpu'
+      - '2'
+      - '--timeout'
+      - '3600'                                     # 최대 1시간 (파이프라인 여유있게)
+      - '--concurrency'
+      - '1'                                        # 동시 요청 1개 (크롬 인스턴스 충돌 방지)
+      - '--min-instances'
+      - '0'                                        # 비용 절감: 요청 없을 때 0개
+      - '--max-instances'
+      - '1'
+
+# 빌드 결과 이미지 등록
+images:
+  - 'gcr.io/$PROJECT_ID/tax-automation:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/tax-automation:latest'
+
+# 빌드 타임아웃 (Docker 빌드 + 배포 시간 고려)
+timeout: '1200s'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
