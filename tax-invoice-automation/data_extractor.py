@@ -228,6 +228,7 @@ def build_invoice_record(dom_data: Dict, ocr_text: str, platform: str, email_inf
 # ─── 저장 ─────────────────────────────────────────────────────────────────────
 
 def get_output_dir(platform: str, date_str: str) -> Path:
+    """세금계산서 작성일(issue_date) 기준으로 연/월/일/플랫폼 폴더 생성"""
     try:
         dt = datetime.fromisoformat(date_str)
     except Exception:
@@ -235,6 +236,7 @@ def get_output_dir(platform: str, date_str: str) -> Path:
     folder = STORAGE_CONFIG["folder_structure"].format(
         year=dt.strftime("%Y"),
         month=dt.strftime("%m"),
+        day=dt.strftime("%d"),
         platform=re.sub(r"[^\w가-힣]", "_", platform),
     )
     return Path(STORAGE_CONFIG["output_dir"]) / folder

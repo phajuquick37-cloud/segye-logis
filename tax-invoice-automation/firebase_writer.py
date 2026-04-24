@@ -93,8 +93,9 @@ def upload_screenshot(local_path: str, platform: str, invoice_date: str) -> Opti
             dt = datetime.now()
         import re
         safe_platform = re.sub(r"[^\w가-힣]", "_", platform)
+        # 세금계산서 작성일 기준 연/월/일/플랫폼 경로
         blob_name = (
-            f"tax_invoices/{dt.strftime('%Y/%m')}/{safe_platform}/{path.name}"
+            f"tax_invoices/{dt.strftime('%Y/%m/%d')}/{safe_platform}/{path.name}"
         )
 
         mime_type, _ = mimetypes.guess_type(str(path))

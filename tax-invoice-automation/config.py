@@ -22,10 +22,10 @@ EMAIL_FILTER = {
         "확인하기", "상세보기", "조회하기", "열람",
         "세금계산서 확인", "계산서 보기",
     ],
-    # 정상 운영 모드: 읽지 않은 메일만, 최근 7일
-    "unread_only": True,
-    "mark_as_read": True,
-    "days_limit": 7,
+    # ★ 3월부터 전체 수집 모드 (60일치, 읽은 메일 포함)
+    "unread_only": False,
+    "mark_as_read": False,
+    "days_limit": 60,
 }
 
 # --- 발행 플랫폼 감지 규칙 ---
@@ -142,7 +142,8 @@ OCR_CONFIG = {
 # --- 저장 경로 ---
 STORAGE_CONFIG = {
     "output_dir": "output",
-    "folder_structure": "{year}/{month}/{platform}",
+    # 세금계산서 작성일 기준 연/월/일/플랫폼 폴더 구조
+    "folder_structure": "{year}/{month}/{day}/{platform}",
     "summary_filename": "summary_{date}.json",
 }
 
