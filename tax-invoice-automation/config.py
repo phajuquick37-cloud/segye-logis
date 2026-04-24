@@ -23,9 +23,10 @@ EMAIL_FILTER = {
         "확인하기", "상세보기", "조회하기", "보기", "확인",
         "VIEW", "View", "Check", "조회", "열람",
     ],
-    "unread_only": True,
-    "mark_as_read": True,
-    "days_limit": 30,
+    # 최초 1회 수집: 읽은 메일 포함 + 3월부터 검색 (60일)
+    "unread_only": False,
+    "mark_as_read": False,   # 서버에서 상태 변경 안 함
+    "days_limit": 60,        # 3월부터 커버 (4월 23일 기준 약 54일)
 }
 
 # --- 발행 플랫폼 감지 규칙 ---
@@ -64,8 +65,12 @@ BUSINESS_CONFIG = {
 FIREBASE_ADMIN_CONFIG = {
     # Firebase Console → 프로젝트 설정 → 서비스 계정 → 새 비공개 키 생성 후 저장
     "credentials_file": "google_credentials.json",
-    # Firebase Storage 버킷명 (Firebase Console → Storage → gs://[버킷명])
-    "storage_bucket": "sglogis-7f609.firebasestorage.app",
+    # 실제 홈페이지 Firebase 프로젝트
+    "project_id": "gen-lang-client-0127550748",
+    # Firebase Storage 버킷명
+    "storage_bucket": "gen-lang-client-0127550748.firebasestorage.app",
+    # 커스텀 Firestore 데이터베이스 ID (기본값이 아닌 경우 필수)
+    "database_id": "ai-studio-08ae3b29-6eb5-4e08-8bb0-f20ab80e5ffc",
 }
 
 # --- 브라우저 설정 ---
