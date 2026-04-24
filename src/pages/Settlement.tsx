@@ -768,6 +768,30 @@ export default function Settlement() {
                         </td>
                       </tr>
                     )}
+                    {sorted.length > 0 && (() => {
+                      const totalAll     = sorted.reduce((s, r) => s + r.total_amount, 0);
+                      const totalPaid    = sorted.filter(r => r.checked).reduce((s, r) => s + r.total_amount, 0);
+                      const totalUnpaid  = sorted.filter(r => !r.checked).reduce((s, r) => s + r.total_amount, 0);
+                      return (
+                        <tr className="bg-slate-100 border-t-2 border-slate-300 font-bold text-sm">
+                          <td className="px-4 py-3"></td>
+                          <td className="px-4 py-3 text-slate-700">
+                            합 계 <span className="font-normal text-xs text-slate-400 ml-1">{sorted.length}개 거래처</span>
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <div className="font-mono text-slate-800">{totalAll.toLocaleString()}<span className="text-xs font-normal text-slate-400 ml-0.5">원</span></div>
+                            <div className="text-[11px] font-normal mt-0.5 space-x-2">
+                              <span className="text-emerald-600">입금 {totalPaid.toLocaleString()}원</span>
+                              <span className="text-red-500">미수 {totalUnpaid.toLocaleString()}원</span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3"></td>
+                          <td className="px-4 py-3"></td>
+                          <td className="px-4 py-3"></td>
+                          <td className="px-2 py-3"></td>
+                        </tr>
+                      );
+                    })()}
                   </tbody>
                 </table>
               </div>
