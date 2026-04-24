@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { db } from "../lib/firebase";
 import {
   collection, query, orderBy, onSnapshot,
-  addDoc, updateDoc, deleteDoc, doc, serverTimestamp, writeBatch,
+  addDoc, updateDoc, deleteDoc, doc, serverTimestamp, writeBatch, getDocs,
 } from "firebase/firestore";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
@@ -285,7 +285,7 @@ function PreviewTable({ records, billingMonth, onChangeBillingMonth, onChangeAmo
 // ─────────────────────────────────────────────────────────────
 // 업로드 패널
 // ─────────────────────────────────────────────────────────────
-function UploadPanel({ onClose }: { onClose: () => void }) {
+function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (month: string) => void }) {
   const [files, setFiles]         = useState<File[]>([]);
   const [fileIdx, setFileIdx]     = useState(0);
   const [parseResults, setPR]     = useState<ParseResult[]>([]);
@@ -298,6 +298,7 @@ function UploadPanel({ onClose }: { onClose: () => void }) {
   const [splitRows, setSplitRows] = useState<SplitRow[]>([]);
   const [saving, setSaving]       = useState(false);
   const [saved, setSaved]         = useState(false);
+  const [saveError, setSaveErr]   = useState("");
 
   const handleFiles = async (incoming: File[]) => {
     setParsing(true); setErr(""); setSaved(false);
@@ -336,33 +337,59 @@ function UploadPanel({ onClose }: { onClose: () => void }) {
 
   const handleSave = async () => {
     if (!preview.length) return;
-    setSaving(true);
+    setSaving(true); setSaveErr("");
     try {
       const batch = writeBatch(db);
       const srcFile = currentResult?.fileName ?? "";
 
       preview.forEach((aggregated) => {
         const arRef = doc(collection(db, "ar_records"));
-        batch.set(arRef, { ...aggregated, checked: false, source_file: srcFile, created_at: serverTimestamp(), updated_at: serverTimestamp() });
-
-        const matching = splitRows.filter((row) => {
-          const rowMonth = row.date?.slice(0, 7) || billingMonth;
-          return rowMonth === aggregated.billing_month && row.clientName === aggregated.client_name;
+        batch.set(arRef, {
+          ...aggregated,
+          checked: false,
+          source_file: srcFile,
+          created_at: serverTimestamp(),
+          updated_at: serverTimestamp(),
         });
-        matching.forEach((row) => {
+
+        // 세부 거래 내역 (items 서브컬렉션)
+        const matching = splitRows.filter((row) => {
+          const rowMonth = (row.date ?? "").slice(0, 7) || billingMonth;
+          return (
+            rowMonth === aggregated.billing_month &&
+            row.clientName.trim() === aggregated.client_name.trim()
+          );
+        });
+
+        // matching이 없을 경우 집계 단일 행 저장
+        const rowsToSave = matching.length > 0
+          ? matching
+          : [{ date: `${aggregated.billing_month}-01`, memo: "", amount: aggregated.total_amount, clientName: aggregated.client_name }];
+
+        rowsToSave.forEach((row) => {
           batch.set(doc(collection(db, "ar_records", arRef.id, "items")), {
-            date: row.date || `${aggregated.billing_month}-01`,
-            description: row.memo || `${aggregated.billing_month} 화물 운송비`,
-            quantity: 1, unit_price: row.amount, supply_amount: row.amount,
-            tax_amount: 0, total_amount: row.amount, memo: row.memo || "",
-            created_at: serverTimestamp(),
+            date:           row.date || `${aggregated.billing_month}-01`,
+            description:    row.memo || `${aggregated.billing_month} 화물 운송비`,
+            quantity:       1,
+            unit_price:     row.amount,
+            supply_amount:  row.amount,
+            tax_amount:     0,
+            total_amount:   row.amount,
+            memo:           row.memo || "",
+            created_at:     serverTimestamp(),
           });
         });
       });
 
       await batch.commit();
       setSaved(true);
-    } finally { setSaving(false); }
+      onSaved(billingMonth);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setSaveErr(`저장 실패: ${msg}`);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleChangeAmount = (idx: number, field: "total_amount" | "paid_amount", val: number) => {
@@ -433,15 +460,24 @@ function UploadPanel({ onClose }: { onClose: () => void }) {
             onChangeAmount={handleChangeAmount} onRemove={(idx) => setPreview((p) => p.filter((_, i) => i !== idx))} />
         )}
         {preview.length > 0 && (
-          <div className="flex items-center gap-3">
-            {saved ? (
-              <div className="flex items-center gap-2 text-emerald-700 font-bold text-sm"><CheckCircle className="h-5 w-5" />{preview.length}개 거래처 저장 완료!</div>
-            ) : (
-              <Button onClick={handleSave} disabled={saving} className="bg-blue-600 hover:bg-blue-700 font-bold gap-2">
-                <Save className="h-4 w-4" />{saving ? "저장 중..." : `${preview.length}건 저장`}
-              </Button>
+          <div className="space-y-2">
+            <div className="flex items-center gap-3">
+              {saved ? (
+                <div className="flex items-center gap-2 text-emerald-700 font-bold text-sm">
+                  <CheckCircle className="h-5 w-5" />{preview.length}개 거래처 저장 완료! → 목록에서 확인하세요.
+                </div>
+              ) : (
+                <Button onClick={handleSave} disabled={saving} className="bg-blue-600 hover:bg-blue-700 font-bold gap-2">
+                  <Save className="h-4 w-4" />{saving ? "저장 중..." : `${preview.length}건 저장`}
+                </Button>
+              )}
+              <p className="text-xs text-slate-400">저장 후 목록에서 수정·삭제 가능합니다.</p>
+            </div>
+            {saveError && (
+              <div className="flex items-center gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+                <AlertTriangle className="h-4 w-4 shrink-0" />{saveError}
+              </div>
             )}
-            <p className="text-xs text-slate-400">저장 후 목록에서 수정·삭제 가능합니다.</p>
           </div>
         )}
       </CardContent>
@@ -531,6 +567,19 @@ export default function Settlement() {
   const [showUpload, setUpload]   = useState(false);
   const [showAdd, setAdd]         = useState(false);
   const [selectedRecord, setSelectedRecord] = useState<ArRecord | null>(null);
+
+  // 세부 내역 확장
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [itemsCache, setItemsCache] = useState<Record<string, any[]>>({});
+
+  const toggleExpand = useCallback(async (r: ArRecord) => {
+    if (expandedId === r.id) { setExpandedId(null); return; }
+    setExpandedId(r.id);
+    if (!itemsCache[r.id]) {
+      const snap = await getDocs(query(collection(db, "ar_records", r.id, "items"), orderBy("date", "asc")));
+      setItemsCache((prev) => ({ ...prev, [r.id]: snap.docs.map((d) => ({ id: d.id, ...d.data() })) }));
+    }
+  }, [expandedId, itemsCache]);
 
   // 마감 확정 맵
   const closures = useMonthClosures();
@@ -666,7 +715,12 @@ export default function Settlement() {
               )}
             </div>
 
-            {showUpload && <UploadPanel onClose={() => setUpload(false)} />}
+            {showUpload && (
+              <UploadPanel
+                onClose={() => setUpload(false)}
+                onSaved={(month) => { setMonth(month); setUpload(false); }}
+              />
+            )}
             {showAdd    && <AddRecordPanel onClose={() => setAdd(false)} />}
 
             <ScoreBoard records={filtered} month={filterMonth} isClosed={currentMonthClosed} />
@@ -701,6 +755,7 @@ export default function Settlement() {
                       <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">확인자 / 시각</th>
                       <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">상태</th>
                       <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider w-28">비고</th>
+                      <th className="text-center px-2 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider w-14">내역</th>
                       <th className="w-10 px-2"></th>
                     </tr>
                   </thead>
@@ -708,7 +763,8 @@ export default function Settlement() {
                     {sorted.map((r) => {
                       const isOverdue = !r.checked && r.due_date && r.due_date < new Date().toISOString().slice(0, 10);
                       return (
-                        <tr key={r.id} className={`transition-colors ${r.checked ? "bg-emerald-50/60 text-slate-400" : isOverdue ? "bg-red-50 hover:bg-red-100/70" : "hover:bg-slate-50"}`}>
+                        <React.Fragment key={r.id}>
+                        <tr className={`transition-colors ${r.checked ? "bg-emerald-50/60 text-slate-400" : isOverdue ? "bg-red-50 hover:bg-red-100/70" : "hover:bg-slate-50"}`}>
                           <td className="px-4 py-3">
                             <div
                               onClick={() => handleCheck(r)}
@@ -753,15 +809,74 @@ export default function Settlement() {
                               : <Badge className="bg-orange-100 text-orange-700 hover:bg-orange-100 gap-1"><Clock className="h-3 w-3" />미납</Badge>}
                           </td>
                           <td className="px-4 py-3 text-xs text-slate-400 truncate max-w-[112px]">{r.memo || "-"}</td>
+                          {/* 세부 내역 펼치기 버튼 */}
+                          <td className="px-2 py-3 text-center">
+                            <button
+                              onClick={() => toggleExpand(r)}
+                              className={`text-xs px-2 py-1 rounded-lg border font-medium transition-colors ${
+                                expandedId === r.id
+                                  ? "bg-blue-600 text-white border-blue-600"
+                                  : "text-slate-400 border-slate-200 hover:border-blue-400 hover:text-blue-500"
+                              }`}
+                              title="세부 거래 내역 펼치기"
+                            >
+                              {expandedId === r.id ? "▲" : "▼"}
+                            </button>
+                          </td>
                           <td className="px-2 py-3">
                             <button onClick={() => handleDelete(r.id)} className="text-slate-200 hover:text-red-500 transition-colors p-1 rounded"><Trash2 className="h-3.5 w-3.5" /></button>
                           </td>
                         </tr>
+                        {/* ── 세부 내역 서브행 ── */}
+                        {expandedId === r.id && (
+                          <tr>
+                            <td colSpan={9} className="bg-slate-50 border-b border-slate-100 px-6 py-3">
+                              {!itemsCache[r.id] ? (
+                                <p className="text-xs text-slate-400 animate-pulse">내역 로딩 중...</p>
+                              ) : itemsCache[r.id].length === 0 ? (
+                                <p className="text-xs text-slate-400">등록된 세부 내역이 없습니다.</p>
+                              ) : (
+                                <table className="w-full text-xs">
+                                  <thead>
+                                    <tr className="text-slate-500 border-b border-slate-200">
+                                      <th className="text-left pb-1.5 pr-4 font-semibold">날짜</th>
+                                      <th className="text-left pb-1.5 pr-4 font-semibold">내용</th>
+                                      <th className="text-right pb-1.5 pr-4 font-semibold">금액</th>
+                                      <th className="text-left pb-1.5 font-semibold">비고</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {itemsCache[r.id].map((item: any, i: number) => (
+                                      <tr key={i} className="border-b border-slate-100 last:border-0">
+                                        <td className="py-1.5 pr-4 text-slate-500 font-mono">{item.date}</td>
+                                        <td className="py-1.5 pr-4 text-slate-700">{item.description}</td>
+                                        <td className="py-1.5 pr-4 text-right font-mono font-semibold text-slate-800">
+                                          {(item.supply_amount ?? item.total_amount ?? 0).toLocaleString()}원
+                                        </td>
+                                        <td className="py-1.5 text-slate-400">{item.memo || "-"}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                  <tfoot>
+                                    <tr className="border-t border-slate-300 font-bold text-slate-700">
+                                      <td colSpan={2} className="pt-2 pr-4">소계</td>
+                                      <td className="pt-2 pr-4 text-right font-mono">
+                                        {itemsCache[r.id].reduce((s: number, it: any) => s + (it.supply_amount ?? it.total_amount ?? 0), 0).toLocaleString()}원
+                                      </td>
+                                      <td></td>
+                                    </tr>
+                                  </tfoot>
+                                </table>
+                              )}
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
                       );
                     })}
                     {sorted.length === 0 && (
                       <tr>
-                        <td colSpan={7} className="text-center py-16 text-slate-400">
+                        <td colSpan={9} className="text-center py-16 text-slate-400">
                           <Upload className="h-8 w-8 mx-auto mb-3 text-slate-300" />
                           {search ? `"${search}"에 해당하는 거래처가 없습니다.` : "등록된 신용내역이 없습니다."}
                           <br /><span className="text-xs mt-1 block">파일 업로드 또는 직접 등록 버튼을 사용하세요.</span>
@@ -788,6 +903,7 @@ export default function Settlement() {
                           <td className="px-4 py-3"></td>
                           <td className="px-4 py-3"></td>
                           <td className="px-4 py-3"></td>
+                          <td className="px-2 py-3"></td>
                           <td className="px-2 py-3"></td>
                         </tr>
                       );
