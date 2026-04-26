@@ -168,18 +168,38 @@ export default function Admin() {
     await deleteDoc(doc(db, "tax_invoices", id));
   };
 
-  // 잡이메일(pending + 공급자 없음) 일괄 삭제
+  // 체크박스 선택
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set());
+  const toggleCheck = (id: string) =>
+    setCheckedIds((prev) => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+  const toggleAll = (ids: string[]) =>
+    setCheckedIds((prev) => ids.every(id => prev.has(id)) ? new Set() : new Set(ids));
+
+  // 선택 항목 일괄 삭제
   const [bulkDeleting, setBulkDeleting] = useState(false);
-  const deleteBadInvoices = async () => {
-    const bad = taxInvoices.filter(
-      (i) => i.status === "pending" && !i.supplier_name && !i.total_amount
-    );
-    if (bad.length === 0) { alert("삭제할 잘못 수집된 데이터가 없습니다."); return; }
-    if (!window.confirm(`잘못 수집된 데이터 ${bad.length}건을 일괄 삭제하시겠습니까?\n(공급자·금액 없는 미처리 건)`)) return;
+  const deleteChecked = async (filteredIds: string[]) => {
+    const targets = filteredIds.filter(id => checkedIds.has(id));
+    if (targets.length === 0) { alert("삭제할 항목을 선택하세요."); return; }
+    if (!window.confirm(`선택한 ${targets.length}건을 삭제하시겠습니까?`)) return;
     setBulkDeleting(true);
     try {
-      await Promise.all(bad.map((i) => deleteDoc(doc(db, "tax_invoices", i.id))));
-      alert(`${bad.length}건 삭제 완료`);
+      await Promise.all(targets.map(id => deleteDoc(doc(db, "tax_invoices", id))));
+      setCheckedIds(new Set());
+    } catch (e) {
+      alert("삭제 실패: " + String(e));
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
+  // 전체(필터 기준) 일괄 삭제
+  const deleteAll = async (filtered: any[]) => {
+    if (filtered.length === 0) { alert("삭제할 항목이 없습니다."); return; }
+    if (!window.confirm(`현재 목록 ${filtered.length}건을 모두 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`)) return;
+    setBulkDeleting(true);
+    try {
+      await Promise.all(filtered.map(i => deleteDoc(doc(db, "tax_invoices", i.id))));
+      setCheckedIds(new Set());
     } catch (e) {
       alert("삭제 실패: " + String(e));
     } finally {
@@ -714,19 +734,8 @@ export default function Admin() {
                   <Receipt className="h-5 w-5 text-blue-600" />
                   수집된 세금계산서 목록
                 </CardTitle>
-                {/* 검색창 + 상태 필터 + 일괄삭제 */}
+                {/* 검색창 + 상태 필터 + 삭제 버튼들 */}
                 <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="gap-1.5 border-red-300 text-red-600 hover:bg-red-50 whitespace-nowrap"
-                    onClick={deleteBadInvoices}
-                    disabled={bulkDeleting}
-                    title="공급자·금액 없는 미처리 잡이메일 데이터 일괄 삭제"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                    {bulkDeleting ? "삭제 중..." : "잡이메일 일괄삭제"}
-                  </Button>
                   <div className="relative">
                     <svg className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z" />
@@ -781,18 +790,69 @@ export default function Admin() {
                     (inv.supplier_biz_no || "").replace(/-/g, "").includes(q.replace(/-/g, ""));
                   return matchStatus && matchSearch;
                 });
+                const filteredIds = filtered.map((i: any) => i.id);
+                const allChecked = filteredIds.length > 0 && filteredIds.every((id: string) => checkedIds.has(id));
+                const someChecked = filteredIds.some((id: string) => checkedIds.has(id));
                 return (
               <div className="overflow-x-auto">
-                {q && (
-                  <p className="mb-3 text-sm text-slate-500">
-                    <span className="font-semibold text-blue-600">"{invoiceSearch}"</span> 검색 결과{" "}
-                    <span className="font-bold">{filtered.length}건</span>
+                {/* 선택 삭제 액션 바 */}
+                {someChecked && (
+                  <div className="flex items-center gap-3 mb-3 px-2 py-2 bg-red-50 border border-red-200 rounded-lg">
+                    <span className="text-sm text-red-700 font-semibold">
+                      {checkedIds.size}건 선택됨
+                    </span>
+                    <Button
+                      size="sm"
+                      className="gap-1.5 bg-red-600 hover:bg-red-700 text-white"
+                      onClick={() => deleteChecked(filteredIds)}
+                      disabled={bulkDeleting}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      {bulkDeleting ? "삭제 중..." : "선택 삭제"}
+                    </Button>
+                    <button
+                      className="text-xs text-slate-500 hover:text-slate-700 underline"
+                      onClick={() => setCheckedIds(new Set())}
+                    >
+                      선택 해제
+                    </button>
+                  </div>
+                )}
+
+                {/* 검색 결과 카운트 + 전체삭제 버튼 */}
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-sm text-slate-500">
+                    {q && <><span className="font-semibold text-blue-600">"{invoiceSearch}"</span>{" "}</>}
+                    총 <span className="font-bold">{filtered.length}건</span>
                     {filtered.length === 0 && " — 일치하는 세금계산서가 없습니다."}
                   </p>
-                )}
+                  {filtered.length > 0 && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="gap-1.5 border-red-200 text-red-600 hover:bg-red-50 text-xs"
+                      onClick={() => deleteAll(filtered)}
+                      disabled={bulkDeleting}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                      {bulkDeleting ? "삭제 중..." : `현재 목록 전체 삭제 (${filtered.length}건)`}
+                    </Button>
+                  )}
+                </div>
+
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      {/* 전체 선택 체크박스 */}
+                      <TableHead className="w-8">
+                        <input
+                          type="checkbox"
+                          checked={allChecked}
+                          onChange={() => toggleAll(filteredIds)}
+                          className="cursor-pointer accent-red-500"
+                          title="전체 선택"
+                        />
+                      </TableHead>
                       <TableHead>발행일</TableHead>
                       <TableHead>발행출처</TableHead>
                       <TableHead>공급자 (상호명)</TableHead>
@@ -803,12 +863,21 @@ export default function Admin() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filtered.map((inv) => (
+                    {filtered.map((inv: any) => (
                       <TableRow
                         key={inv.id}
-                        className="cursor-pointer hover:bg-blue-50 transition-colors"
+                        className={`cursor-pointer hover:bg-blue-50 transition-colors ${checkedIds.has(inv.id) ? "bg-red-50" : ""}`}
                         onClick={() => openInvoiceModal(inv)}
                       >
+                        {/* 체크박스 */}
+                        <TableCell onClick={(e) => { e.stopPropagation(); toggleCheck(inv.id); }}>
+                          <input
+                            type="checkbox"
+                            checked={checkedIds.has(inv.id)}
+                            onChange={() => toggleCheck(inv.id)}
+                            className="cursor-pointer accent-red-500"
+                          />
+                        </TableCell>
                         <TableCell className="text-xs text-slate-500 whitespace-nowrap">
                           {inv.issue_date || "?"}
                         </TableCell>
