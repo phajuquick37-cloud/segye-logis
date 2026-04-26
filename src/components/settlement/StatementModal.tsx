@@ -286,8 +286,8 @@ export const DocumentBody = React.forwardRef<
       <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: "0", fontSize: "11px" }}>
         <tbody>
           <tr>
-            {/* 공급자 (도장 우측 배치) */}
-            <td style={{ width: "50%", verticalAlign: "top", padding: 0, position: "relative" }}>
+            {/* 공급자 — 도장은 테이블 바깥 절대 위치(우측 하단)로 배치 */}
+            <td style={{ width: "50%", verticalAlign: "top", padding: 0, position: "relative", border: "1px solid #555" }}>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <tbody>
                   <tr>
@@ -295,10 +295,6 @@ export const DocumentBody = React.forwardRef<
                     <td style={labelCell}>등&nbsp;록&nbsp;번&nbsp;호</td>
                     <td colSpan={3} style={cellStyle({ fontWeight: "bold", letterSpacing: "2px" })}>
                       {SUPPLIER.biz_no}
-                    </td>
-                    {/* 도장: 공급자 열 오른쪽 */}
-                    <td rowSpan={6} style={{ border: "none", width: "76px", verticalAlign: "middle", textAlign: "center", padding: "0 4px" }}>
-                      <CompanyStamp size={68} />
                     </td>
                   </tr>
                   <tr>
@@ -327,10 +323,20 @@ export const DocumentBody = React.forwardRef<
                   </tr>
                 </tbody>
               </table>
+              {/* 도장: 공급자 칸 우측 하단에 절대 배치 */}
+              <div style={{
+                position: "absolute",
+                bottom: "4px",
+                right: "6px",
+                zIndex: 2,
+                pointerEvents: "none",
+              }}>
+                <CompanyStamp size={72} />
+              </div>
             </td>
 
             {/* 공급받는자 (저장된 프로필 사용) */}
-            <td style={{ width: "50%", verticalAlign: "top", padding: 0, borderLeft: "2px solid #555" }}>
+            <td style={{ width: "50%", verticalAlign: "top", padding: 0, border: "1px solid #555", borderLeft: "2px solid #555" }}>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <tbody>
                   <tr>
