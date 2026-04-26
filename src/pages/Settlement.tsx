@@ -5,6 +5,7 @@ import {
   collection, query, orderBy, onSnapshot,
   addDoc, updateDoc, deleteDoc, doc, serverTimestamp, writeBatch, getDocs,
 } from "firebase/firestore";
+import * as XLSX from "xlsx";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
@@ -13,6 +14,7 @@ import {
   ArrowLeft, Upload, Plus, Trash2, CheckCircle, AlertCircle, Clock,
   User, X, FileText, AlertTriangle, Scissors, RotateCcw, Save,
   Search, Lock, History, CreditCard, Cloud, CloudOff, Loader2,
+  FileSpreadsheet,
 } from "lucide-react";
 
 import { parseFile, ColKey, ParseResult } from "../utils/sheetParser";
@@ -54,8 +56,8 @@ interface ArRecord {
 }
 
 const COL_LABEL: Record<ColKey, string> = {
-  date: "날짜", client: "거래처명", amount: "금액",
-  memo: "비고", bizno: "사업자번호", duedate: "지급기한",
+  date: "날짜", client: "거래처명", amount: "요금",
+  deliveryfee: "탁송료", memo: "비고", bizno: "사업자번호", duedate: "결제일",
 };
 
 function currentMonth() {
@@ -64,14 +66,19 @@ function currentMonth() {
 }
 function fmtDateTime(iso: string) { return iso.slice(0, 16).replace("T", " "); }
 
+/** 실제 청구금액: (요금 + 탁송료) × 1.1 (부가세 10%) */
+function calcGrandTotal(r: { total_amount: number; delivery_fee?: number }): number {
+  return Math.round((r.total_amount + (r.delivery_fee ?? 0)) * 1.1);
+}
+
 // ─────────────────────────────────────────────────────────────
 // 전광판 (ScoreBoard)
 // ─────────────────────────────────────────────────────────────
 function ScoreBoard({ records, month, isClosed }: { records: ArRecord[]; month: string; isClosed: boolean }) {
   const confirmed   = records.filter((r) => r.checked);
   const unconfirmed = records.filter((r) => !r.checked);
-  const confirmedAmt   = confirmed.reduce((s, r) => s + r.total_amount, 0);
-  const unconfirmedAmt = unconfirmed.reduce((s, r) => s + r.total_amount, 0);
+  const confirmedAmt   = confirmed.reduce((s, r) => s + calcGrandTotal(r), 0);
+  const unconfirmedAmt = unconfirmed.reduce((s, r) => s + calcGrandTotal(r), 0);
   const totalAmt = confirmedAmt + unconfirmedAmt;
   const pct = totalAmt > 0 ? Math.round((confirmedAmt / totalAmt) * 100) : 0;
   const allDone = records.length > 0 && unconfirmed.length === 0;
@@ -120,10 +127,10 @@ function ScoreBoard({ records, month, isClosed }: { records: ArRecord[]; month: 
               <AlertCircle className="h-3.5 w-3.5" />미입금 업체 ({unconfirmed.length}개)
             </p>
             <div className="flex flex-wrap gap-1.5">
-              {unconfirmed.sort((a, b) => b.total_amount - a.total_amount).map((r) => (
+              {unconfirmed.sort((a, b) => calcGrandTotal(b) - calcGrandTotal(a)).map((r) => (
                 <span key={r.id} className="inline-flex items-center gap-1.5 text-xs bg-red-50 text-red-700 border border-red-200 rounded-full px-3 py-1 font-semibold">
                   {r.client_name}<span className="text-red-400">|</span>
-                  <span className="font-mono">{r.total_amount.toLocaleString()}원</span>
+                  <span className="font-mono">{calcGrandTotal(r).toLocaleString()}원</span>
                 </span>
               ))}
             </div>
@@ -174,8 +181,8 @@ function DropZone({ onFiles }: { onFiles: (files: File[]) => void }) {
 function ColumnMappingPanel({ result, overrides, onOverride }: {
   result: ParseResult; overrides: Partial<Record<ColKey, number>>; onOverride: (k: ColKey, i: number) => void;
 }) {
-  const REQUIRED: ColKey[] = ["date", "client", "amount"];
-  const OPTIONAL: ColKey[] = ["bizno", "duedate", "memo"];
+  const REQUIRED: ColKey[] = ["client", "amount"];
+  const OPTIONAL: ColKey[] = ["deliveryfee", "duedate", "memo", "date", "bizno"];
   const effectiveIdx = (key: ColKey) => overrides[key] !== undefined ? overrides[key]! : result.detectedIdx[key];
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-2">
@@ -244,7 +251,7 @@ function SplitRulesPanel({ rules, onChange }: { rules: SplitRule[]; onChange: (r
 function PreviewTable({ records, billingMonth, onChangeBillingMonth, onChangeAmount, onRemove }: {
   records: AggregatedRecord[]; billingMonth: string;
   onChangeBillingMonth: (v: string) => void;
-  onChangeAmount: (i: number, f: "total_amount" | "paid_amount", v: number) => void;
+  onChangeAmount: (i: number, f: "total_amount" | "delivery_fee" | "paid_amount", v: number) => void;
   onRemove: (i: number) => void;
 }) {
   return (
@@ -261,22 +268,45 @@ function PreviewTable({ records, billingMonth, onChangeBillingMonth, onChangeAmo
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>거래처명</TableHead><TableHead className="text-center">건수</TableHead>
-              <TableHead className="text-right">청구금액</TableHead><TableHead className="text-right">입금금액</TableHead>
-              <TableHead className="text-right">미수금</TableHead><TableHead className="w-8"></TableHead>
+              <TableHead>거래처명</TableHead>
+              <TableHead className="text-center">건수</TableHead>
+              <TableHead className="text-right">요금</TableHead>
+              <TableHead className="text-right">탁송료</TableHead>
+              <TableHead className="text-right">합계(부가포함)</TableHead>
+              <TableHead className="w-8"></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {records.map((r, i) => (
-              <TableRow key={i} className={r.split_from ? "bg-orange-50" : ""}>
-                <TableCell className="font-semibold">{r.client_name}{r.split_from && <span className="ml-1.5 text-[10px] text-orange-500">← {r.split_from}</span>}</TableCell>
-                <TableCell className="text-center text-xs text-slate-400">{r.row_count}</TableCell>
-                <TableCell className="text-right"><input type="number" value={r.total_amount} onChange={(e) => onChangeAmount(i, "total_amount", Number(e.target.value))} className="w-28 text-right text-sm border border-slate-200 rounded px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400" /></TableCell>
-                <TableCell className="text-right"><input type="number" value={r.paid_amount} onChange={(e) => onChangeAmount(i, "paid_amount", Number(e.target.value))} className="w-24 text-right text-sm border border-slate-200 rounded px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400" /></TableCell>
-                <TableCell className={`text-right font-bold text-sm ${r.unpaid_amount > 0 ? "text-red-600" : "text-slate-400"}`}>{r.unpaid_amount.toLocaleString()}원</TableCell>
-                <TableCell><button onClick={() => onRemove(i)} className="text-slate-300 hover:text-red-500 p-1"><X className="h-3.5 w-3.5" /></button></TableCell>
-              </TableRow>
-            ))}
+            {records.map((r, i) => {
+              const gt = Math.round((r.total_amount + (r.delivery_fee ?? 0)) * 1.1);
+              return (
+                <TableRow key={i} className={r.split_from ? "bg-orange-50" : ""}>
+                  <TableCell className="font-semibold">
+                    {r.client_name}
+                    {r.split_from && <span className="ml-1.5 text-[10px] text-orange-500">← {r.split_from}</span>}
+                  </TableCell>
+                  <TableCell className="text-center text-xs text-slate-400">{r.row_count}</TableCell>
+                  <TableCell className="text-right">
+                    <input type="number" value={r.total_amount}
+                      onChange={(e) => onChangeAmount(i, "total_amount", Number(e.target.value))}
+                      className="w-28 text-right text-sm border border-slate-200 rounded px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <input type="number" value={r.delivery_fee ?? 0}
+                      onChange={(e) => onChangeAmount(i, "delivery_fee", Number(e.target.value))}
+                      className="w-24 text-right text-sm border border-slate-200 rounded px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                  </TableCell>
+                  <TableCell className="text-right font-bold text-sm text-blue-700 font-mono">
+                    {gt.toLocaleString()}원
+                  </TableCell>
+                  <TableCell>
+                    <button onClick={() => onRemove(i)} className="text-slate-300 hover:text-red-500 p-1">
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       </div>
@@ -321,9 +351,25 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
     if (!currentResult) return;
     const patchedIdx = { ...currentResult.detectedIdx, ...colOverrides };
     const headers = currentResult.detected.allHeaders;
+
+    const safeNum = (v: any): number => {
+      const n = Number(String(v ?? "").replace(/[^0-9.-]/g, ""));
+      return isNaN(n) ? 0 : Math.abs(n);
+    };
+
     const patched = currentResult.rows.map((row) => {
-      const get = (key: ColKey) => { const i = patchedIdx[key]; return i !== -1 ? (row._original[headers[i]] ?? "") : ""; };
-      return { ...row, clientName: String(get("client")).trim() || row.clientName, amount: Number(String(get("amount")).replace(/[^0-9.-]/g, "")) || row.amount };
+      const getVal = (key: ColKey) => {
+        const i = patchedIdx[key];
+        return i !== -1 ? (row._original[headers[i]] ?? "") : "";
+      };
+      return {
+        ...row,
+        clientName:  String(getVal("client")).trim() || row.clientName,
+        amount:      safeNum(getVal("amount")) || row.amount,
+        deliveryFee: patchedIdx["deliveryfee"] !== -1
+          ? safeNum(getVal("deliveryfee"))
+          : row.deliveryFee,
+      };
     });
     const split = applyEntitySplit(patched, splitRules);
     setSplitRows(split);
@@ -348,54 +394,90 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preview]);
 
+  // Firestore 는 undefined 값을 거부 → undefined 키를 모두 제거
+  const stripUndefined = (obj: Record<string, any>): Record<string, any> =>
+    Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined));
+
   const handleSave = async () => {
     if (!preview.length) return;
     setSaving(true); setSaveErr("");
+
+    // Firestore 는 NaN / Infinity / undefined 를 거부하므로 안전 숫자 변환
+    const safeN = (v: any): number => {
+      const n = Number(v);
+      return isFinite(n) ? n : 0;
+    };
+
     try {
-      const batch = writeBatch(db);
+      // Firestore batch 한도 500개 → 대량 업로드 시 청크 분리
+      const CHUNK = 200; // ar_record + items 각 1쌍 = 2op, 여유 있게 200건
+      const chunks: typeof preview[] = [];
+      for (let i = 0; i < preview.length; i += CHUNK) {
+        chunks.push(preview.slice(i, i + CHUNK));
+      }
+
       const srcFile = currentResult?.fileName ?? "";
 
-      preview.forEach((aggregated) => {
-        const arRef = doc(collection(db, "ar_records"));
+      for (const chunk of chunks) {
+        const batch = writeBatch(db);
 
-        // 세부 거래 내역 먼저 계산 (item_count 를 batch.set 에 포함하기 위해)
-        const matching = splitRows.filter((row) => {
-          const rowMonth = (row.date ?? "").slice(0, 7) || billingMonth;
-          return (
-            rowMonth === aggregated.billing_month &&
-            row.clientName.trim() === aggregated.client_name.trim()
-          );
-        });
-        const rowsToSave = matching.length > 0
-          ? matching
-          : [{ date: `${aggregated.billing_month}-01`, memo: "", amount: aggregated.total_amount, clientName: aggregated.client_name }];
+        chunk.forEach((aggregated) => {
+          const arRef = doc(collection(db, "ar_records"));
 
-        batch.set(arRef, {
-          ...aggregated,
-          checked:      false,
-          source_file:  srcFile,
-          item_count:   rowsToSave.length,
-          delivery_fee: 0,
-          created_at:   serverTimestamp(),
-          updated_at:   serverTimestamp(),
-        });
+          const fee      = safeN(aggregated.total_amount);
+          const deliv    = safeN(aggregated.delivery_fee ?? 0);
+          const grandTotal = Math.round((fee + deliv) * 1.1);
 
-        rowsToSave.forEach((row) => {
-          batch.set(doc(collection(db, "ar_records", arRef.id, "items")), {
-            date:           row.date || `${aggregated.billing_month}-01`,
-            description:    row.memo || `${aggregated.billing_month} 화물 운송비`,
-            quantity:       1,
-            unit_price:     row.amount,
-            supply_amount:  row.amount,
-            tax_amount:     0,
-            total_amount:   row.amount,
-            memo:           row.memo || "",
+          const matching = splitRows.filter((row) => {
+            const rowMonth = (row.date ?? "").slice(0, 7) || billingMonth;
+            return (
+              rowMonth === aggregated.billing_month &&
+              row.clientName.trim() === aggregated.client_name.trim()
+            );
+          });
+          const rowsToSave = matching.length > 0
+            ? matching
+            : [{ date: `${aggregated.billing_month}-01`, memo: "", amount: fee, deliveryFee: deliv, clientName: aggregated.client_name, bizNo: "", dueDate: "" }];
+
+          batch.set(arRef, stripUndefined({
+            billing_month:  aggregated.billing_month,
+            client_name:    aggregated.client_name,
+            client_biz_no:  aggregated.client_biz_no || "",
+            total_amount:   fee,
+            delivery_fee:   deliv,
+            paid_amount:    safeN(aggregated.paid_amount),
+            unpaid_amount:  Math.max(0, grandTotal - safeN(aggregated.paid_amount)),
+            due_date:       aggregated.due_date || "",
+            status:         aggregated.status,
+            memo:           aggregated.memo || "",
+            row_count:      aggregated.row_count || rowsToSave.length,
+            split_from:     aggregated.split_from || null,
+            checked:        false,
+            source_file:    srcFile || "",
+            item_count:     rowsToSave.length,
             created_at:     serverTimestamp(),
+            updated_at:     serverTimestamp(),
+          }));
+
+          rowsToSave.forEach((row) => {
+            const rowAmt = safeN((row as any).amount ?? 0);
+            batch.set(doc(collection(db, "ar_records", arRef.id, "items")), {
+              date:          row.date || `${aggregated.billing_month}-01`,
+              description:   row.memo || `${aggregated.billing_month} 화물 운송비`,
+              quantity:      1,
+              unit_price:    rowAmt,
+              supply_amount: rowAmt,
+              tax_amount:    0,
+              total_amount:  rowAmt,
+              memo:          row.memo || "",
+              created_at:    serverTimestamp(),
+            });
           });
         });
-      });
 
-      await batch.commit();
+        await batch.commit();
+      }
+
       setSaved(true);
       onSaved(billingMonth);
     } catch (e: unknown) {
@@ -406,12 +488,13 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
     }
   };
 
-  const handleChangeAmount = (idx: number, field: "total_amount" | "paid_amount", val: number) => {
+  const handleChangeAmount = (idx: number, field: "total_amount" | "delivery_fee" | "paid_amount", val: number) => {
     setPreview((prev) => prev.map((r, i) => {
       if (i !== idx) return r;
       const next = { ...r, [field]: val };
-      next.unpaid_amount = Math.max(0, next.total_amount - next.paid_amount);
-      if (next.paid_amount >= next.total_amount && next.total_amount > 0) next.status = "paid";
+      const gt = Math.round((next.total_amount + (next.delivery_fee ?? 0)) * 1.1);
+      next.unpaid_amount = Math.max(0, gt - next.paid_amount);
+      if (next.paid_amount >= gt && gt > 0) next.status = "paid";
       else if (next.paid_amount > 0) next.status = "partial";
       else next.status = "unpaid";
       return next;
@@ -599,6 +682,75 @@ export default function Settlement() {
   const [showAdd, setAdd]         = useState(false);
   const [selectedRecord, setSelectedRecord] = useState<ArRecord | null>(null);
 
+  // ── 엑셀 내보내기 ──
+  const handleExportExcel = () => {
+    if (sorted.length === 0) return;
+    const [y, m] = filterMonth.split("-");
+    const title = `${y}년 ${m}월 신용내역`;
+
+    const headerRow = ["No", "거래처명", "건수", "요금", "탁송료", "합계(부가세포함)", "비고", "결제일", "수금상태"];
+    const dataRows = sorted.map((r, i) => {
+      const gt = calcGrandTotal(r);
+      const dueDisplay = r.due_date
+        ? r.due_date.match(/^\d{4}-\d{2}-(\d{2})$/)
+          ? `${r.due_date.slice(5, 7)}/${r.due_date.slice(8, 10)}`
+          : r.due_date
+        : "";
+      return [
+        i + 1,
+        r.client_name,
+        r.item_count ?? 0,
+        r.total_amount,
+        r.delivery_fee ?? 0,
+        gt,
+        r.memo ?? "",
+        dueDisplay,
+        r.checked ? "수금완료" : "미수금",
+      ];
+    });
+
+    const totalFee   = sorted.reduce((s, r) => s + r.total_amount, 0);
+    const totalDeliv = sorted.reduce((s, r) => s + (r.delivery_fee ?? 0), 0);
+    const totalGrand = sorted.reduce((s, r) => s + calcGrandTotal(r), 0);
+    const paidGrand  = sorted.filter(r => r.checked).reduce((s, r) => s + calcGrandTotal(r), 0);
+
+    const sumRow = [
+      "", `합 계 (${sorted.length}개 거래처)`,
+      sorted.reduce((s, r) => s + (r.item_count ?? 0), 0),
+      totalFee, totalDeliv, totalGrand, "", "", `입금 ${paidGrand.toLocaleString()} / 미수 ${(totalGrand - paidGrand).toLocaleString()}`,
+    ];
+
+    const aoa = [
+      [title],
+      [],
+      headerRow,
+      ...dataRows,
+      [],
+      sumRow,
+    ];
+
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws["!cols"] = [
+      { wch: 4 }, { wch: 22 }, { wch: 6 }, { wch: 14 }, { wch: 10 },
+      { wch: 16 }, { wch: 16 }, { wch: 8 }, { wch: 12 },
+    ];
+    // 제목 병합
+    ws["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 8 } }];
+
+    // 데이터 행 숫자 서식
+    const fmtMoney = "#,##0";
+    for (let ri = 3; ri < 3 + dataRows.length; ri++) {
+      ["D", "E", "F"].forEach((col) => {
+        const cellRef = `${col}${ri + 1}`;
+        if (ws[cellRef]) ws[cellRef].z = fmtMoney;
+      });
+    }
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, `${m}월 신용내역`);
+    XLSX.writeFile(wb, `${title}.xlsx`);
+  };
+
   // ── 이 달 전체 삭제 ──
   const [deleting, setDeleting] = useState(false);
   const handleDeleteMonth = async () => {
@@ -690,7 +842,10 @@ export default function Settlement() {
   }, [records, filterMonth, search]);
 
   const sorted = useMemo(() =>
-    [...filtered].sort((a, b) => { if (a.checked !== b.checked) return a.checked ? 1 : -1; return b.total_amount - a.total_amount; }),
+    [...filtered].sort((a, b) => {
+      if (a.checked !== b.checked) return a.checked ? 1 : -1;
+      return calcGrandTotal(b) - calcGrandTotal(a);
+    }),
     [filtered]
   );
 
@@ -702,12 +857,13 @@ export default function Settlement() {
     }
     if (!username) { setShowUserModal(true); return; }
     const next = !r.checked;
+    const gt   = calcGrandTotal(r);
     await updateDoc(doc(db, "ar_records", r.id), {
       checked:       next,
       checked_by:    next ? username : null,
       checked_at:    next ? new Date().toISOString() : null,
-      paid_amount:   next ? r.total_amount : 0,
-      unpaid_amount: next ? 0 : r.total_amount,
+      paid_amount:   next ? gt : 0,
+      unpaid_amount: next ? 0  : gt,
       status:        next ? "paid" : "unpaid",
       updated_at:    serverTimestamp(),
     });
@@ -791,6 +947,16 @@ export default function Settlement() {
                 {search && <button onClick={() => setSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>}
               </div>
               <div className="ml-auto flex gap-2 flex-wrap">
+                {sorted.length > 0 && (
+                  <Button
+                    variant="outline" size="sm"
+                    className="gap-1.5 border-emerald-300 text-emerald-700 hover:bg-emerald-50"
+                    onClick={handleExportExcel}
+                    title="현재 월 데이터를 엑셀로 내보내기"
+                  >
+                    <FileSpreadsheet className="h-4 w-4" />엑셀 내보내기
+                  </Button>
+                )}
                 {filtered.length > 0 && (
                   <Button
                     variant="outline" size="sm"
@@ -891,23 +1057,34 @@ export default function Settlement() {
                   <tbody className="divide-y divide-slate-100">
                     {sorted.map((r) => {
                       const deliveryFee = r.delivery_fee ?? 0;
-                      const grandTotal  = r.total_amount + deliveryFee;
+                      const grandTotal  = calcGrandTotal(r);
                       const isOverdue   = !r.checked && r.due_date && r.due_date < new Date().toISOString().slice(0, 10);
                       const isExpanded  = expandedId === r.id;
                       return (
                         <React.Fragment key={r.id}>
                         <tr className={`transition-colors ${r.checked ? "bg-emerald-50/60" : isOverdue ? "bg-red-50 hover:bg-red-100/60" : "hover:bg-slate-50"}`}>
 
-                          {/* 거래처명 — 클릭 시 세부 내역 펼치기 */}
+                          {/* 거래처명 — 클릭 시 거래명세표 모달 열기 / ▶ 클릭 시 세부 내역 펼치기 */}
                           <td className="px-4 py-3">
-                            <button
-                              onClick={() => toggleExpand(r)}
-                              className={`text-left font-bold hover:text-blue-600 transition-colors flex items-center gap-1.5 ${r.checked ? "text-slate-400 line-through decoration-slate-300" : "text-slate-800"}`}
-                            >
-                              <span className={`text-[10px] transition-transform ${isExpanded ? "rotate-90" : ""}`}>▶</span>
-                              {r.client_name}
-                            </button>
-                            {r.client_biz_no && <div className="text-xs text-slate-400 mt-0.5 ml-4">{r.client_biz_no}</div>}
+                            <div className="flex items-center gap-1.5">
+                              {/* 펼치기 토글 */}
+                              <button
+                                onClick={() => toggleExpand(r)}
+                                className="text-slate-400 hover:text-blue-500 transition-colors p-0.5 rounded"
+                                title="세부 내역 펼치기"
+                              >
+                                <span className={`text-[10px] inline-block transition-transform duration-200 ${isExpanded ? "rotate-90" : ""}`}>▶</span>
+                              </button>
+                              {/* 거래처명 → 거래명세표 모달 */}
+                              <button
+                                onClick={() => setSelectedRecord(r)}
+                                className={`text-left font-bold hover:text-blue-600 hover:underline underline-offset-2 transition-colors ${r.checked ? "text-slate-400 line-through decoration-slate-300" : "text-slate-800"}`}
+                                title="거래명세표 보기"
+                              >
+                                {r.client_name}
+                              </button>
+                            </div>
+                            {r.client_biz_no && <div className="text-xs text-slate-400 mt-0.5 ml-5">{r.client_biz_no}</div>}
                           </td>
 
                           {/* 신용건수 */}
@@ -941,7 +1118,11 @@ export default function Settlement() {
                           {/* 결제일 */}
                           <td className="px-4 py-3 text-center">
                             <span className={`text-xs font-mono ${isOverdue ? "text-red-600 font-bold" : "text-slate-500"}`}>
-                              {r.due_date || "-"}
+                              {r.due_date
+                                ? r.due_date.match(/^\d{4}-\d{2}-(\d{2})$/)
+                                  ? `${r.due_date.slice(5, 7)}/${r.due_date.slice(8, 10)}`
+                                  : r.due_date
+                                : "-"}
                             </span>
                             {isOverdue && <div className="text-[10px] text-red-500 font-semibold mt-0.5">연체</div>}
                           </td>
@@ -971,7 +1152,7 @@ export default function Settlement() {
                               <button
                                 onClick={() => setSelectedRecord(r)}
                                 className="text-slate-300 hover:text-blue-500 transition-colors p-1 rounded"
-                                title="거래명세서 보기"
+                                title="거래명세표 보기"
                               >
                                 <FileText className="h-3.5 w-3.5" />
                               </button>
@@ -1048,8 +1229,8 @@ export default function Settlement() {
                     {sorted.length > 0 && (() => {
                       const totalFee      = sorted.reduce((s, r) => s + r.total_amount, 0);
                       const totalDelivery = sorted.reduce((s, r) => s + (r.delivery_fee ?? 0), 0);
-                      const totalGrand    = totalFee + totalDelivery;
-                      const totalPaid     = sorted.filter(r => r.checked).reduce((s, r) => s + r.total_amount + (r.delivery_fee ?? 0), 0);
+                      const totalGrand    = sorted.reduce((s, r) => s + calcGrandTotal(r), 0);
+                      const totalPaid     = sorted.filter(r => r.checked).reduce((s, r) => s + calcGrandTotal(r), 0);
                       const totalUnpaid   = totalGrand - totalPaid;
                       return (
                         <tr className="bg-slate-800 text-white font-bold text-sm border-t-2 border-slate-600">
@@ -1080,9 +1261,9 @@ export default function Settlement() {
 
               {sorted.length > 0 && (
                 <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 flex flex-wrap gap-6 text-sm">
-                  <span className="text-slate-500">전체 청구 <strong className="text-slate-800 font-mono">{filtered.reduce((s, r) => s + r.total_amount, 0).toLocaleString()}원</strong></span>
-                  <span className="text-emerald-600">입금 완료 <strong className="font-mono">{filtered.filter((r) => r.checked).reduce((s, r) => s + r.total_amount, 0).toLocaleString()}원</strong></span>
-                  <span className="text-red-600">미수금 <strong className="font-mono">{filtered.filter((r) => !r.checked).reduce((s, r) => s + r.total_amount, 0).toLocaleString()}원</strong></span>
+                  <span className="text-slate-500">전체 청구 <strong className="text-slate-800 font-mono">{filtered.reduce((s, r) => s + calcGrandTotal(r), 0).toLocaleString()}원</strong></span>
+                  <span className="text-emerald-600">입금 완료 <strong className="font-mono">{filtered.filter((r) => r.checked).reduce((s, r) => s + calcGrandTotal(r), 0).toLocaleString()}원</strong></span>
+                  <span className="text-red-600">미수금 <strong className="font-mono">{filtered.filter((r) => !r.checked).reduce((s, r) => s + calcGrandTotal(r), 0).toLocaleString()}원</strong></span>
                   <span className="ml-auto text-xs text-slate-400 flex items-center gap-1">
                     <Cloud className="h-3.5 w-3.5 text-emerald-400" />모든 데이터가 Firestore에 실시간 저장됩니다
                   </span>

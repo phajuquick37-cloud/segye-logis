@@ -136,6 +136,7 @@ export interface AggregatedRecord {
   client_name: string;
   client_biz_no: string;
   total_amount: number;
+  delivery_fee: number;
   paid_amount: number;
   unpaid_amount: number;
   due_date: string;
@@ -143,6 +144,21 @@ export interface AggregatedRecord {
   memo: string;
   row_count: number;
   split_from?: string;
+}
+
+/**
+ * "day:NN" 형식을 billing_month 기준으로 다음 달 날짜로 변환.
+ * 예) billing_month="2026-03", "day:05" → "2026-04-05"
+ * 이미 YYYY-MM-DD 형식이면 그대로 반환.
+ */
+function resolveDueDate(dueDate: string, billingMonth: string): string {
+  const m = dueDate.match(/^day:(\d{2})$/);
+  if (!m) return dueDate;
+  const [year, month] = billingMonth.split("-").map(Number);
+  let nextYear = year;
+  let nextMonth = month + 1;
+  if (nextMonth > 12) { nextMonth = 1; nextYear++; }
+  return `${nextYear}-${String(nextMonth).padStart(2, "0")}-${m[1]}`;
 }
 
 export function aggregateToRecords(
@@ -160,39 +176,50 @@ export function aggregateToRecords(
 
     const key = `${month}||${row.clientName}`;
 
+    const resolvedDueDate = row.dueDate ? resolveDueDate(row.dueDate, month) : "";
+
+    const safeN = (v: any) => { const n = Number(v); return isFinite(n) ? Math.abs(n) : 0; };
+    const rowAmt = safeN(row.amount);
+    const rowDeliveryFee = safeN(row.deliveryFee ?? 0);
+
     if (map.has(key)) {
       const r = map.get(key)!;
-      r.total_amount += row.amount;
-      r.unpaid_amount = r.total_amount - r.paid_amount;
-      r.row_count += 1;
+      r.total_amount  += rowAmt;
+      r.delivery_fee  += rowDeliveryFee;
+      r.unpaid_amount  = Math.round((r.total_amount + r.delivery_fee) * 1.1) - r.paid_amount;
+      r.row_count     += 1;
       // due_date: 가장 늦은 날짜 사용
-      if (row.dueDate && row.dueDate > r.due_date) r.due_date = row.dueDate;
+      if (resolvedDueDate && resolvedDueDate > r.due_date) r.due_date = resolvedDueDate;
       // memo 합산
       if (row.memo && !r.memo.includes(row.memo)) {
         r.memo = r.memo ? `${r.memo} / ${row.memo}` : row.memo;
       }
     } else {
+      const grandTotal = Math.round((rowAmt + rowDeliveryFee) * 1.1);
       map.set(key, {
         billing_month: month,
-        client_name: row.clientName,
-        client_biz_no: row.bizNo,
-        total_amount: row.amount,
-        paid_amount: 0,
-        unpaid_amount: row.amount,
-        due_date: row.dueDate,
-        status: row.amount === 0 ? "paid" : "unpaid",
-        memo: row.memo,
-        row_count: 1,
-        split_from: row.splitFrom,
+        client_name:   row.clientName,
+        client_biz_no: row.bizNo ?? "",
+        total_amount:  rowAmt,
+        delivery_fee:  rowDeliveryFee,
+        paid_amount:   0,
+        unpaid_amount: grandTotal,
+        due_date:      resolvedDueDate,
+        status:        grandTotal === 0 ? "paid" : "unpaid",
+        memo:          row.memo ?? "",
+        row_count:     1,
+        split_from:    row.splitFrom,
       });
     }
   });
 
-  // status 재계산
+  // status 재계산 (grandTotal = (요금+탁송료)*1.1 기준)
   map.forEach((r) => {
-    if (r.paid_amount >= r.total_amount && r.total_amount > 0) r.status = "paid";
+    const grandTotal = Math.round((r.total_amount + r.delivery_fee) * 1.1);
+    if (r.paid_amount >= grandTotal && grandTotal > 0) r.status = "paid";
     else if (r.paid_amount > 0) r.status = "partial";
     else r.status = "unpaid";
+    r.unpaid_amount = Math.max(0, grandTotal - r.paid_amount);
   });
 
   return Array.from(map.values()).sort((a, b) =>

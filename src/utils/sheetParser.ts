@@ -3,7 +3,7 @@ import * as XLSX from "xlsx";
 // ─────────────────────────────────────────────────────────────
 // 컬럼 키 정의
 // ─────────────────────────────────────────────────────────────
-export type ColKey = "date" | "client" | "amount" | "memo" | "bizno" | "duedate";
+export type ColKey = "date" | "client" | "amount" | "deliveryfee" | "memo" | "bizno" | "duedate";
 
 /** 각 컬럼 키별 인식 후보 헤더명 (앞쪽일수록 우선순위 높음) */
 export const COL_HINTS: Record<ColKey, string[]> = {
@@ -17,13 +17,18 @@ export const COL_HINTS: Record<ColKey, string[]> = {
     "발주처", "주문처", "회사명", "기업명", "client", "customer",
   ],
   amount: [
+    "요금", "기본요금", "운임요금",
     "합계금액", "청구금액", "결제금액", "총금액", "공급대가",
-    "합계", "총액", "금액", "청구", "결제", "운임", "운임비",
-    "배송비", "공급가액", "세액포함합계", "amount", "total",
+    "총액", "금액", "청구", "운임", "운임비",
+    "공급가액", "세액포함합계", "amount", "total",
+  ],
+  deliveryfee: [
+    "탁송료", "탁송비", "배달료", "배달비", "배송료", "택배비", "택배료",
+    "delivery_fee", "deliveryfee",
   ],
   memo: ["비고", "메모", "특이사항", "참고", "적요", "내용", "memo", "note", "notes"],
   bizno: ["사업자번호", "사업자등록번호", "biz_no", "bizno"],
-  duedate: ["지급기한", "납기일", "납기", "만기일", "결제기한", "due_date", "duedate"],
+  duedate: ["결제일", "결제일자", "납입일", "지급기한", "납기일", "납기", "만기일", "결제기한", "due_date", "duedate"],
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -33,6 +38,7 @@ export interface RawRow {
   date: string;       // ISO "YYYY-MM-DD" (없으면 "")
   clientName: string;
   amount: number;
+  deliveryFee: number;
   memo: string;
   bizNo: string;
   dueDate: string;
@@ -44,6 +50,7 @@ export interface DetectedCols {
   date: string | null;
   client: string | null;
   amount: string | null;
+  deliveryfee: string | null;
   memo: string | null;
   bizno: string | null;
   duedate: string | null;
@@ -116,16 +123,22 @@ function parseDate(val: any): string {
   const m3 = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
   if (m3) return `${m3[3]}-${m3[1].padStart(2, "0")}-${m3[2].padStart(2, "0")}`;
 
+  // "N일" 형식 (예: "5일", "15일") → 그대로 보존 (aggregateToRecords에서 billing_month 기준으로 변환)
+  const mDay = s.match(/^(\d{1,2})일$/);
+  if (mDay) return `day:${mDay[1].padStart(2, "0")}`;
+
   return s; // 변환 불가 시 원문 반환
 }
 
 // ─────────────────────────────────────────────────────────────
-// 금액 파서 (쉼표·원기호·공백 제거)
+// 금액 파서 (쉼표·원기호·공백 제거, NaN → 0)
 // ─────────────────────────────────────────────────────────────
 function parseAmount(val: any): number {
-  if (typeof val === "number") return Math.abs(val);
+  if (val == null || val === "") return 0;
+  if (typeof val === "number") return isNaN(val) ? 0 : Math.abs(val);
   const s = String(val).replace(/[^0-9.-]/g, "");
-  return Math.abs(Number(s) || 0);
+  const n = Number(s);
+  return isNaN(n) ? 0 : Math.abs(n);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -153,14 +166,35 @@ function sheetToResult(
 
   const headers: string[] = aoa[headerIdx].map((h: any) => String(h).trim());
 
-  // 컬럼 자동 매핑
+  // 컬럼 자동 매핑 (중요도 순서로 처리 → 이미 선택된 인덱스는 재사용 불가)
+  const usedIdx = new Set<number>();
+  function pickBest(hints: string[]): number {
+    // 점수가 가장 높고 아직 미사용인 컬럼 선택
+    let best = -1, bestScore = 0;
+    headers.forEach((h, i) => {
+      if (usedIdx.has(i)) return;
+      const hn = norm(h);
+      if (!hn) return;
+      hints.forEach((hint, priority) => {
+        const hintN = norm(hint);
+        let score = 0;
+        if (hn === hintN) score = 200 - priority;
+        else if (hn.includes(hintN) || hintN.includes(hn)) score = 100 - priority;
+        if (score > bestScore) { bestScore = score; best = i; }
+      });
+    });
+    if (best !== -1) usedIdx.add(best);
+    return best;
+  }
+
   const detectedIdx: Record<ColKey, number> = {
-    date:    bestColIdx(headers, COL_HINTS.date),
-    client:  bestColIdx(headers, COL_HINTS.client),
-    amount:  bestColIdx(headers, COL_HINTS.amount),
-    memo:    bestColIdx(headers, COL_HINTS.memo),
-    bizno:   bestColIdx(headers, COL_HINTS.bizno),
-    duedate: bestColIdx(headers, COL_HINTS.duedate),
+    client:      pickBest(COL_HINTS.client),
+    amount:      pickBest(COL_HINTS.amount),
+    deliveryfee: pickBest(COL_HINTS.deliveryfee),
+    date:        pickBest(COL_HINTS.date),
+    duedate:     pickBest(COL_HINTS.duedate),
+    memo:        pickBest(COL_HINTS.memo),
+    bizno:       pickBest(COL_HINTS.bizno),
   };
 
   if (detectedIdx.date    === -1) warnings.push("날짜 컬럼을 자동으로 찾지 못했습니다. 수동으로 지정해주세요.");
@@ -168,12 +202,13 @@ function sheetToResult(
   if (detectedIdx.amount  === -1) warnings.push("금액 컬럼을 자동으로 찾지 못했습니다. 수동으로 지정해주세요.");
 
   const detected: DetectedCols = {
-    date:    detectedIdx.date    !== -1 ? headers[detectedIdx.date]    : null,
-    client:  detectedIdx.client  !== -1 ? headers[detectedIdx.client]  : null,
-    amount:  detectedIdx.amount  !== -1 ? headers[detectedIdx.amount]  : null,
-    memo:    detectedIdx.memo    !== -1 ? headers[detectedIdx.memo]    : null,
-    bizno:   detectedIdx.bizno   !== -1 ? headers[detectedIdx.bizno]   : null,
-    duedate: detectedIdx.duedate !== -1 ? headers[detectedIdx.duedate] : null,
+    date:        detectedIdx.date        !== -1 ? headers[detectedIdx.date]        : null,
+    client:      detectedIdx.client      !== -1 ? headers[detectedIdx.client]      : null,
+    amount:      detectedIdx.amount      !== -1 ? headers[detectedIdx.amount]      : null,
+    deliveryfee: detectedIdx.deliveryfee !== -1 ? headers[detectedIdx.deliveryfee] : null,
+    memo:        detectedIdx.memo        !== -1 ? headers[detectedIdx.memo]        : null,
+    bizno:       detectedIdx.bizno       !== -1 ? headers[detectedIdx.bizno]       : null,
+    duedate:     detectedIdx.duedate     !== -1 ? headers[detectedIdx.duedate]     : null,
     allHeaders: headers,
   };
 
@@ -196,12 +231,13 @@ function sheetToResult(
     headers.forEach((h, idx) => { if (h) _original[h] = row[idx]; });
 
     rows.push({
-      date:       parseDate(get(row, "date")),
+      date:        parseDate(get(row, "date")),
       clientName,
-      amount:     parseAmount(get(row, "amount")),
-      memo:       String(get(row, "memo")).trim(),
-      bizNo:      String(get(row, "bizno")).trim(),
-      dueDate:    parseDate(get(row, "duedate")),
+      amount:      parseAmount(get(row, "amount")),
+      deliveryFee: parseAmount(get(row, "deliveryfee")),
+      memo:        String(get(row, "memo")).trim(),
+      bizNo:       String(get(row, "bizno")).trim(),
+      dueDate:     parseDate(get(row, "duedate")),
       _original,
     });
   }
@@ -212,8 +248,8 @@ function sheetToResult(
 function emptyResult(fileName: string, sheetName: string, warnings: string[]): ParseResult {
   return {
     rows: [],
-    detected: { date: null, client: null, amount: null, memo: null, bizno: null, duedate: null, allHeaders: [] },
-    detectedIdx: { date: -1, client: -1, amount: -1, memo: -1, bizno: -1, duedate: -1 },
+    detected: { date: null, client: null, amount: null, deliveryfee: null, memo: null, bizno: null, duedate: null, allHeaders: [] },
+    detectedIdx: { date: -1, client: -1, amount: -1, deliveryfee: -1, memo: -1, bizno: -1, duedate: -1 },
     fileName,
     sheetName,
     warnings,
@@ -298,13 +334,14 @@ export function reapplyColMap(
 
     // _original을 이용해 재파싱
     const rows: RawRow[] = result.rows.map((r) => ({
-      date:       parseDate(get(r._original, "date")),
-      clientName: String(get(r._original, "client")).trim() || r.clientName,
-      amount:     parseAmount(get(r._original, "amount")),
-      memo:       String(get(r._original, "memo")).trim(),
-      bizNo:      String(get(r._original, "bizno")).trim(),
-      dueDate:    parseDate(get(r._original, "duedate")),
-      _original:  r._original,
+      date:        parseDate(get(r._original, "date")),
+      clientName:  String(get(r._original, "client")).trim() || r.clientName,
+      amount:      parseAmount(get(r._original, "amount")),
+      deliveryFee: parseAmount(get(r._original, "deliveryfee")),
+      memo:        String(get(r._original, "memo")).trim(),
+      bizNo:       String(get(r._original, "bizno")).trim(),
+      dueDate:     parseDate(get(r._original, "duedate")),
+      _original:   r._original,
     })).filter((r) => r.clientName);
 
     return { ...result, rows, detectedIdx: patched };
