@@ -20,6 +20,7 @@ import {
 import {
   parseFile, ColKey, ParseResult,
   normalizeCreditClientCell, isBlankCreditClientName,
+  normalizePaymentCell, isCreditPaymentForSettlement,
 } from "../utils/sheetParser";
 import {
   detectAllAliases, applyEntitySplit, aggregateToRecords,
@@ -88,7 +89,8 @@ interface ArRecord {
 
 const COL_LABEL: Record<ColKey, string> = {
   date: "날짜", client: "거래처명", amount: "요금",
-  deliveryfee: "탁송료", memo: "비고", jeeyo: "적요", bizno: "사업자번호", duedate: "결제일",
+  deliveryfee: "탁송료", payment: "지급(신용·선불·착불)",
+  memo: "비고", jeeyo: "적요", bizno: "사업자번호", duedate: "결제일",
   row_client: "고객명(상호)",
   departure: "출발동·출발지", destination: "도착동·도착지", vehicle_type: "차량·톤수",
   driver: "기사명", vehicle_no: "차량번호", unload_client: "하차지고객",
@@ -232,7 +234,7 @@ function DropZone({ onFiles }: { onFiles: (files: File[]) => void }) {
 function ColumnMappingPanel({ result, overrides, onOverride }: {
   result: ParseResult; overrides: Partial<Record<ColKey, number>>; onOverride: (k: ColKey, i: number) => void;
 }) {
-  const REQUIRED: ColKey[] = ["client", "amount"];
+  const REQUIRED: ColKey[] = ["client", "amount", "payment"];
   const OPTIONAL: ColKey[] = [
     "deliveryfee", "duedate", "memo", "jeeyo", "date", "bizno",
     "row_client", "departure", "destination", "vehicle_type", "driver", "vehicle_no", "unload_client",
@@ -242,7 +244,7 @@ function ColumnMappingPanel({ result, overrides, onOverride }: {
     <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-2">
       <p className="text-sm font-bold text-slate-700">컬럼 매핑 확인</p>
       <p className="text-xs text-slate-500 leading-relaxed">
-        <strong className="text-slate-600">거래처명</strong> 열: 값이 있으면 신용거래처 마감에 포함, <strong>비어 있으면 일반 고객</strong>으로 보고 신용 집계에서 제외됩니다. (고객명·출발/도착 열과는 별개입니다.)
+        <strong className="text-slate-600">거래처명</strong>이 있고 <strong className="text-slate-600">지급</strong> 열에 <strong>「신용」</strong>이 적힌 행만 신용내역에 집계됩니다. 거래처명 공란·지급이 선불/착불 등이면 제외됩니다.
       </p>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
         {([...REQUIRED, ...OPTIONAL] as ColKey[]).map((key) => {
@@ -463,10 +465,17 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
         driver:       strOpt("driver", row.driver),
         vehicleNo:    strOpt("vehicle_no", row.vehicleNo),
         unloadClient: strOpt("unload_client", row.unloadClient),
+        paymentLabel:
+          patchedIdx.payment !== -1
+            ? normalizePaymentCell(getVal("payment")) || undefined
+            : undefined,
       };
     });
-    // 거래처명이 비어 있으면 일반 고객 행 → 신용 마감 집계 제외
-    const creditRowsOnly = patched.filter((r) => !isBlankCreditClientName(r.clientName));
+    const creditRowsOnly = patched.filter((r) => {
+      if (isBlankCreditClientName(r.clientName)) return false;
+      if (patchedIdx.payment === -1) return false;
+      return isCreditPaymentForSettlement(r.paymentLabel ?? "");
+    });
     setRemapEmptyClientDrop(Math.max(0, patched.length - creditRowsOnly.length));
     const split = applyEntitySplit(creditRowsOnly, splitRules);
 
@@ -588,6 +597,7 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
             if ((row as any).unloadClient) itemData.unload_client= (row as any).unloadClient;
             if ((row as any).rowClient)    itemData.row_client   = (row as any).rowClient;
             if ((row as any).jeeyo)        itemData.jeeyo        = (row as any).jeeyo;
+            if ((row as any).paymentLabel) itemData.pay_type     = (row as any).paymentLabel;
             batch.set(doc(collection(db, "ar_records", arRef.id, "items")), itemData);
           });
         });
@@ -670,6 +680,11 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
               일반 고객(거래처명 공란) <strong>{currentResult.skippedNonCreditRows}행</strong> 제외
             </span>
           )}
+          {currentResult.skippedNonCreditPaymentRows > 0 && (
+            <span className="flex items-center gap-1.5 bg-amber-50 text-amber-900 rounded-full px-3 py-1 text-xs border border-amber-200" title="선불·착불·공란 등 신용 외 지급">
+              신용 외 지급(선불·착불·공란 등) <strong>{currentResult.skippedNonCreditPaymentRows}행</strong> 제외
+            </span>
+          )}
           {remapEmptyClientDrop > 0 && (
             <span className="flex items-center gap-1.5 bg-amber-100 text-amber-900 rounded-full px-3 py-1 text-xs">
               컬럼 매핑으로 거래처명 누락 <strong>{remapEmptyClientDrop}행</strong> 집계 제외
@@ -687,8 +702,8 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
           <div className="text-xs leading-relaxed">
             <span className="font-semibold text-slate-900">신용거래처 마감 규칙</span>
             <span className="block mt-1">
-              엑셀에서 <strong>「거래처명」</strong> 열(예: AT열)에 상호가 <strong>적힌 행만</strong> 신용 내역에 합산합니다.
-              해당 칸이 <strong>비어 있으면 일반(착불) 고객</strong>으로 보고 금액이 있어도 신용 마감에서 <strong>제외</strong>됩니다.
+              <strong>거래처명</strong>에 상호가 있고, <strong>지급</strong> 열에 <strong>「신용」</strong>이 표시된 행만 신용내역에 집계됩니다.
+              거래처명 공란·지급이 <strong>선불·착불</strong> 등이면 <strong>제외</strong>됩니다. (지급 열은 컬럼 매핑에서 반드시 지정하세요.)
             </span>
           </div>
         </div>
@@ -728,7 +743,7 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
             <div>
               <span className="font-semibold">거래처 정보 미등록</span>
               <div className="mt-0.5 text-xs">
-                엑셀 <strong>거래처명</strong>에 값이 있는 행만 신용 마감에 들어갑니다.
+                엑셀 <strong>거래처명</strong> + <strong>지급「신용」</strong> 행만 신용 마감에 들어갑니다.
                 잘못 포함된 상호는 <strong>신용내역</strong>에서 체크 후 <strong>선택 삭제</strong>하세요.
               </div>
             </div>

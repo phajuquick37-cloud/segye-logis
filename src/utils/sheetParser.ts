@@ -4,7 +4,7 @@ import * as XLSX from "xlsx";
 // 컬럼 키 정의
 // ─────────────────────────────────────────────────────────────
 export type ColKey =
-  | "date" | "client" | "amount" | "deliveryfee" | "memo" | "jeeyo" | "bizno" | "duedate"
+  | "date" | "client" | "amount" | "deliveryfee" | "payment" | "memo" | "jeeyo" | "bizno" | "duedate"
   | "departure" | "destination" | "vehicle_type" | "driver" | "vehicle_no"
   | "unload_client" | "row_client";
 
@@ -36,6 +36,11 @@ export const COL_HINTS: Record<ColKey, string[]> = {
   deliveryfee: [
     "탁송료", "탁송비", "배달료", "배달비", "배송료", "택배비", "택배료",
     "delivery_fee", "deliveryfee",
+  ],
+  // 신용내역: 「신용」만 집계 — 선불/착불 등 제외 (헤더는 지급기한과 혼동 방지 위해 긴 이름 우선·정확 일치 보조)
+  payment: [
+    "지급구분", "결제구분", "수금구분", "결제방법", "수금방법", "정산구분",
+    "선착불구분", "지급방식", "결제유형", "paytype", "paymenttype",
   ],
   memo: ["비고", "메모", "특이사항", "참고", "내용", "memo", "note", "notes"],
   // 래피드 양식 비고란 등 — 비고 열과 별도
@@ -82,6 +87,8 @@ export interface RawRow {
   vehicleNo?: string;
   unloadClient?: string;
   rowClient?: string;   // 행별 고객명(상호) — 거래처명과 별도
+  /** 지급란 원문(신용/선불/착불 등) — 신용 집계 판별용 */
+  paymentLabel?: string;
   /** 원본 셀 값 전체 (컬럼 헤더 → 값) */
   _original: Record<string, any>;
 }
@@ -91,6 +98,7 @@ export interface DetectedCols {
   client: string | null;
   amount: string | null;
   deliveryfee: string | null;
+  payment: string | null;
   memo: string | null;
   jeeyo: string | null;
   bizno: string | null;
@@ -119,6 +127,8 @@ export interface ParseResult {
    * (일반 고객·착불 등 — 금액이 있어도 거래처명이 공란이면 신용거래처로 보지 않음)
    */
   skippedNonCreditRows: number;
+  /** 지급란이 신용이 아니거나 공란·지급 열 없음으로 제외된 행 수 */
+  skippedNonCreditPaymentRows: number;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -152,6 +162,42 @@ export function isBlankCreditClientName(normalized: string): boolean {
   if (/^(n\/a|#n\/a|na|none|없음|무|null)$/i.test(compact)) return true;
   return false;
 }
+
+/** 지급란 셀 정규화 */
+export function normalizePaymentCell(val: unknown): string {
+  if (val == null || val === "") return "";
+  let s = String(val).replace(/[\u200b-\u200d\ufeff]/g, "");
+  try {
+    s = s.normalize("NFKC");
+  } catch {
+    /* ignore */
+  }
+  return s.trim();
+}
+
+/**
+ * 신용내역 집계 대상 지급 여부: 「신용」 포함 시만 true (선불·착불만 표기된 행은 false)
+ */
+export function isCreditPaymentForSettlement(val: unknown): boolean {
+  const s = normalizePaymentCell(val);
+  if (!s) return false;
+  const c = s.replace(/\s+/g, "");
+  if (/비신용/.test(c)) return false;
+  return /신용/.test(c);
+}
+
+/** 「지급」 단일 헤더는 지급기한 등과 혼동되지 않게 정확 일치로만 매핑 */
+const PAYMENT_HEADER_EXACT = [
+  "지급",
+  "지급구분",
+  "결제구분",
+  "수금구분",
+  "결제방법",
+  "수금방법",
+  "정산구분",
+  "선착불",
+  "선착불구분",
+] as const;
 
 /** 신용 마감 기준 열: 헤더가 이 목록과 정확히 일치하면 최우선 매핑 */
 const CLIENT_HEADER_PREFERRED = [
@@ -292,12 +338,28 @@ function sheetToResult(
     return pickBest(COL_HINTS.client);
   }
 
+  function pickPaymentColumn(): number {
+    for (const ph of PAYMENT_HEADER_EXACT) {
+      const target = norm(ph);
+      for (let i = 0; i < headers.length; i++) {
+        if (usedIdx.has(i)) continue;
+        const hn = norm(String(headers[i] ?? ""));
+        if (hn && hn === target) {
+          usedIdx.add(i);
+          return i;
+        }
+      }
+    }
+    return pickBest(COL_HINTS.payment);
+  }
+
   const detectedIdx: Record<ColKey, number> = {
     client:       pickClientColumn(),
     amount:       pickBest(COL_HINTS.amount),
     deliveryfee:  pickBest(COL_HINTS.deliveryfee),
     date:         pickBest(COL_HINTS.date),
     duedate:      pickBest(COL_HINTS.duedate),
+    payment:      pickPaymentColumn(),
     memo:         pickBest(COL_HINTS.memo),
     jeeyo:        pickBest(COL_HINTS.jeeyo),
     bizno:        pickBest(COL_HINTS.bizno),
@@ -313,6 +375,11 @@ function sheetToResult(
   if (detectedIdx.date    === -1) warnings.push("날짜 컬럼을 자동으로 찾지 못했습니다. 수동으로 지정해주세요.");
   if (detectedIdx.client  === -1) warnings.push("거래처명 컬럼을 자동으로 찾지 못했습니다. 수동으로 지정해주세요.");
   if (detectedIdx.amount  === -1) warnings.push("금액 컬럼을 자동으로 찾지 못했습니다. 수동으로 지정해주세요.");
+  if (detectedIdx.payment === -1) {
+    warnings.push(
+      "「지급」열을 자동으로 찾지 못했습니다. 신용내역에는 지급란에 「신용」인 행만 포함됩니다. 컬럼 매핑에서 지급 열을 지정하세요."
+    );
+  }
 
   if (detectedIdx.client !== -1) {
     const ch = norm(String(headers[detectedIdx.client] ?? ""));
@@ -330,6 +397,7 @@ function sheetToResult(
     client:       h("client"),
     amount:       h("amount"),
     deliveryfee:  h("deliveryfee"),
+    payment:      h("payment"),
     memo:         h("memo"),
     jeeyo:        h("jeeyo"),
     bizno:        h("bizno"),
@@ -351,6 +419,7 @@ function sheetToResult(
 
   // 데이터 행 파싱
   const rows: RawRow[] = [];
+  let skippedNonCreditPaymentRows = 0;
   for (let i = headerIdx + 1; i < aoa.length; i++) {
     const row: any[] = aoa[i];
     // 빈 행 건너뜀
@@ -362,6 +431,17 @@ function sheetToResult(
       continue;
     }
 
+    if (detectedIdx.payment === -1) {
+      skippedNonCreditPaymentRows++;
+      continue;
+    }
+    const payRaw = get(row, "payment");
+    if (!isCreditPaymentForSettlement(payRaw)) {
+      skippedNonCreditPaymentRows++;
+      continue;
+    }
+    const paymentLabel = normalizePaymentCell(payRaw) || undefined;
+
     const _original: Record<string, any> = {};
     headers.forEach((h, idx) => { if (h) _original[h] = row[idx]; });
 
@@ -371,6 +451,7 @@ function sheetToResult(
       clientName,
       amount:       parseAmount(get(row, "amount")),
       deliveryFee:  parseAmount(get(row, "deliveryfee")),
+      paymentLabel,
       memo:         str("memo"),
       jeeyo:        str("jeeyo") || undefined,
       bizNo:        str("bizno"),
@@ -386,19 +467,22 @@ function sheetToResult(
     });
   }
 
-  return { rows, detected, detectedIdx, fileName, sheetName, warnings, skippedNonCreditRows };
+  return {
+    rows, detected, detectedIdx, fileName, sheetName, warnings,
+    skippedNonCreditRows, skippedNonCreditPaymentRows,
+  };
 }
 
 function emptyResult(fileName: string, sheetName: string, warnings: string[]): ParseResult {
   return {
     rows: [],
     detected: {
-      date: null, client: null, amount: null, deliveryfee: null, memo: null, jeeyo: null, bizno: null, duedate: null,
+      date: null, client: null, amount: null, deliveryfee: null, payment: null, memo: null, jeeyo: null, bizno: null, duedate: null,
       departure: null, destination: null, vehicle_type: null, driver: null, vehicle_no: null,
       unload_client: null, row_client: null, allHeaders: [],
     },
     detectedIdx: {
-      date: -1, client: -1, amount: -1, deliveryfee: -1, memo: -1, jeeyo: -1, bizno: -1, duedate: -1,
+      date: -1, client: -1, amount: -1, deliveryfee: -1, payment: -1, memo: -1, jeeyo: -1, bizno: -1, duedate: -1,
       departure: -1, destination: -1, vehicle_type: -1, driver: -1, vehicle_no: -1,
       unload_client: -1, row_client: -1,
     },
@@ -406,6 +490,7 @@ function emptyResult(fileName: string, sheetName: string, warnings: string[]): P
     sheetName,
     warnings,
     skippedNonCreditRows: 0,
+    skippedNonCreditPaymentRows: 0,
   };
 }
 
@@ -492,6 +577,7 @@ export function reapplyColMap(
       clientName:   normalizeCreditClientCell(get(r._original, "client")),
       amount:       parseAmount(get(r._original, "amount")),
       deliveryFee:  parseAmount(get(r._original, "deliveryfee")),
+      paymentLabel: normalizePaymentCell(get(r._original, "payment")) || undefined,
       memo:         str2(get(r._original, "memo")),
       jeeyo:        str2(get(r._original, "jeeyo")) || undefined,
       bizNo:        str2(get(r._original, "bizno")),
@@ -504,7 +590,11 @@ export function reapplyColMap(
       unloadClient: str2(get(r._original, "unload_client"))|| undefined,
       rowClient:    str2(get(r._original, "row_client"))   || undefined,
       _original:    r._original,
-    })).filter((r) => !isBlankCreditClientName(r.clientName));
+    })).filter((r) => {
+      if (isBlankCreditClientName(r.clientName)) return false;
+      if (patched.payment === -1) return false;
+      return isCreditPaymentForSettlement(get(r._original, "payment"));
+    });
 
     return { ...result, rows, detectedIdx: patched };
   });

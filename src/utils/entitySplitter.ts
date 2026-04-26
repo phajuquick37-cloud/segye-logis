@@ -1,4 +1,9 @@
-import { RawRow, isBlankCreditClientName, normalizeCreditClientCell } from "./sheetParser";
+import {
+  RawRow,
+  isBlankCreditClientName,
+  normalizeCreditClientCell,
+  isCreditPaymentForSettlement,
+} from "./sheetParser";
 
 // ─────────────────────────────────────────────────────────────
 // 패턴 감지
@@ -113,7 +118,8 @@ export function splitRow(row: RawRow, rules: SplitRule[]): SplitRow[] {
 export function applyEntitySplit(rows: RawRow[], rules: SplitRule[]): SplitRow[] {
   return rows
     .flatMap((row) => splitRow(row, rules))
-    .filter((r) => !isBlankCreditClientName(normalizeCreditClientCell(r.clientName)));
+    .filter((r) => !isBlankCreditClientName(normalizeCreditClientCell(r.clientName)))
+    .filter((r) => isCreditPaymentForSettlement(r.paymentLabel ?? ""));
 }
 
 // ─────────────────────────────────────────────────────────────
