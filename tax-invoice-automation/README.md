@@ -39,32 +39,20 @@ playwright install chromium
 
 ---
 
-## 🔧 설정 방법 (config.py)
+## 🔧 설정 방법 (환경 변수)
 
-### 1. 이메일 설정
-```python
-EMAIL_CONFIG = {
-    "email_address": "phajuquick37@gmail.com",
-    "app_password": "xxxx xxxx xxxx xxxx",  # Gmail 앱 비밀번호
-}
-```
+비밀번호·서비스 계정 경로는 **코드에 넣지 않습니다.**  
+`tax-invoice-automation/.env.example` 를 참고해 환경 변수를 설정하세요.
 
-### 2. 사업자번호 설정
-```python
-BUSINESS_CONFIG = {
-    "business_number": "1418142581",  # 실제 사업자번호
-    "company_name": "세계로지스",
-}
-```
+| 변수 | 설명 |
+|------|------|
+| `TAX_IMAP_EMAIL` / `TAX_IMAP_APP_PASSWORD` | Gmail IMAP (또는 `GMAIL_USER` / `GMAIL_APP_PASSWORD`) |
+| `TAX_GOOGLE_CREDENTIALS_PATH` 또는 `GOOGLE_APPLICATION_CREDENTIALS` | Firebase 서비스 계정 JSON 경로 |
+| `FIREBASE_PROJECT_ID`, `FIRESTORE_DATABASE_ID`, `FIREBASE_STORAGE_BUCKET` | (선택) 기본값은 config 내 프로젝트 |
+| `TAX_BUSINESS_NUMBER`, `TAX_COMPANY_NAME` 등 | (선택) 사업자·상호 표기 |
+| `TAX_EMAIL_DAYS_LIMIT`, `TAX_IMAP_FOLDERS` | (선택) 조회 일수·IMAP 폴더 |
 
-### 3. 이메일 발신자 필터 (중요!)
-```python
-EMAIL_FILTER = {
-    "from_addresses": [
-        "noreply@세금계산서발송사이트.co.kr",  # 실제 발신 주소로 변경
-    ],
-}
-```
+발신자 허용·제목 키워드 등은 `config.py` 의 `EMAIL_FILTER` 에서 조정합니다.
 
 ---
 

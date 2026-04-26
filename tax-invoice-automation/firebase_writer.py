@@ -64,7 +64,10 @@ def _init_firebase():
         logger.error("firebase-admin 미설치: pip install firebase-admin")
         return False
     except FileNotFoundError:
-        logger.error("google_credentials.json 파일 없음. Firebase Console에서 서비스 계정 키를 다운받으세요.")
+        logger.error(
+            "Firebase 서비스 계정 키가 없습니다. TAX_GOOGLE_CREDENTIALS_PATH 또는 "
+            "GOOGLE_APPLICATION_CREDENTIALS 에 JSON 경로를 설정하세요."
+        )
         return False
     except Exception as e:
         logger.error(f"Firebase 초기화 실패: {e}")

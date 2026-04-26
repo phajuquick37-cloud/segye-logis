@@ -10,6 +10,11 @@ services:
     environment:
       - TZ=Asia/Seoul
       - PYTHONUNBUFFERED=1
+      # 서비스 계정 JSON 마운트 경로 (TAX_GOOGLE_CREDENTIALS_PATH 미지정 시 config 기본값)
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/google_credentials.json
+    # 이 폴더에 .env 를 두고 사용하려면:
+    # env_file:
+    #   - .env
     volumes:
       # 서비스 계정 키 (필수 - 서버에 파일 배치 후 경로 수정)
       - ./google_credentials.json:/app/google_credentials.json:ro

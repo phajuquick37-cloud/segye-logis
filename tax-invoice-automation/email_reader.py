@@ -199,15 +199,20 @@ class EmailReader:
         self.mail = None
 
     def connect(self) -> bool:
+        addr = (EMAIL_CONFIG.get("email_address") or "").strip()
+        pwd = EMAIL_CONFIG.get("app_password") or ""
+        if not addr or not pwd:
+            logger.error(
+                "IMAP 계정이 없습니다. TAX_IMAP_EMAIL·TAX_IMAP_APP_PASSWORD "
+                "(또는 GMAIL_USER·GMAIL_APP_PASSWORD) 환경 변수를 설정하세요."
+            )
+            return False
         try:
             self.mail = imaplib.IMAP4_SSL(
                 EMAIL_CONFIG["imap_server"],
                 EMAIL_CONFIG["imap_port"]
             )
-            self.mail.login(
-                EMAIL_CONFIG["email_address"],
-                EMAIL_CONFIG["app_password"]
-            )
+            self.mail.login(addr, pwd)
             logger.info("✅ Gmail IMAP 연결 성공")
             return True
         except Exception as e:

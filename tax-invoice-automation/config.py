@@ -1,13 +1,44 @@
 # =============================================================================
 # 세계로지스 세금계산서 자동화 툴 v2 - 통합 설정 파일
+# 민감 값은 환경 변수만 사용 (코드/저장소에 비밀번호·키를 넣지 않음)
 # =============================================================================
 
 import os as _os
 import re as _re
 
-# config.py가 위치한 디렉터리 → Windows/Linux 양쪽에서 절대 경로 보장
 _BASE_DIR = _os.path.dirname(_os.path.abspath(__file__))
-_CREDENTIALS_FILE = _os.path.join(_BASE_DIR, "google_credentials.json")
+
+
+def _env(key: str, default: str = "") -> str:
+    v = _os.environ.get(key)
+    if v is None:
+        return default
+    return v.strip()
+
+
+def _env_int(key: str, default: int) -> int:
+    raw = _os.environ.get(key)
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        return int(str(raw).strip())
+    except ValueError:
+        return default
+
+
+def _env_bool(key: str, default: bool) -> bool:
+    raw = _env(key, "")
+    if not raw:
+        return default
+    return raw.lower() in ("1", "true", "yes", "on")
+
+
+# --- 서비스 계정 JSON 경로 (Firebase / Sheets 공통) ---
+_cred_path = (
+    _env("TAX_GOOGLE_CREDENTIALS_PATH")
+    or _env("GOOGLE_APPLICATION_CREDENTIALS")
+)
+_CREDENTIALS_FILE = _cred_path if _cred_path else _os.path.join(_BASE_DIR, "google_credentials.json")
 
 # 화물맨 등 tax10.co.kr ~ tax99.co.kr 스타일 발신 메일
 _TAX_NUMBER_SENDER_RE = _re.compile(r"@tax\d{1,3}\.", _re.IGNORECASE)
@@ -15,23 +46,28 @@ _TAX_NUMBER_SENDER_RE = _re.compile(r"@tax\d{1,3}\.", _re.IGNORECASE)
 # subject_keywords용 tax10 ~ tax40 (제목에 tax16 등만 있는 알림 대비)
 _SUBJECT_TAX_NUMBERS = [f"tax{n}" for n in range(10, 41)]
 
-# --- 이메일 설정 (Gmail IMAP) ---
+# --- Gmail IMAP (앱 비밀번호는 공백 없이 넣어도 됨) ---
+_imap_pw = _env("TAX_IMAP_APP_PASSWORD") or _env("GMAIL_APP_PASSWORD")
+_imap_pw_norm = _imap_pw.replace(" ", "") if _imap_pw else ""
+
 EMAIL_CONFIG = {
-    "imap_server": "imap.gmail.com",
-    "imap_port": 993,
-    "email_address": "phajuquick37@gmail.com",
-    "app_password": "mflc bqcl fkbe rfsn",
+    "imap_server": _env("TAX_IMAP_SERVER", "imap.gmail.com"),
+    "imap_port": _env_int("TAX_IMAP_PORT", 993),
+    "email_address": _env("TAX_IMAP_EMAIL") or _env("GMAIL_USER"),
+    "app_password": _imap_pw_norm,
 }
 
 # --- 이메일 필터 ---
-_EMAIL_DAYS = _os.environ.get("TAX_EMAIL_DAYS_LIMIT", "365").strip()
+_EMAIL_DAYS = _env("TAX_EMAIL_DAYS_LIMIT", "365")
 try:
     _EMAIL_DAYS_INT = max(1, min(3650, int(_EMAIL_DAYS)))
 except ValueError:
     _EMAIL_DAYS_INT = 365
 
+_imap_folders_raw = _env("TAX_IMAP_FOLDERS", "INBOX,[Gmail]/All Mail")
+_IMAP_FOLDERS = [x.strip() for x in _imap_folders_raw.split(",") if x.strip()]
+
 EMAIL_FILTER = {
-    # ── 제목 키워드: 세금계산서 발행 알림만 수집 ───────────────────────────
     "subject_keywords": [
         "세금계산서", "전자세금계산서", "계산서 발행", "계산서발행",
         "ONEBILL", "화물맨", "로지노트", "로지노트플러스", "로지노트 플러스",
@@ -40,20 +76,13 @@ EMAIL_FILTER = {
         "tax12", "tax15",
         *_SUBJECT_TAX_NUMBERS,
     ],
-    # ── 본문 링크 텍스트 키워드 (버튼명) ──────────────────────────────────
     "button_keywords": [
         "확인하기", "상세보기", "조회하기", "열람",
         "세금계산서 확인", "계산서 보기",
     ],
-    # ── 공급받는자 검증 키워드 ─────────────────────────────────────────────
-    # 이메일 본문에 아래 키워드 중 하나 이상이 있어야 수집
-    # → (주)세계로지스에게 발행된 계산서만 수집
     "recipient_keywords": [
         "세계로지스", "세 계 로 지 스",
     ],
-    # ── 발신자 도메인 차단 목록 ──────────────────────────────────────────────
-    # 허용목록으로 대부분 걸러지지만, 아래는 무조건 차단 (피싱/스팸 방어)
-    # 허용 발신자가 아닌 메일만 걸러냄 (noreply@ 단독 금지는 넣지 않음 — tax12 알림이 noreply인 경우 많음)
     "sender_domain_blocklist": [
         "qoo10.jp", "qoo10.com", "qoo10.co.kr", "university.qoo10",
         "gmarket.co.kr", "auction.co.kr", "11st.co.kr", "coupang.com",
@@ -62,8 +91,6 @@ EMAIL_FILTER = {
         "marketing@", "newsletter@",
         "promotions@", "promo@", "ads@", "info@qoo10",
     ],
-    # ── 발신자 허용 목록 ──────────────────────────────────────────────────
-    # 화물맨·전국24시콜·원콜·로지노트(플러스)·tax(숫자) 도메인 만 (그 외 발신은 무시)
     "sender_domain_allowlist": [
         "tax12.co.kr", "tax15.co.kr", "hwamulman", "cargo12",
         "onebill", "onecall", "1call",
@@ -72,12 +99,10 @@ EMAIL_FILTER = {
         "plus.logynote", "plus.loginote", "logynote-plus",
         "15887924", "ysm7924", "call24network", "24si.co",
     ],
-    # 휴지통은 보지 않음. 보관함만 보려면 INBOX 만; 보관·전체(휴지통 제외)까지 보려면 All Mail 추가
-    "imap_folders": ["INBOX", "[Gmail]/All Mail"],
+    "imap_folders": _IMAP_FOLDERS if _IMAP_FOLDERS else ["INBOX"],
     "unread_only": False,
     "mark_as_read": False,
     "days_limit": _EMAIL_DAYS_INT,
-    # ── 본문/버튼 링크 URL 차단 (발신자는 허용돼도 링크가 Qoo10 등이면 제외) ──
     "tax_invoice_url_blocklist": [
         "university.qoo10.jp",
         "university.qoo10",
@@ -85,8 +110,6 @@ EMAIL_FILTER = {
         "qoo10.com",
         "qoo10.co.kr",
     ],
-    # ── 저장 제외할 발행출처 문자열 (부분 일치, 소문자 비교) ──
-    # 예: 플랫폼명 "기타(university.qoo10.jp)" 전체 제외
     "tax_platform_exclude_substrings": [
         "university.qoo10",
         "qoo10.jp",
@@ -156,58 +179,62 @@ PLATFORM_RULES = {
     },
 }
 
-# --- 사업자 정보 ---
+# --- 사업자 정보 (조회·입력용, 비밀 아님) ---
+_bn = _env("TAX_BUSINESS_NUMBER")
+_fmt = _env("TAX_BUSINESS_NUMBER_FORMATTED")
+if _bn and not _fmt and len(_bn.replace("-", "")) == 10:
+    d = _bn.replace("-", "")
+    _fmt = f"{d[:3]}-{d[3:5]}-{d[5:]}"
+if _fmt and not _bn:
+    _bn = _fmt.replace("-", "").replace(" ", "")
+if not _bn:
+    _bn = "1418142581"
+if not _fmt:
+    _fmt = "141-81-42581"
+
 BUSINESS_CONFIG = {
-    "business_number": "1418142581",   # 하이픈 없는 10자리
-    "business_number_formatted": "141-81-42581",
-    "company_name": "세계로지스",
-    "representative": "유병철",
+    "business_number": _bn,
+    "business_number_formatted": _fmt,
+    "company_name": _env("TAX_COMPANY_NAME", "세계로지스"),
+    "representative": _env("TAX_REPRESENTATIVE", "유병철"),
 }
 
-# --- Firebase Admin SDK 설정 ---
+# --- Firebase Admin SDK ---
 FIREBASE_ADMIN_CONFIG = {
-    # 절대 경로 사용 — 서버 작업 디렉터리와 무관하게 파일을 찾음
     "credentials_file": _CREDENTIALS_FILE,
-    # 실제 홈페이지 Firebase 프로젝트
-    "project_id": "gen-lang-client-0127550748",
-    # Firebase Storage 버킷명
-    "storage_bucket": "gen-lang-client-0127550748.firebasestorage.app",
-    # 커스텀 Firestore 데이터베이스 ID (기본값이 아닌 경우 필수)
-    "database_id": "ai-studio-08ae3b29-6eb5-4e08-8bb0-f20ab80e5ffc",
+    "project_id": _env("FIREBASE_PROJECT_ID")
+    or _env("TAX_FIREBASE_PROJECT_ID", "gen-lang-client-0127550748"),
+    "storage_bucket": _env("FIREBASE_STORAGE_BUCKET")
+    or _env("TAX_FIREBASE_STORAGE_BUCKET", "gen-lang-client-0127550748.firebasestorage.app"),
+    "database_id": _env("FIRESTORE_DATABASE_ID")
+    or _env("TAX_FIRESTORE_DATABASE_ID", "ai-studio-08ae3b29-6eb5-4e08-8bb0-f20ab80e5ffc"),
 }
 
 # --- 브라우저 설정 ---
 BROWSER_CONFIG = {
     "browser": "chromium",
-    "headless": True,           # Linux 서버에서는 True (창 없이 실행)
+    "headless": True,
     "viewport": {"width": 1280, "height": 900},
     "timeout": 60000,
     "slow_mo": 400,
     "full_page_screenshot": True,
 }
 
-# --- 사업자번호 입력창 감지 선택자 (공통 속성 기반) ---
 BIZ_NUMBER_INPUT_SELECTORS = [
-    # type 기반
     "input[type='text']",
     "input[type='number']",
     "input[type='tel']",
-    # placeholder 기반 (한국어)
     "input[placeholder*='사업자']",
     "input[placeholder*='번호']",
     "input[placeholder*='등록']",
-    # name/id 기반
     "input[name*='biz']", "input[name*='Biz']",
     "input[name*='corp']", "input[name*='Corp']",
     "input[name*='reg']",  "input[id*='biz']",
     "input[id*='corp']",   "input[id*='reg']",
-    # 비밀번호 형식 입력창 (일부 사이트에서 사용)
     "input[type='password']",
 ]
 
-# --- 확인 버튼 감지 선택자 ---
 CONFIRM_BUTTON_SELECTORS = [
-    # 버튼 텍스트 기반 (Playwright :text() 사용)
     "button:has-text('확인')",
     "button:has-text('조회')",
     "button:has-text('확인하기')",
@@ -215,52 +242,46 @@ CONFIRM_BUTTON_SELECTORS = [
     "button:has-text('열람')",
     "button:has-text('Submit')",
     "button:has-text('OK')",
-    # input submit
     "input[type='submit']",
     "input[type='button'][value*='확인']",
     "input[type='button'][value*='조회']",
-    # 일반 class/id
     ".btn-confirm", ".btn-submit", ".btn-ok",
     "#btnConfirm", "#btnSubmit", "#btnOk",
     "a.btn:has-text('확인')",
 ]
 
-# --- OCR 설정 ---
+# --- OCR ---
 import platform as _platform
+
+_tesseract_path = _env("TESSERACT_PATH")
 OCR_CONFIG = {
-    "enabled": True,
-    # "tesseract" 또는 "easyocr"
-    "engine": "tesseract",
-    # OS에 따라 자동으로 tesseract 경로 설정
+    "enabled": _env_bool("TAX_OCR_ENABLED", True),
+    "engine": _env("TAX_OCR_ENGINE", "tesseract"),
     "tesseract_path": (
-        r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-        if _platform.system() == "Windows"
-        else "/usr/bin/tesseract"
+        _tesseract_path
+        if _tesseract_path
+        else (
+            r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+            if _platform.system() == "Windows"
+            else "/usr/bin/tesseract"
+        )
     ),
-    # 언어 설정
-    "languages": "kor+eng",
-    # 테이블 캡처 여부
-    "capture_tables": True,
+    "languages": _env("TESSERACT_LANGUAGES", "kor+eng"),
+    "capture_tables": _env_bool("TAX_OCR_CAPTURE_TABLES", True),
 }
 
-# --- 저장 경로 ---
 STORAGE_CONFIG = {
-    "output_dir": "output",
-    # 세금계산서 작성일 기준 연/월/일/플랫폼 폴더 구조
+    "output_dir": _env("TAX_OUTPUT_DIR", "output"),
     "folder_structure": "{year}/{month}/{day}/{platform}",
     "summary_filename": "summary_{date}.json",
 }
 
-# --- Google Sheets 설정 ---
+_sheets_cred = _env("TAX_SHEETS_CREDENTIALS_PATH")
 SHEETS_CONFIG = {
-    "enabled": True,
-    # 절대 경로 사용 — 서버 작업 디렉터리와 무관하게 파일을 찾음
-    "credentials_file": _CREDENTIALS_FILE,
-    # 스프레드시트 ID (URL에서 추출: /spreadsheets/d/[ID]/edit)
-    "spreadsheet_id": "",   # ← 실제 스프레드시트 ID 입력
-    # 데이터 기록할 시트 이름
-    "sheet_name": "세금계산서",
-    # 헤더 행 (최초 1회 자동 생성)
+    "enabled": _env_bool("TAX_SHEETS_ENABLED", True),
+    "credentials_file": _sheets_cred if _sheets_cred else _CREDENTIALS_FILE,
+    "spreadsheet_id": _env("TAX_SHEETS_SPREADSHEET_ID") or _env("GOOGLE_SHEETS_SPREADSHEET_ID", ""),
+    "sheet_name": _env("TAX_SHEETS_SHEET_NAME", "세금계산서"),
     "headers": [
         "처리일시", "발행출처", "발행일자", "승인번호",
         "공급자", "공급자_사업자번호",
