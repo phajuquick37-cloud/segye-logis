@@ -435,12 +435,12 @@ export const DocumentBody = React.forwardRef<
             <td style={{ ...cellStyle({ backgroundColor: "#f0f0f0", fontWeight: "bold", textAlign: "center" }) }}>
               합&nbsp;계&nbsp;금&nbsp;액
             </td>
-            <td style={cellStyle({ fontWeight: "bold", fontSize: "12px", letterSpacing: "1px" })}>
+            <td style={cellStyle({ fontWeight: "800", fontSize: "14px", letterSpacing: "0.5px", lineHeight: 1.4, color: "#0f172a" })}>
               {toKoreanAmount(grandTotal)}
             </td>
-            <td style={{ ...cellStyle({ backgroundColor: "#f0f0f0", fontWeight: "bold", textAlign: "center" }) }}>₩</td>
-            <td style={{ ...cellStyle({ fontWeight: "900", fontSize: "13px", textAlign: "right", fontFamily: "monospace", color: "#1a3a6b" }) }}>
-              {grandTotal.toLocaleString()}
+            <td style={{ ...cellStyle({ backgroundColor: "#f0f0f0", fontWeight: "900", textAlign: "center", fontSize: "15px", color: "#0f172a" }) }}>₩</td>
+            <td style={{ ...cellStyle({ fontWeight: "900", fontSize: "18px", textAlign: "right", fontFamily: "ui-monospace, monospace", color: "#0f172a", letterSpacing: "-0.02em" }) }}>
+              {grandTotal.toLocaleString()}&nbsp;원
             </td>
           </tr>
           <tr>
@@ -758,8 +758,8 @@ export default function StatementModal({
           <div className="flex items-center gap-3">
             <div className="text-right">
               <div className="text-xs text-slate-400">합계금액 (VAT 포함)</div>
-              <div className="text-lg font-black font-mono text-blue-700">
-                ₩ {grandTotal.toLocaleString()}
+              <div className="text-2xl font-black font-mono tabular-nums text-blue-900 tracking-tight">
+                ₩{grandTotal.toLocaleString()}
               </div>
             </div>
             <button

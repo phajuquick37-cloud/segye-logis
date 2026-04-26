@@ -1,4 +1,4 @@
-import { RawRow } from "./sheetParser";
+import { RawRow, isBlankCreditClientName, normalizeCreditClientCell } from "./sheetParser";
 
 // ─────────────────────────────────────────────────────────────
 // 패턴 감지
@@ -111,7 +111,9 @@ export function splitRow(row: RawRow, rules: SplitRule[]): SplitRow[] {
 // 전체 rows 처리
 // ─────────────────────────────────────────────────────────────
 export function applyEntitySplit(rows: RawRow[], rules: SplitRule[]): SplitRow[] {
-  return rows.flatMap((row) => splitRow(row, rules));
+  return rows
+    .flatMap((row) => splitRow(row, rules))
+    .filter((r) => !isBlankCreditClientName(normalizeCreditClientCell(r.clientName)));
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -168,8 +170,8 @@ export function aggregateToRecords(
   const map = new Map<string, AggregatedRecord>();
 
   rows.forEach((row) => {
-    // 거래처명 공란 = 일반 고객 행 — 신용 마감 집계 제외 (파서 단계와 동일 규칙)
-    if (!String(row.clientName ?? "").trim()) return;
+    const cn = normalizeCreditClientCell(row.clientName);
+    if (isBlankCreditClientName(cn)) return;
 
     // billing_month: 파일 날짜에서 추출, 없으면 override 사용
     const month =
@@ -177,7 +179,7 @@ export function aggregateToRecords(
         ? row.date.slice(0, 7)
         : billingMonthOverride;
 
-    const key = `${month}||${row.clientName}`;
+    const key = `${month}||${cn}`;
 
     const resolvedDueDate = row.dueDate ? resolveDueDate(row.dueDate, month) : "";
 
@@ -201,7 +203,7 @@ export function aggregateToRecords(
       const grandTotal = Math.round((rowAmt + rowDeliveryFee) * 1.1);
       map.set(key, {
         billing_month: month,
-        client_name:   row.clientName,
+        client_name:   cn,
         client_biz_no: row.bizNo ?? "",
         total_amount:  rowAmt,
         delivery_fee:  rowDeliveryFee,

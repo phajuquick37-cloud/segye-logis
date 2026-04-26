@@ -17,7 +17,10 @@ import {
   FileSpreadsheet, Building2, Pencil, Trash2 as Trash2Icon, Mail, Send,
 } from "lucide-react";
 
-import { parseFile, ColKey, ParseResult } from "../utils/sheetParser";
+import {
+  parseFile, ColKey, ParseResult,
+  normalizeCreditClientCell, isBlankCreditClientName,
+} from "../utils/sheetParser";
 import {
   detectAllAliases, applyEntitySplit, aggregateToRecords,
   SplitRule, AggregatedRecord, SplitRow,
@@ -444,7 +447,7 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
       };
       return {
         ...row,
-        clientName:  String(getVal("client")).trim(),
+        clientName:  normalizeCreditClientCell(getVal("client")),
         amount:      safeNum(getVal("amount")) || row.amount,
         deliveryFee: patchedIdx["deliveryfee"] !== -1
           ? safeNum(getVal("deliveryfee"))
@@ -463,7 +466,7 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
       };
     });
     // 거래처명이 비어 있으면 일반 고객 행 → 신용 마감 집계 제외
-    const creditRowsOnly = patched.filter((r) => r.clientName.trim());
+    const creditRowsOnly = patched.filter((r) => !isBlankCreditClientName(r.clientName));
     setRemapEmptyClientDrop(Math.max(0, patched.length - creditRowsOnly.length));
     const split = applyEntitySplit(creditRowsOnly, splitRules);
 
@@ -531,11 +534,12 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
           const deliv    = safeN(aggregated.delivery_fee ?? 0);
           const grandTotal = Math.round((fee + deliv) * 1.1);
 
+          const aggClient = normalizeCreditClientCell(aggregated.client_name);
           const matching = splitRows.filter((row) => {
             const rowMonth = (row.date ?? "").slice(0, 7) || billingMonth;
             return (
               rowMonth === aggregated.billing_month &&
-              row.clientName.trim() === aggregated.client_name.trim()
+              normalizeCreditClientCell(row.clientName) === aggClient
             );
           });
           const rowsToSave = matching.length > 0

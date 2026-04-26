@@ -128,6 +128,41 @@ function norm(s: string): string {
   return s.toLowerCase().replace(/[\s_\-()（）[]/g, "");
 }
 
+/** 신용 구분용 거래처명 셀 정규화 (공백·유니코드·제로폭 제거) */
+export function normalizeCreditClientCell(val: unknown): string {
+  if (val == null || val === "") return "";
+  let s = String(val).replace(/[\u200b-\u200d\ufeff]/g, "");
+  try {
+    s = s.normalize("NFKC");
+  } catch {
+    /* ignore */
+  }
+  return s.trim();
+}
+
+/**
+ * 정규화된 거래처명이 비어 있거나 공란으로 볼 값이면 true → 일반 고객(신용 집계 제외)
+ * (normalizeCreditClientCell 적용 후 문자열을 넣을 것)
+ */
+export function isBlankCreditClientName(normalized: string): boolean {
+  if (!normalized) return true;
+  const compact = normalized.replace(/[\s\u00a0]+/g, "");
+  if (!compact) return true;
+  if (/^[-–—‧·.]+$/.test(compact)) return true;
+  if (/^(n\/a|#n\/a|na|none|없음|무|null)$/i.test(compact)) return true;
+  return false;
+}
+
+/** 신용 마감 기준 열: 헤더가 이 목록과 정확히 일치하면 최우선 매핑 */
+const CLIENT_HEADER_PREFERRED = [
+  "거래처명",
+  "신용거래처",
+  "신용거래처명",
+  "정산거래처명",
+  "청구거래처명",
+  "청구거래처",
+] as const;
+
 /** 헤더 배열에서 가장 잘 맞는 컬럼 인덱스 반환 (없으면 -1) */
 function bestColIdx(headers: string[], hints: string[]): number {
   let best = -1;
@@ -241,8 +276,24 @@ function sheetToResult(
     return best;
   }
 
+  /** 「거래처명」 등 정확 일치 열을 먼저 잡고, 없을 때만 힌트 부분 일치 (상호·업체명 오인 방지) */
+  function pickClientColumn(): number {
+    for (const ph of CLIENT_HEADER_PREFERRED) {
+      const target = norm(ph);
+      for (let i = 0; i < headers.length; i++) {
+        if (usedIdx.has(i)) continue;
+        const hn = norm(String(headers[i] ?? ""));
+        if (hn && hn === target) {
+          usedIdx.add(i);
+          return i;
+        }
+      }
+    }
+    return pickBest(COL_HINTS.client);
+  }
+
   const detectedIdx: Record<ColKey, number> = {
-    client:       pickBest(COL_HINTS.client),
+    client:       pickClientColumn(),
     amount:       pickBest(COL_HINTS.amount),
     deliveryfee:  pickBest(COL_HINTS.deliveryfee),
     date:         pickBest(COL_HINTS.date),
@@ -262,6 +313,16 @@ function sheetToResult(
   if (detectedIdx.date    === -1) warnings.push("날짜 컬럼을 자동으로 찾지 못했습니다. 수동으로 지정해주세요.");
   if (detectedIdx.client  === -1) warnings.push("거래처명 컬럼을 자동으로 찾지 못했습니다. 수동으로 지정해주세요.");
   if (detectedIdx.amount  === -1) warnings.push("금액 컬럼을 자동으로 찾지 못했습니다. 수동으로 지정해주세요.");
+
+  if (detectedIdx.client !== -1) {
+    const ch = norm(String(headers[detectedIdx.client] ?? ""));
+    const preferredNorms = new Set(CLIENT_HEADER_PREFERRED.map((p) => norm(p)));
+    if (ch && !preferredNorms.has(ch)) {
+      warnings.push(
+        "자동 인식된 거래처 열이 「거래처명」과 다를 수 있습니다. 신용/일반 구분은 반드시 「거래처명」 공란 기준이므로, 아래 컬럼 매핑에서 「거래처명」 열을 확인하세요."
+      );
+    }
+  }
 
   const h = (k: ColKey) => detectedIdx[k] !== -1 ? headers[detectedIdx[k]] : null;
   const detected: DetectedCols = {
@@ -295,8 +356,8 @@ function sheetToResult(
     // 빈 행 건너뜀
     if (!row.some((c: any) => String(c).trim())) continue;
 
-    const clientName = String(get(row, "client")).trim();
-    if (!clientName) {
+    const clientName = normalizeCreditClientCell(get(row, "client"));
+    if (isBlankCreditClientName(clientName)) {
       skippedNonCreditRows++;
       continue;
     }
@@ -428,7 +489,7 @@ export function reapplyColMap(
     // _original을 이용해 재파싱
     const rows: RawRow[] = result.rows.map((r) => ({
       date:         parseDate(get(r._original, "date")),
-      clientName:   String(get(r._original, "client")).trim(),
+      clientName:   normalizeCreditClientCell(get(r._original, "client")),
       amount:       parseAmount(get(r._original, "amount")),
       deliveryFee:  parseAmount(get(r._original, "deliveryfee")),
       memo:         str2(get(r._original, "memo")),
@@ -443,7 +504,7 @@ export function reapplyColMap(
       unloadClient: str2(get(r._original, "unload_client"))|| undefined,
       rowClient:    str2(get(r._original, "row_client"))   || undefined,
       _original:    r._original,
-    })).filter((r) => r.clientName);
+    })).filter((r) => !isBlankCreditClientName(r.clientName));
 
     return { ...result, rows, detectedIdx: patched };
   });
