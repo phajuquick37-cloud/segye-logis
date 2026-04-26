@@ -1528,7 +1528,9 @@ function QuickMailPanel({ record, onClose }: { record: ArRecord; onClose: () => 
   useEffect(() => {
     const qItems = query(collection(db, "ar_records", record.id, "items"), orderBy("date", "asc"));
     const unsub = onSnapshot(qItems, (snap) => {
-      const rows: SettlementItem[] = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SettlementItem, "id">) }));
+      const rows: SettlementItem[] = snap.docs
+        .map((d) => ({ id: d.id, ...(d.data() as Omit<SettlementItem, "id">) }))
+        .sort((a, b) => (a.date || "") < (b.date || "") ? -1 : (a.date || "") > (b.date || "") ? 1 : 0);
       setItems(rows.length > 0 ? rows : [{
         date: `${record.billing_month}-01`,
         description: `${record.billing_month} 화물 운송비`,

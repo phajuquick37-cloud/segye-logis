@@ -557,10 +557,14 @@ export default function StatementModal({
       orderBy("date", "asc")
     );
     const unsub = onSnapshot(q, (snap) => {
-      const rows: SettlementItem[] = snap.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as Omit<SettlementItem, "id">),
-      }));
+      const rows: SettlementItem[] = snap.docs
+        .map((d) => ({ id: d.id, ...(d.data() as Omit<SettlementItem, "id">) }))
+        .sort((a, b) => {
+          // 날짜 오름차순 정렬 (1일 맨 위, 말일 맨 아래)
+          const da = a.date || "";
+          const db2 = b.date || "";
+          return da < db2 ? -1 : da > db2 ? 1 : 0;
+        });
       if (rows.length === 0) {
         setItems([{
           date: `${record.billing_month}-01`,
