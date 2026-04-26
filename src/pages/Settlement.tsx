@@ -761,6 +761,7 @@ export default function Settlement() {
   const [showAdd, setAdd]         = useState(false);
   const [selectedRecord, setSelectedRecord] = useState<ArRecord | null>(null);
   const [quickMailRecord, setQuickMailRecord] = useState<ArRecord | null>(null);
+  const [confirmCheckRecord, setConfirmCheck] = useState<ArRecord | null>(null);
 
   // ── 엑셀 내보내기 ──
   const handleExportExcel = () => {
@@ -930,12 +931,19 @@ export default function Settlement() {
   );
 
   // 입금 확인 체크박스 — 마감 확정 달은 차단
-  const handleCheck = async (r: ArRecord) => {
+  // 입금확인 클릭 → 확인 다이얼로그 표시
+  const handleCheck = (r: ArRecord) => {
     if (currentMonthClosed) {
       alert(`${filterMonth}은 마감 확정된 달입니다.\n월별 이력 탭에서 마감을 해제한 후 수정하세요.`);
       return;
     }
     if (!username) { setShowUserModal(true); return; }
+    setConfirmCheck(r);
+  };
+
+  // 확인 다이얼로그에서 "예" 클릭 시 실제 처리
+  const doCheck = async (r: ArRecord) => {
+    setConfirmCheck(null);
     const next = !r.checked;
     const gt   = calcGrandTotal(r);
     await updateDoc(doc(db, "ar_records", r.id), {
@@ -1380,6 +1388,81 @@ export default function Settlement() {
       {/* ── 바로 메일 전송 패널 ── */}
       {quickMailRecord && (
         <QuickMailPanel record={quickMailRecord} onClose={() => setQuickMailRecord(null)} />
+      )}
+
+      {/* ── 입금확인 다이얼로그 ── */}
+      {confirmCheckRecord && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setConfirmCheck(null)}
+        >
+          <div
+            className="w-full max-w-sm bg-white rounded-2xl shadow-2xl p-6 space-y-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* 아이콘 + 제목 */}
+            <div className="flex flex-col items-center gap-3 text-center">
+              <div className={`w-14 h-14 rounded-full flex items-center justify-center ${
+                confirmCheckRecord.checked
+                  ? "bg-red-100"
+                  : "bg-green-100"
+              }`}>
+                <CheckCircle className={`h-8 w-8 ${
+                  confirmCheckRecord.checked ? "text-red-500" : "text-green-600"
+                }`} />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-slate-800">
+                  {confirmCheckRecord.checked ? "입금확인 취소" : "입금처리"}
+                </h3>
+                <p className="text-sm text-slate-500 mt-1">
+                  <strong className="text-slate-700">{confirmCheckRecord.client_name}</strong>
+                </p>
+                <p className="text-sm text-slate-500 mt-0.5">
+                  {confirmCheckRecord.checked
+                    ? "입금확인을 취소하시겠습니까?"
+                    : "입금처리 하시겠습니까?"}
+                </p>
+                {!confirmCheckRecord.checked && (
+                  <p className="text-xs text-slate-400 mt-1">
+                    확인자: <strong className="text-slate-600">{username}</strong>
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* 금액 요약 */}
+            <div className="bg-slate-50 rounded-xl px-4 py-3 text-sm">
+              <div className="flex justify-between text-slate-600">
+                <span>청구금액 (VAT포함)</span>
+                <span className="font-bold font-mono text-slate-800">
+                  ₩ {calcGrandTotal(confirmCheckRecord).toLocaleString()}
+                </span>
+              </div>
+            </div>
+
+            {/* 버튼 */}
+            <div className="flex gap-3">
+              <Button
+                variant="outline"
+                className="flex-1 text-slate-600 border-slate-300 hover:bg-slate-50"
+                onClick={() => setConfirmCheck(null)}
+              >
+                아니오
+              </Button>
+              <Button
+                className={`flex-1 font-bold text-white ${
+                  confirmCheckRecord.checked
+                    ? "bg-red-500 hover:bg-red-600"
+                    : "bg-green-700 hover:bg-green-800"
+                }`}
+                onClick={() => doCheck(confirmCheckRecord)}
+              >
+                예
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
 
 
