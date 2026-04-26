@@ -10,14 +10,14 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { db } from "../../lib/firebase";
 import {
-  collection, onSnapshot, query, orderBy,
-  doc, setDoc, deleteDoc, serverTimestamp,
+  collection, onSnapshot, query, orderBy, where,
+  doc, setDoc, deleteDoc, getDocs, writeBatch, serverTimestamp,
 } from "firebase/firestore";
 import { Badge } from "../../../components/ui/badge";
 import { Button } from "../../../components/ui/button";
 import {
   Lock, Unlock, CheckCircle, AlertCircle, Clock,
-  TrendingUp, ChevronRight, Calendar, Users,
+  TrendingUp, ChevronRight, Calendar, Users, Trash2,
 } from "lucide-react";
 
 // ─────────────────────────────────────────────────────────────
@@ -119,8 +119,9 @@ export default function MonthlyHistory({
   username: string;
   onSelectMonth: (month: string) => void;
 }) {
-  const [closures, setClosures] = useState<MonthClosure[]>([]);
-  const [confirm, setConfirm]   = useState<{ month: string; action: "close" | "open" } | null>(null);
+  const [closures, setClosures]   = useState<MonthClosure[]>([]);
+  const [confirm, setConfirm]     = useState<{ month: string; action: "close" | "open" | "delete" } | null>(null);
+  const [deleting, setDeleting]   = useState(false);
 
   // ── ar_closures 실시간 구독 ──
   useEffect(() => {
@@ -186,6 +187,29 @@ export default function MonthlyHistory({
   const handleOpen = async (month: string) => {
     await deleteDoc(doc(db, "ar_closures", month));
     setConfirm(null);
+  };
+
+  // ── 월 전체 삭제 (ar_records + ar_closures) ──
+  const handleDeleteMonth = async (month: string) => {
+    setDeleting(true);
+    try {
+      // 해당 월의 ar_records 모두 조회
+      const snap = await getDocs(
+        query(collection(db, "ar_records"), where("billing_month", "==", month))
+      );
+      // 500개 단위로 배치 삭제
+      const ids = snap.docs.map((d) => d.id);
+      for (let i = 0; i < ids.length; i += 490) {
+        const batch = writeBatch(db);
+        ids.slice(i, i + 490).forEach((id) => batch.delete(doc(db, "ar_records", id)));
+        await batch.commit();
+      }
+      // 마감 문서도 삭제 (있으면)
+      await deleteDoc(doc(db, "ar_closures", month)).catch(() => {});
+    } finally {
+      setDeleting(false);
+      setConfirm(null);
+    }
   };
 
   // ── 전체 통계 ──
@@ -340,7 +364,7 @@ export default function MonthlyHistory({
 
                     {/* 액션 */}
                     <td className="px-3 py-4">
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         {/* 이 달 보기 */}
                         <button
                           onClick={() => onSelectMonth(s.month)}
@@ -367,6 +391,16 @@ export default function MonthlyHistory({
                             <Lock className="h-3 w-3" />확정
                           </button>
                         )}
+
+                        {/* 월 전체 삭제 */}
+                        <button
+                          onClick={() => setConfirm({ month: s.month, action: "delete" })}
+                          className="flex items-center gap-1 text-xs text-slate-400 hover:text-red-600 border border-slate-200 rounded-lg px-2 py-1 hover:bg-red-50 hover:border-red-200 transition-colors"
+                          title={`${s.month} 데이터 전체 삭제`}
+                          disabled={deleting}
+                        >
+                          <Trash2 className="h-3 w-3" />삭제
+                        </button>
                       </div>
                     </td>
                   </tr>
@@ -406,6 +440,25 @@ export default function MonthlyHistory({
           onCancel={() => setConfirm(null)}
         />
       )}
+
+      {confirm?.action === "delete" && (() => {
+        const s = summaries.find((m) => m.month === confirm.month);
+        return (
+          <ConfirmDialog
+            title={`${confirm.month} 데이터 전체 삭제`}
+            description={
+              `⚠️ 이 달의 신용내역 데이터를 완전히 삭제합니다.\n\n` +
+              `• 거래처: ${s?.clientCount ?? 0}개\n` +
+              `• 청구액: ${(s?.totalBilled ?? 0).toLocaleString()}원\n\n` +
+              `삭제된 데이터는 복구할 수 없습니다.\n정말 삭제하시겠습니까?`
+            }
+            confirmLabel={deleting ? "삭제 중..." : "전체 삭제"}
+            confirmClass="bg-red-600 hover:bg-red-700 text-white"
+            onConfirm={() => handleDeleteMonth(confirm.month)}
+            onCancel={() => setConfirm(null)}
+          />
+        );
+      })()}
     </div>
   );
 }
