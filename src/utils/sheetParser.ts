@@ -14,7 +14,9 @@ export const COL_HINTS: Record<ColKey, string[]> = {
     "날짜", "일자", "거래일", "작성일", "발행일", "배송일", "출고일",
     "인도일", "처리일", "주문일", "거래날짜", "기일", "date",
   ],
-  // ★ 신용거래처 컬럼 — 청구·마감 대상 "거래처" 열만 인식
+  // ★ 신용거래처 컬럼(예: 엑셀 AT열 「거래처명」)
+  //   · 셀에 상호가 있으면 → 신용거래처 마감 집계 대상
+  //   · 비어 있으면 → 일반(착불) 고객 행으로 보고 집계에서 제외 (고객명·출발/도착 등 다른 열과 무관)
   //   ※ "상호" 단독 힌트는 제외 — "고객명(상호)" 등이 거래처로 오인되는 것 방지
   client: [
     "거래처명", "거래처",
@@ -112,6 +114,11 @@ export interface ParseResult {
   fileName: string;
   sheetName: string;
   warnings: string[];
+  /**
+   * 거래처명(client) 열이 비어 있어 신용 마감 집계에서 제외된 데이터 행 수.
+   * (일반 고객·착불 등 — 금액이 있어도 거래처명이 공란이면 신용거래처로 보지 않음)
+   */
+  skippedNonCreditRows: number;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -196,6 +203,7 @@ function sheetToResult(
   sheetName: string
 ): ParseResult {
   const warnings: string[] = [];
+  let skippedNonCreditRows = 0;
 
   // 2차원 배열로 변환
   const aoa: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
@@ -288,7 +296,10 @@ function sheetToResult(
     if (!row.some((c: any) => String(c).trim())) continue;
 
     const clientName = String(get(row, "client")).trim();
-    if (!clientName) continue;
+    if (!clientName) {
+      skippedNonCreditRows++;
+      continue;
+    }
 
     const _original: Record<string, any> = {};
     headers.forEach((h, idx) => { if (h) _original[h] = row[idx]; });
@@ -314,7 +325,7 @@ function sheetToResult(
     });
   }
 
-  return { rows, detected, detectedIdx, fileName, sheetName, warnings };
+  return { rows, detected, detectedIdx, fileName, sheetName, warnings, skippedNonCreditRows };
 }
 
 function emptyResult(fileName: string, sheetName: string, warnings: string[]): ParseResult {
@@ -333,6 +344,7 @@ function emptyResult(fileName: string, sheetName: string, warnings: string[]): P
     fileName,
     sheetName,
     warnings,
+    skippedNonCreditRows: 0,
   };
 }
 
@@ -416,7 +428,7 @@ export function reapplyColMap(
     // _original을 이용해 재파싱
     const rows: RawRow[] = result.rows.map((r) => ({
       date:         parseDate(get(r._original, "date")),
-      clientName:   String(get(r._original, "client")).trim() || r.clientName,
+      clientName:   String(get(r._original, "client")).trim(),
       amount:       parseAmount(get(r._original, "amount")),
       deliveryFee:  parseAmount(get(r._original, "deliveryfee")),
       memo:         str2(get(r._original, "memo")),

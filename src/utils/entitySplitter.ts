@@ -168,6 +168,9 @@ export function aggregateToRecords(
   const map = new Map<string, AggregatedRecord>();
 
   rows.forEach((row) => {
+    // 거래처명 공란 = 일반 고객 행 — 신용 마감 집계 제외 (파서 단계와 동일 규칙)
+    if (!String(row.clientName ?? "").trim()) return;
+
     // billing_month: 파일 날짜에서 추출, 없으면 override 사용
     const month =
       row.date && row.date.length >= 7

@@ -238,6 +238,9 @@ function ColumnMappingPanel({ result, overrides, onOverride }: {
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-2">
       <p className="text-sm font-bold text-slate-700">컬럼 매핑 확인</p>
+      <p className="text-xs text-slate-500 leading-relaxed">
+        <strong className="text-slate-600">거래처명</strong> 열: 값이 있으면 신용거래처 마감에 포함, <strong>비어 있으면 일반 고객</strong>으로 보고 신용 집계에서 제외됩니다. (고객명·출발/도착 열과는 별개입니다.)
+      </p>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
         {([...REQUIRED, ...OPTIONAL] as ColKey[]).map((key) => {
           const idx = effectiveIdx(key); const ok = idx !== -1; const req = REQUIRED.includes(key);
@@ -388,6 +391,8 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
   const [creditNames, setCreditNames] = useState<Set<string>>(new Set());
   const [profilesLoaded, setProfilesLoaded] = useState(false);
   const [skippedCount, setSkipped]    = useState(0);
+  /** 컬럼 매핑 변경으로 거래처명이 비게 되어 집계에서 뺀 행 수(파싱 시 포함됐던 행만) */
+  const [remapEmptyClientDrop, setRemapEmptyClientDrop] = useState(0);
 
   useEffect(() => {
     getDocs(query(collection(db, "client_profiles"), orderBy("name")))
@@ -439,7 +444,7 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
       };
       return {
         ...row,
-        clientName:  String(getVal("client")).trim() || row.clientName,
+        clientName:  String(getVal("client")).trim(),
         amount:      safeNum(getVal("amount")) || row.amount,
         deliveryFee: patchedIdx["deliveryfee"] !== -1
           ? safeNum(getVal("deliveryfee"))
@@ -457,10 +462,13 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
         unloadClient: strOpt("unload_client", row.unloadClient),
       };
     });
-    const split = applyEntitySplit(patched, splitRules);
+    // 거래처명이 비어 있으면 일반 고객 행 → 신용 마감 집계 제외
+    const creditRowsOnly = patched.filter((r) => r.clientName.trim());
+    setRemapEmptyClientDrop(Math.max(0, patched.length - creditRowsOnly.length));
+    const split = applyEntitySplit(creditRowsOnly, splitRules);
 
-    // ── 마감 파일: 거래처 정보 없이도 전체 행 포함 (이전과 동일)
-    //    등록된 신용거래처 목록이 있으면, 미등록 행 수만 안내(선택 삭제는 신용내역 탭에서)
+    // ── 신용 마감: 거래처명이 있는 행만 집계 (거래처 정보 탭 미등록이어도 업로드 가능)
+    //    미등록 상호는 skippedCount로 안내, 신용내역에서 선택 삭제 가능
     const filtered = split;
     let unregistered = 0;
     if (profilesLoaded && creditNames.size > 0) {
@@ -650,13 +658,36 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
         )}
         <div className="flex flex-wrap gap-3 text-sm">
           <span className="flex items-center gap-1.5 bg-slate-100 rounded-full px-3 py-1"><FileText className="h-3.5 w-3.5 text-slate-500" /><strong>{currentResult.fileName}</strong></span>
-          <span className="flex items-center gap-1.5 bg-blue-100 text-blue-700 rounded-full px-3 py-1"><strong>{currentResult.rows.length}행</strong> 인식</span>
+          <span className="flex items-center gap-1.5 bg-blue-100 text-blue-700 rounded-full px-3 py-1" title="거래처명 열에 값이 있는 행만">
+            <strong>{currentResult.rows.length}행</strong> 신용 마감 집계
+          </span>
+          {currentResult.skippedNonCreditRows > 0 && (
+            <span className="flex items-center gap-1.5 bg-slate-200 text-slate-700 rounded-full px-3 py-1 text-xs" title="거래처명이 공란인 행은 일반 고객으로 보고 제외">
+              일반 고객(거래처명 공란) <strong>{currentResult.skippedNonCreditRows}행</strong> 제외
+            </span>
+          )}
+          {remapEmptyClientDrop > 0 && (
+            <span className="flex items-center gap-1.5 bg-amber-100 text-amber-900 rounded-full px-3 py-1 text-xs">
+              컬럼 매핑으로 거래처명 누락 <strong>{remapEmptyClientDrop}행</strong> 집계 제외
+            </span>
+          )}
           {currentResult.warnings.map((w, i) => (
             <span key={i} className="flex items-center gap-1 bg-red-100 text-red-700 rounded-full px-3 py-1 text-xs"><AlertTriangle className="h-3 w-3" />{w}</span>
           ))}
         </div>
         <ColumnMappingPanel result={currentResult} overrides={colOverrides} onOverride={(key, idx) => setColOv((p) => ({ ...p, [key]: idx }))} />
         <SplitRulesPanel rules={splitRules} onChange={setSplitR} />
+
+        <div className="flex items-start gap-2 text-sm rounded-lg px-3 py-2 border border-blue-100 bg-blue-50/80 text-slate-800">
+          <CreditCard className="h-4 w-4 mt-0.5 shrink-0 text-blue-600" />
+          <div className="text-xs leading-relaxed">
+            <span className="font-semibold text-slate-900">신용거래처 마감 규칙</span>
+            <span className="block mt-1">
+              엑셀에서 <strong>「거래처명」</strong> 열(예: AT열)에 상호가 <strong>적힌 행만</strong> 신용 내역에 합산합니다.
+              해당 칸이 <strong>비어 있으면 일반(착불) 고객</strong>으로 보고 금액이 있어도 신용 마감에서 <strong>제외</strong>됩니다.
+            </span>
+          </div>
+        </div>
 
         {/* 신용거래처 필터 결과 안내 */}
         {!profilesLoaded ? (
@@ -672,18 +703,18 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
           }`}>
             <Building2 className="h-4 w-4 mt-0.5 shrink-0" />
             <div>
-              <span className="font-semibold">마감 파일 전체 반영</span>
+              <span className="font-semibold">신용 마감 집계 안내</span>
               <span className="ml-2 text-xs opacity-80">
-                (등록 거래처 {creditNames.size}개 기준 안내)
+                (거래처 정보 탭 등록 {creditNames.size}개 기준)
               </span>
               {skippedCount > 0 && (
                 <div className="mt-0.5 text-xs">
-                  거래처 정보에 <strong>없는 이름</strong>의 행이 <strong>{skippedCount}행</strong> 있습니다.
+                  집계에 포함된 상호 중, 거래처 정보에 <strong>없는 이름</strong>이 <strong>{skippedCount}행</strong> 있습니다.
                   저장 후 <strong>신용내역</strong>에서 해당 업체를 체크하고 <strong>선택 삭제</strong>하면 합계가 다시 계산됩니다.
                 </div>
               )}
               {skippedCount === 0 && (
-                <div className="mt-0.5 text-xs">모든 행의 거래처명이 등록 목록과 일치합니다.</div>
+                <div className="mt-0.5 text-xs">집계된 신용 거래처명이 모두 등록 목록과 일치합니다.</div>
               )}
             </div>
           </div>
@@ -693,8 +724,8 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
             <div>
               <span className="font-semibold">거래처 정보 미등록</span>
               <div className="mt-0.5 text-xs">
-                엑셀의 <strong>거래처명 기준 전체 행</strong>이 마감에 포함됩니다.
-                일반 신용고객이 섞였다면 <strong>신용내역</strong>에서 체크 후 <strong>선택 삭제</strong>하세요.
+                엑셀 <strong>거래처명</strong>에 값이 있는 행만 신용 마감에 들어갑니다.
+                잘못 포함된 상호는 <strong>신용내역</strong>에서 체크 후 <strong>선택 삭제</strong>하세요.
               </div>
             </div>
           </div>
