@@ -280,6 +280,18 @@ class EmailReader:
 
                     body = get_email_body(msg)
 
+                    # ── 4순위: 공급받는자 검증 ─────────────────────────────────
+                    # 이메일 본문에 "세계로지스"가 없으면 당사 앞으로 발행된
+                    # 계산서가 아니므로 제외
+                    recipient_kws = EMAIL_FILTER.get("recipient_keywords", [])
+                    if recipient_kws:
+                        body_all = (body["html"] + body["text"]).lower()
+                        if not any(rk.lower() in body_all for rk in recipient_kws):
+                            logger.info(
+                                f"⏭ 수신자 미일치 (세계로지스 미포함) — 제목: [{subject[:40]}]"
+                            )
+                            continue
+
                     # 1순위: 버튼 텍스트 링크
                     links = []
                     if body["html"]:

@@ -18,41 +18,54 @@ EMAIL_CONFIG = {
 
 # --- 이메일 필터 ---
 EMAIL_FILTER = {
-    # 제목에 포함된 키워드 — 세금계산서 관련만 엄격하게 필터링
+    # ── 제목 키워드: 세금계산서 발행 알림만 수집 ───────────────────────────
     "subject_keywords": [
-        "세금계산서", "전자세금계산서", "계산서발행",
-        "ONEBILL", "화물맨", "로지노트", "tax12", "tax15",
+        "세금계산서", "전자세금계산서", "계산서 발행", "계산서발행",
+        "ONEBILL", "화물맨", "로지노트", "전국24시", "24시콜",
+        "tax12", "tax15", "tax16", "tax17", "tax18", "tax19", "tax20",
     ],
-    # 본문 링크 텍스트 키워드 (버튼명)
+    # ── 본문 링크 텍스트 키워드 (버튼명) ──────────────────────────────────
     "button_keywords": [
         "확인하기", "상세보기", "조회하기", "열람",
         "세금계산서 확인", "계산서 보기",
     ],
+    # ── 공급받는자 검증 키워드 ─────────────────────────────────────────────
+    # 이메일 본문에 아래 키워드 중 하나 이상이 있어야 수집
+    # → (주)세계로지스에게 발행된 계산서만 수집
+    "recipient_keywords": [
+        "세계로지스", "세 계 로 지 스",
+    ],
     # ── 발신자 도메인 차단 목록 ──────────────────────────────────────────────
-    # 아래 문자열이 발신자(From)에 포함되면 키워드 매칭과 무관하게 무조건 제외
+    # 허용목록으로 대부분 걸러지지만, 아래는 무조건 차단 (피싱/스팸 방어)
     "sender_domain_blocklist": [
-        # Qoo10 계열 전체 차단 (university.qoo10.jp 등 모든 서브도메인 포함)
+        # Qoo10 계열 전체
         "qoo10.jp", "qoo10.com", "qoo10.co.kr", "university.qoo10",
         # 국내외 마켓플레이스
         "gmarket.co.kr", "auction.co.kr", "11st.co.kr", "coupang.com",
         "tmon.co.kr", "wemakeprice.com", "interpark.com",
         "amazon.com", "aliexpress.com", "ebay.com",
-        # SNS / 포털
-        "naver.com", "kakao.com", "daum.net",
-        # 광고·뉴스레터 발신 패턴
+        # 광고·뉴스레터 패턴 (발신자 로컬파트 기준)
         "marketing@", "newsletter@", "noreply@", "no-reply@",
         "promotions@", "promo@", "ads@", "info@qoo10",
+        # SNS (세금계산서 플랫폼이 포털메일을 쓰는 경우를 위해 제거하지 않음)
+        # naver.com, kakao.com 은 허용목록으로 제어
     ],
-    # ── 발신자 도메인 허용 목록 ──────────────────────────────────────────────
-    # allowlist가 설정되면 "발신자"가 이 목록에 매칭되는 메일만 수집
-    # (subject 키워드만 맞고 발신자가 다르면 거부 → 스팸 차단 강화)
+    # ── 발신자 허용 목록 ──────────────────────────────────────────────────
+    # 아래 문자열이 발신자(From)에 포함될 때만 수집
+    # (나머지는 제목 키워드와 무관하게 거부)
     "sender_domain_allowlist": [
+        # 화물맨 (tax12/tax15 플랫폼)
         "tax12.co.kr", "tax15.co.kr", "hwamulman", "cargo12",
+        # 원콜 / ONEBILL
         "onebill", "onecall", "1call",
+        # 로지노트
         "loginote", "logynote", "logi-note",
+        # 전국24시콜화물 (도메인: 15887924.com, 이메일: ysm7924@naver.com 등)
+        "15887924", "ysm7924", "call24network", "24si.co",
+        # 홈택스 / 국세청
         "hometax.go.kr", "nts.go.kr", "keci.or.kr",
     ],
-    # ★ 3월~현재 강제 전체 수집 (90일치, 읽은 메일 포함)
+    # 읽은 메일 포함 90일치 수집
     "unread_only": False,
     "mark_as_read": False,
     "days_limit": 90,
@@ -63,22 +76,27 @@ PLATFORM_RULES = {
     "화물맨": {
         "domains": ["tax12.co.kr", "tax15.co.kr", "hwamulman", "cargo12"],
         "subject_keywords": ["화물맨", "tax12", "tax15"],
-        "sender_keywords": ["hwamulman", "tax12", "tax15"],
+        "sender_keywords": ["hwamulman", "tax12", "tax15", "cargo12"],
     },
     "원콜(ONEBILL)": {
         "domains": ["onecall", "onebill", "1call"],
         "subject_keywords": ["ONEBILL", "원콜", "onebill"],
-        "sender_keywords": ["onecall", "onebill"],
+        "sender_keywords": ["onecall", "onebill", "1call"],
     },
     "로지노트": {
         "domains": ["loginote", "logynote", "logi-note"],
         "subject_keywords": ["로지노트", "loginote"],
-        "sender_keywords": ["loginote", "logynote"],
+        "sender_keywords": ["loginote", "logynote", "logi-note"],
+    },
+    "전국24시콜화물": {
+        "domains": ["15887924", "ysm7924", "call24network", "24si.co"],
+        "subject_keywords": ["전국24시", "24시콜", "15887924"],
+        "sender_keywords": ["15887924", "ysm7924", "call24network"],
     },
     "홈택스": {
-        "domains": ["hometax.go.kr", "nts.go.kr"],
+        "domains": ["hometax.go.kr", "nts.go.kr", "keci.or.kr"],
         "subject_keywords": ["국세청", "홈택스"],
-        "sender_keywords": ["nts.go.kr", "hometax"],
+        "sender_keywords": ["nts.go.kr", "hometax", "keci.or.kr"],
     },
 }
 
