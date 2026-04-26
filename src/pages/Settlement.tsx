@@ -349,7 +349,20 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
   const [saving, setSaving]       = useState(false);
   const [saved, setSaved]         = useState(false);
   const [saveError, setSaveErr]   = useState("");
-  const autoSaveRef               = useRef(false); // 자동저장 중복 방지
+  const autoSaveRef               = useRef(false);
+
+  // ── 신용거래처 등록 목록 (client_profiles) ──
+  const [creditNames, setCreditNames] = useState<Set<string>>(new Set());
+  const [skippedCount, setSkipped]    = useState(0);
+
+  useEffect(() => {
+    getDocs(query(collection(db, "client_profiles"), orderBy("name")))
+      .then((snap) => {
+        const names = new Set(snap.docs.map((d) => (d.data().name as string).trim()));
+        setCreditNames(names);
+      })
+      .catch(() => {});
+  }, []);
 
   const handleFiles = async (incoming: File[]) => {
     autoSaveRef.current = false; // 새 파일이면 자동저장 플래그 초기화
@@ -391,8 +404,18 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
     });
     const split = applyEntitySplit(patched, splitRules);
     setSplitRows(split);
-    setPreview(aggregateToRecords(split, billingMonth));
-  }, [currentResult, colOverrides, splitRules, billingMonth]);
+
+    // ── 신용거래처 필터 ──────────────────────────────────────────────────────
+    // client_profiles에 등록된 거래처만 포함. 미등록이면 전체 포함(fallback).
+    let filtered = split;
+    if (creditNames.size > 0) {
+      filtered = split.filter((r) => creditNames.has(r.clientName.trim()));
+      setSkipped(split.length - filtered.length);
+    } else {
+      setSkipped(0);
+    }
+    setPreview(aggregateToRecords(filtered, billingMonth));
+  }, [currentResult, colOverrides, splitRules, billingMonth, creditNames]);
 
   useEffect(() => {
     if (!currentResult) return;
@@ -570,6 +593,44 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
         </div>
         <ColumnMappingPanel result={currentResult} overrides={colOverrides} onOverride={(key, idx) => setColOv((p) => ({ ...p, [key]: idx }))} />
         <SplitRulesPanel rules={splitRules} onChange={setSplitR} />
+
+        {/* 신용거래처 필터 결과 안내 */}
+        {creditNames.size > 0 ? (
+          <div className={`flex items-start gap-2 text-sm rounded-lg px-3 py-2 border ${
+            skippedCount > 0
+              ? "bg-amber-50 border-amber-200 text-amber-800"
+              : "bg-emerald-50 border-emerald-200 text-emerald-800"
+          }`}>
+            <Building2 className="h-4 w-4 mt-0.5 shrink-0" />
+            <div>
+              <span className="font-semibold">신용거래처 필터 적용 중</span>
+              <span className="ml-2 text-xs opacity-80">
+                (등록된 신용거래처 {creditNames.size}개 기준)
+              </span>
+              {skippedCount > 0 && (
+                <div className="mt-0.5 text-xs">
+                  일반/미등록 고객 행 <strong>{skippedCount}행</strong> 제외됨 —
+                  신용거래처로 추가하려면 <strong>거래처 정보</strong> 탭에서 등록하세요.
+                </div>
+              )}
+              {skippedCount === 0 && (
+                <div className="mt-0.5 text-xs">모든 행이 등록된 신용거래처입니다.</div>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-start gap-2 text-sm bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-blue-700">
+            <Building2 className="h-4 w-4 mt-0.5 shrink-0" />
+            <div>
+              <span className="font-semibold">신용거래처 미등록 상태</span>
+              <div className="mt-0.5 text-xs">
+                "거래처 정보" 탭에서 신용거래처를 등록하면, 업로드 시 해당 거래처만 자동으로 포함됩니다.
+                현재는 <strong>거래처명 컬럼이 있는 행 전체</strong>를 포함합니다.
+              </div>
+            </div>
+          </div>
+        )}
+
         {preview.length > 0 && (
           <PreviewTable records={preview} billingMonth={billingMonth} onChangeBillingMonth={setBM}
             onChangeAmount={handleChangeAmount} onRemove={(idx) => setPreview((p) => p.filter((_, i) => i !== idx))} />
