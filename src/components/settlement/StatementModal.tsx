@@ -240,7 +240,7 @@ export interface ClientProfile {
 // ─────────────────────────────────────────────────────────────
 // 거래명세표 본문 (인쇄/캡처 대상)
 // ─────────────────────────────────────────────────────────────
-const DocumentBody = React.forwardRef<
+export const DocumentBody = React.forwardRef<
   HTMLDivElement,
   { record: ArRecord; items: SettlementItem[]; profile?: ClientProfile | null }
 >(({ record, items, profile }, ref) => {

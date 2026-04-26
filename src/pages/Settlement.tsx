@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { db } from "../lib/firebase";
 import {
   collection, query, orderBy, onSnapshot,
-  addDoc, updateDoc, deleteDoc, doc, serverTimestamp, writeBatch, getDocs, setDoc,
+  addDoc, updateDoc, deleteDoc, doc, serverTimestamp, writeBatch, getDocs, setDoc, where,
 } from "firebase/firestore";
 import * as XLSX from "xlsx";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
@@ -14,7 +14,7 @@ import {
   ArrowLeft, Upload, Plus, Trash2, CheckCircle, AlertCircle, Clock,
   User, X, FileText, AlertTriangle, Scissors, RotateCcw, Save,
   Search, Lock, History, CreditCard, Cloud, CloudOff, Loader2,
-  FileSpreadsheet, Building2, Pencil, Trash2 as Trash2Icon,
+  FileSpreadsheet, Building2, Pencil, Trash2 as Trash2Icon, Mail, Send,
 } from "lucide-react";
 
 import { parseFile, ColKey, ParseResult } from "../utils/sheetParser";
@@ -24,7 +24,9 @@ import {
 } from "../utils/entitySplitter";
 import { useStaffProfile } from "../hooks/useStaffProfile";
 import MonthlyHistory, { useMonthClosures } from "../components/settlement/MonthlyHistory";
-import StatementModal from "../components/settlement/StatementModal";
+import StatementModal, { DocumentBody, SettlementItem, ClientProfile as ModalClientProfile } from "../components/settlement/StatementModal";
+import html2canvas from "html2canvas";
+import { SUPPLIER, VAT_RATE } from "../config/companyInfo";
 
 // ─────────────────────────────────────────────────────────────
 // 타입 & 상수
@@ -697,6 +699,7 @@ export default function Settlement() {
   const [showUpload, setUpload]   = useState(false);
   const [showAdd, setAdd]         = useState(false);
   const [selectedRecord, setSelectedRecord] = useState<ArRecord | null>(null);
+  const [quickMailRecord, setQuickMailRecord] = useState<ArRecord | null>(null);
 
   // ── 엑셀 내보내기 ──
   const handleExportExcel = () => {
@@ -1079,7 +1082,7 @@ export default function Settlement() {
                       const isExpanded  = expandedId === r.id;
                       return (
                         <React.Fragment key={r.id}>
-                        <tr className={`transition-colors ${r.checked ? "bg-emerald-50/60" : isOverdue ? "bg-red-50 hover:bg-red-100/60" : "hover:bg-slate-50"}`}>
+                        <tr className={`transition-colors ${r.checked ? "bg-green-100 border-l-4 border-l-green-600" : isOverdue ? "bg-red-50 hover:bg-red-100/60" : "hover:bg-slate-50"}`}>
 
                           {/* 거래처명 — 클릭 시 거래명세표 모달 열기 / ▶ 클릭 시 세부 내역 펼치기 */}
                           <td className="px-4 py-3">
@@ -1151,19 +1154,19 @@ export default function Settlement() {
                                 onClick={() => handleCheck(r)}
                                 className={`w-7 h-7 rounded-lg border-2 flex items-center justify-center transition-all cursor-pointer ${
                                   currentMonthClosed ? "opacity-40 cursor-not-allowed" :
-                                  r.checked ? "bg-emerald-500 border-emerald-500 shadow-md shadow-emerald-200" : "border-slate-300 bg-white hover:border-blue-400"
+                                  r.checked ? "bg-green-700 border-green-700 shadow-lg shadow-green-300" : "border-slate-300 bg-white hover:border-blue-400"
                                 }`}
                               >
                                 {r.checked && <CheckCircle className="h-4 w-4 text-white" />}
                                 {currentMonthClosed && !r.checked && <Lock className="h-3 w-3 text-slate-400" />}
                               </div>
                               {r.checked && r.checked_by && (
-                                <span className="text-[9px] text-emerald-600 font-semibold leading-tight">{r.checked_by}</span>
+                                <span className="text-[9px] text-green-700 font-bold leading-tight">{r.checked_by}</span>
                               )}
                             </div>
                           </td>
 
-                          {/* 액션 버튼 (명세서 + 삭제) */}
+                          {/* 액션 버튼 (명세서 + 메일 + 삭제) */}
                           <td className="px-2 py-3">
                             <div className="flex items-center gap-1">
                               <button
@@ -1172,6 +1175,17 @@ export default function Settlement() {
                                 title="거래명세표 보기"
                               >
                                 <FileText className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                onClick={() => setQuickMailRecord(r)}
+                                className={`transition-colors p-1 rounded ${
+                                  r.contact_email
+                                    ? "text-blue-400 hover:text-blue-600"
+                                    : "text-slate-300 hover:text-blue-400"
+                                }`}
+                                title={r.contact_email ? `메일전송: ${r.contact_email}` : "이메일 전송 (주소 없음 — 입력 필요)"}
+                              >
+                                <Mail className="h-3.5 w-3.5" />
                               </button>
                               <button
                                 onClick={() => handleDelete(r.id)}
@@ -1302,6 +1316,11 @@ export default function Settlement() {
       {/* ── 거래명세서 모달 ── */}
       {selectedRecord && <StatementModal record={selectedRecord} onClose={() => setSelectedRecord(null)} />}
 
+      {/* ── 바로 메일 전송 패널 ── */}
+      {quickMailRecord && (
+        <QuickMailPanel record={quickMailRecord} onClose={() => setQuickMailRecord(null)} />
+      )}
+
 
       {/* ── 사용자명 모달 ── */}
       {showUserModal && (
@@ -1325,6 +1344,166 @@ export default function Settlement() {
             </form>
             {username && <p className="text-xs text-slate-400">현재: <strong className="text-slate-700">{username}</strong></p>}
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════
+// 바로 메일 전송 패널 (PNG 캡처 후 즉시 전송)
+// ══════════════════════════════════════════════════════════════
+function QuickMailPanel({ record, onClose }: { record: ArRecord; onClose: () => void }) {
+  const [items, setItems]     = useState<SettlementItem[]>([]);
+  const [profile, setProfile] = useState<ModalClientProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [recipients, setRecipients] = useState<string[]>(() =>
+    record.contact_email ? record.contact_email.split(",").map(e => e.trim()).filter(Boolean) : []
+  );
+  const [emailInput, setEmailInput] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sentOk, setSentOk]   = useState(false);
+  const [sentErr, setSentErr] = useState("");
+  const docRef = useRef<HTMLDivElement>(null);
+
+  // 아이템 + 프로필 로드
+  useEffect(() => {
+    const qItems = query(collection(db, "ar_records", record.id, "items"), orderBy("date", "asc"));
+    const unsub = onSnapshot(qItems, (snap) => {
+      const rows: SettlementItem[] = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<SettlementItem, "id">) }));
+      setItems(rows.length > 0 ? rows : [{
+        date: `${record.billing_month}-01`,
+        description: `${record.billing_month} 화물 운송비`,
+        quantity: 1, unit_price: record.total_amount,
+        supply_amount: record.total_amount, tax_amount: 0,
+        total_amount: record.total_amount, memo: "",
+      }]);
+      setLoading(false);
+    });
+    getDocs(query(collection(db, "client_profiles"), where("name", "==", record.client_name)))
+      .then((snap) => { if (!snap.empty) setProfile({ id: snap.docs[0].id, ...snap.docs[0].data() } as ModalClientProfile); })
+      .catch(() => {});
+    return unsub;
+  }, [record]);
+
+  const addRecipient = () => {
+    const emails = emailInput.split(/[,;\s]+/).map(e => e.trim()).filter(Boolean);
+    setRecipients(prev => Array.from(new Set([...prev, ...emails])));
+    setEmailInput("");
+  };
+
+  const handleSend = async () => {
+    if (recipients.length === 0) { alert("수신인 이메일을 입력하세요."); return; }
+    if (!docRef.current || loading) { alert("명세표 로딩 중입니다. 잠시 후 시도해주세요."); return; }
+    setSending(true);
+    setSentErr("");
+    try {
+      const canvas = await html2canvas(docRef.current, { scale: 2, useCORS: true, backgroundColor: "#ffffff", logging: false });
+      const imageBase64 = canvas.toDataURL("image/png", 0.92);
+      // 수신인 Firestore 저장
+      await updateDoc(doc(db, "ar_records", record.id), { contact_email: recipients.join(", ") });
+      const supplyTotal = record.total_amount;
+      const vatTotal = Math.round(supplyTotal * VAT_RATE);
+      for (const to of recipients) {
+        const resp = await fetch("/api/sendMail", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            to, clientName: record.client_name, billingMonth: record.billing_month,
+            imageBase64, items, supplyTotal, taxTotal: vatTotal, grandTotal: supplyTotal + vatTotal,
+            supplierName: SUPPLIER.name, supplierPhone: SUPPLIER.phone, supplierEmail: SUPPLIER.email,
+          }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(`${to}: ${data.error ?? "발송 오류"}`);
+      }
+      setSentOk(true);
+      setTimeout(() => { setSentOk(false); onClose(); }, 2000);
+    } catch (e: unknown) {
+      setSentErr(`발송 실패: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        {/* 헤더 */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 bg-blue-50">
+          <div>
+            <h2 className="font-bold text-slate-800 flex items-center gap-2">
+              <Mail className="h-5 w-5 text-blue-600" />
+              거래명세표 이메일 전송
+            </h2>
+            <p className="text-sm text-slate-500 mt-0.5">{record.client_name} · {record.billing_month}</p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        {/* 본문 */}
+        <div className="p-5 space-y-4">
+          {/* 수신인 배지 */}
+          {recipients.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {recipients.map((email) => (
+                <span key={email} className="flex items-center gap-1 px-2.5 py-1 bg-blue-100 text-blue-800 text-xs rounded-full font-medium">
+                  {email}
+                  <button onClick={() => setRecipients(prev => prev.filter(e => e !== email))} className="hover:text-red-600 ml-0.5">
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* 이메일 입력 */}
+          <div className="flex gap-2">
+            <input
+              className="flex-1 px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="이메일 주소 (여러 개 시 쉼표 구분)"
+              value={emailInput}
+              onChange={(e) => setEmailInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addRecipient(); } }}
+            />
+            <Button variant="outline" size="sm" onClick={addRecipient} disabled={!emailInput.trim()}>추가</Button>
+          </div>
+
+          {/* 상태 메시지 */}
+          {loading && <p className="text-xs text-slate-400 animate-pulse">명세표 데이터 로딩 중...</p>}
+          {sentOk && (
+            <div className="flex items-center gap-2 text-sm text-green-700 bg-green-50 rounded-lg px-3 py-2">
+              <CheckCircle className="h-4 w-4" />전송 완료! 창을 닫습니다.
+            </div>
+          )}
+          {sentErr && (
+            <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">
+              <AlertCircle className="h-4 w-4" />{sentErr}
+            </div>
+          )}
+
+          {/* 전송 버튼 */}
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={onClose}>취소</Button>
+            <Button
+              onClick={handleSend}
+              disabled={sending || loading || recipients.length === 0}
+              className="bg-blue-600 hover:bg-blue-700 text-white gap-1.5"
+            >
+              {sending
+                ? <><Loader2 className="h-4 w-4 animate-spin" />PNG 생성 후 전송 중...</>
+                : <><Send className="h-4 w-4" />PNG 생성 후 전송</>}
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* 화면 밖에 렌더링되는 DocumentBody (html2canvas 캡처용) */}
+      {!loading && (
+        <div style={{ position: "fixed", top: "-9999px", left: "-9999px", zIndex: -1 }}>
+          <DocumentBody ref={docRef} record={record} items={items} profile={profile} />
         </div>
       )}
     </div>
