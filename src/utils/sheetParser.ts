@@ -4,7 +4,7 @@ import * as XLSX from "xlsx";
 // 컬럼 키 정의
 // ─────────────────────────────────────────────────────────────
 export type ColKey =
-  | "date" | "client" | "amount" | "deliveryfee" | "memo" | "bizno" | "duedate"
+  | "date" | "client" | "amount" | "deliveryfee" | "memo" | "jeeyo" | "bizno" | "duedate"
   | "departure" | "destination" | "vehicle_type" | "driver" | "vehicle_no"
   | "unload_client" | "row_client";
 
@@ -35,7 +35,9 @@ export const COL_HINTS: Record<ColKey, string[]> = {
     "탁송료", "탁송비", "배달료", "배달비", "배송료", "택배비", "택배료",
     "delivery_fee", "deliveryfee",
   ],
-  memo: ["비고", "메모", "특이사항", "참고", "적요", "내용", "memo", "note", "notes"],
+  memo: ["비고", "메모", "특이사항", "참고", "내용", "memo", "note", "notes"],
+  // 래피드 양식 비고란 등 — 비고 열과 별도
+  jeeyo: ["적요", "적요사항", "적 요", "적요내용", "summary", "remarks"],
   bizno: ["사업자번호", "사업자등록번호", "biz_no", "bizno"],
   duedate: ["결제일", "결제일자", "납입일", "지급기한", "납기일", "납기", "만기일", "결제기한", "due_date", "duedate"],
   // ── 거래명세표 세부 항목 컬럼 ──
@@ -57,6 +59,8 @@ export interface RawRow {
   amount: number;
   deliveryFee: number;
   memo: string;
+  /** 적요 (래피드 양식 비고 등) */
+  jeeyo?: string;
   bizNo: string;
   dueDate: string;
   // 거래명세표 세부 항목 필드
@@ -77,6 +81,7 @@ export interface DetectedCols {
   amount: string | null;
   deliveryfee: string | null;
   memo: string | null;
+  jeeyo: string | null;
   bizno: string | null;
   duedate: string | null;
   departure: string | null;
@@ -226,6 +231,7 @@ function sheetToResult(
     date:         pickBest(COL_HINTS.date),
     duedate:      pickBest(COL_HINTS.duedate),
     memo:         pickBest(COL_HINTS.memo),
+    jeeyo:        pickBest(COL_HINTS.jeeyo),
     bizno:        pickBest(COL_HINTS.bizno),
     departure:    pickBest(COL_HINTS.departure),
     destination:  pickBest(COL_HINTS.destination),
@@ -247,6 +253,7 @@ function sheetToResult(
     amount:       h("amount"),
     deliveryfee:  h("deliveryfee"),
     memo:         h("memo"),
+    jeeyo:        h("jeeyo"),
     bizno:        h("bizno"),
     duedate:      h("duedate"),
     departure:    h("departure"),
@@ -284,6 +291,7 @@ function sheetToResult(
       amount:       parseAmount(get(row, "amount")),
       deliveryFee:  parseAmount(get(row, "deliveryfee")),
       memo:         str("memo"),
+      jeeyo:        str("jeeyo") || undefined,
       bizNo:        str("bizno"),
       dueDate:      parseDate(get(row, "duedate")),
       departure:    str("departure")    || undefined,
@@ -304,12 +312,12 @@ function emptyResult(fileName: string, sheetName: string, warnings: string[]): P
   return {
     rows: [],
     detected: {
-      date: null, client: null, amount: null, deliveryfee: null, memo: null, bizno: null, duedate: null,
+      date: null, client: null, amount: null, deliveryfee: null, memo: null, jeeyo: null, bizno: null, duedate: null,
       departure: null, destination: null, vehicle_type: null, driver: null, vehicle_no: null,
       unload_client: null, row_client: null, allHeaders: [],
     },
     detectedIdx: {
-      date: -1, client: -1, amount: -1, deliveryfee: -1, memo: -1, bizno: -1, duedate: -1,
+      date: -1, client: -1, amount: -1, deliveryfee: -1, memo: -1, jeeyo: -1, bizno: -1, duedate: -1,
       departure: -1, destination: -1, vehicle_type: -1, driver: -1, vehicle_no: -1,
       unload_client: -1, row_client: -1,
     },
@@ -403,6 +411,7 @@ export function reapplyColMap(
       amount:       parseAmount(get(r._original, "amount")),
       deliveryFee:  parseAmount(get(r._original, "deliveryfee")),
       memo:         str2(get(r._original, "memo")),
+      jeeyo:        str2(get(r._original, "jeeyo")) || undefined,
       bizNo:        str2(get(r._original, "bizno")),
       dueDate:      parseDate(get(r._original, "duedate")),
       departure:    str2(get(r._original, "departure"))    || undefined,

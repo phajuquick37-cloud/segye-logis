@@ -85,7 +85,7 @@ interface ArRecord {
 
 const COL_LABEL: Record<ColKey, string> = {
   date: "날짜", client: "거래처명", amount: "요금",
-  deliveryfee: "탁송료", memo: "비고", bizno: "사업자번호", duedate: "결제일",
+  deliveryfee: "탁송료", memo: "비고", jeeyo: "적요", bizno: "사업자번호", duedate: "결제일",
 };
 
 function currentMonth() {
@@ -210,7 +210,7 @@ function ColumnMappingPanel({ result, overrides, onOverride }: {
   result: ParseResult; overrides: Partial<Record<ColKey, number>>; onOverride: (k: ColKey, i: number) => void;
 }) {
   const REQUIRED: ColKey[] = ["client", "amount"];
-  const OPTIONAL: ColKey[] = ["deliveryfee", "duedate", "memo", "date", "bizno"];
+  const OPTIONAL: ColKey[] = ["deliveryfee", "duedate", "memo", "jeeyo", "date", "bizno"];
   const effectiveIdx = (key: ColKey) => overrides[key] !== undefined ? overrides[key]! : result.detectedIdx[key];
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-2">
@@ -416,6 +416,10 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
         deliveryFee: patchedIdx["deliveryfee"] !== -1
           ? safeNum(getVal("deliveryfee"))
           : row.deliveryFee,
+        memo: patchedIdx["memo"] !== -1 ? String(getVal("memo")).trim() : row.memo,
+        jeeyo: patchedIdx["jeeyo"] !== -1
+          ? String(getVal("jeeyo")).trim() || undefined
+          : row.jeeyo,
       };
     });
     const split = applyEntitySplit(patched, splitRules);
@@ -547,6 +551,7 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
             if ((row as any).vehicleNo)    itemData.vehicle_no   = (row as any).vehicleNo;
             if ((row as any).unloadClient) itemData.unload_client= (row as any).unloadClient;
             if ((row as any).rowClient)    itemData.row_client   = (row as any).rowClient;
+            if ((row as any).jeeyo)        itemData.jeeyo        = (row as any).jeeyo;
             batch.set(doc(collection(db, "ar_records", arRef.id, "items")), itemData);
           });
         });

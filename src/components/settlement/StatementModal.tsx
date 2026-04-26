@@ -31,6 +31,8 @@ export interface SettlementItem {
   vehicle_no?: string;    // 차량번호
   unload_client?: string; // 하차지고객
   row_client?: string;    // 행별 고객명
+  /** 적요 (래피드 양식 비고) */
+  jeeyo?: string;
 }
 
 export interface ArRecord {
@@ -211,7 +213,7 @@ const TEMPLATES: Record<TemplateType, { label: string; cols: ColDef[]; renderRow
       item.date,
       item.departure   || "",
       item.destination || "",
-      item.memo        || "",
+      item.jeeyo       || "",
       item.supply_amount.toLocaleString(),
       item.vehicle_type|| "",
     ],
