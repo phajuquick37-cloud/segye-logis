@@ -50,6 +50,20 @@ async def shutdown():
     stop_scheduler()
 
 
+@app.get("/")
+async def root():
+    return {
+        "service": "세계로지스 세금계산서 자동화 v2",
+        "status": "running",
+        "endpoints": {
+            "GET  /":            "이 안내 페이지",
+            "GET  /api/health":  "헬스체크",
+            "GET  /api/status":  "스케줄러 상태 확인",
+            "POST /api/run":     "수동 즉시 수집 실행",
+        },
+    }
+
+
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "time": datetime.now().isoformat()}

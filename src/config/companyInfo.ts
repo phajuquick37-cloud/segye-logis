@@ -5,14 +5,14 @@
 
 export const SUPPLIER = {
   name:           "세계로지스",
-  biz_no:         "000-00-00000",      // ← 실제 사업자번호로 교체
-  representative: "대 표 자",          // ← 대표자 성명
-  address:        "경기도 파주시 ○○로 ○○○",  // ← 실제 주소
-  phone:          "031-000-0000",       // ← 대표 전화
-  fax:            "031-000-0001",       // ← 팩스 (없으면 빈 문자열)
+  biz_no:         "141-81-42561",
+  representative: "대 표 자",
+  address:        "경기도 파주시 등원로427",
+  phone:          "1588-7185",
+  fax:            "",
   email:          "phajuquick37@gmail.com",
-  business_type:  "운수업",             // 업태
-  business_item:  "화물운송",           // 종목
+  business_type:  "운수업",
+  business_item:  "화물운송",
 };
 
 // ──────────────────────────────────────────────────────────

@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { db } from "../lib/firebase";
 import {
   collection, query, orderBy, onSnapshot,
-  addDoc, updateDoc, deleteDoc, doc, serverTimestamp, writeBatch, getDocs,
+  addDoc, updateDoc, deleteDoc, doc, serverTimestamp, writeBatch, getDocs, setDoc,
 } from "firebase/firestore";
 import * as XLSX from "xlsx";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
@@ -14,7 +14,7 @@ import {
   ArrowLeft, Upload, Plus, Trash2, CheckCircle, AlertCircle, Clock,
   User, X, FileText, AlertTriangle, Scissors, RotateCcw, Save,
   Search, Lock, History, CreditCard, Cloud, CloudOff, Loader2,
-  FileSpreadsheet,
+  FileSpreadsheet, Building2, Pencil, Trash2 as Trash2Icon,
 } from "lucide-react";
 
 import { parseFile, ColKey, ParseResult } from "../utils/sheetParser";
@@ -30,7 +30,23 @@ import StatementModal from "../components/settlement/StatementModal";
 // 타입 & 상수
 // ─────────────────────────────────────────────────────────────
 type RecordStatus = "unpaid" | "partial" | "paid";
-type PageView = "credits" | "history";
+type PageView = "credits" | "history" | "clients";
+type TemplateType = "basic" | "samil" | "jiyoo" | "rapid";
+const TEMPLATE_LABELS: Record<TemplateType, string> = {
+  basic: "기본양식", samil: "삼일강업양식", jiyoo: "지유전자양식", rapid: "래피드양식",
+};
+interface ClientProfile {
+  id?: string;
+  name: string;
+  biz_no: string;
+  ceo_name: string;
+  address: string;
+  phone: string;
+  email: string;
+  business_type: string;
+  business_item: string;
+  template: TemplateType;
+}
 
 interface ArRecord {
   id: string;
@@ -912,6 +928,7 @@ export default function Settlement() {
           {([
             { key: "credits", label: "신용내역", icon: CreditCard },
             { key: "history", label: "월별 이력", icon: History },
+            { key: "clients", label: "거래처 정보", icon: Building2 },
           ] as { key: PageView; label: string; icon: any }[]).map(({ key, label, icon: Icon }) => (
             <button key={key} onClick={() => setActiveView(key)}
               className={`flex items-center gap-2 px-5 py-2 text-sm font-semibold rounded-lg transition-colors ${
@@ -1277,10 +1294,14 @@ export default function Settlement() {
         {activeView === "history" && (
           <MonthlyHistory records={records} username={username} onSelectMonth={handleSelectMonth} />
         )}
+
+        {/* ══ 거래처 정보 뷰 ══ */}
+        {activeView === "clients" && <ClientProfilesPanel />}
       </div>
 
       {/* ── 거래명세서 모달 ── */}
       {selectedRecord && <StatementModal record={selectedRecord} onClose={() => setSelectedRecord(null)} />}
+
 
       {/* ── 사용자명 모달 ── */}
       {showUserModal && (
@@ -1306,6 +1327,195 @@ export default function Settlement() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════
+// 거래처 정보 관리 패널
+// ══════════════════════════════════════════════════════════════
+const EMPTY_PROFILE: Omit<ClientProfile, "id"> = {
+  name: "", biz_no: "", ceo_name: "", address: "",
+  phone: "", email: "", business_type: "", business_item: "", template: "basic",
+};
+
+function ClientProfilesPanel() {
+  const [profiles, setProfiles] = useState<ClientProfile[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState<ClientProfile | null>(null);
+  const [isNew, setIsNew] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState<Omit<ClientProfile, "id">>(EMPTY_PROFILE);
+
+  useEffect(() => {
+    const q = query(collection(db, "client_profiles"), orderBy("name"));
+    const unsub = onSnapshot(q, (snap) => {
+      setProfiles(snap.docs.map((d) => ({ id: d.id, ...d.data() } as ClientProfile)));
+      setLoading(false);
+    });
+    return unsub;
+  }, []);
+
+  const openNew = () => {
+    setForm(EMPTY_PROFILE);
+    setIsNew(true);
+    setEditing({} as ClientProfile);
+  };
+
+  const openEdit = (p: ClientProfile) => {
+    setForm({ name: p.name, biz_no: p.biz_no, ceo_name: p.ceo_name, address: p.address,
+               phone: p.phone, email: p.email, business_type: p.business_type,
+               business_item: p.business_item, template: p.template });
+    setIsNew(false);
+    setEditing(p);
+  };
+
+  const handleSave = async () => {
+    if (!form.name.trim()) { alert("거래처명을 입력하세요."); return; }
+    setSaving(true);
+    try {
+      if (isNew) {
+        await addDoc(collection(db, "client_profiles"), { ...form });
+      } else if (editing?.id) {
+        await setDoc(doc(db, "client_profiles", editing.id), { ...form }, { merge: true });
+      }
+      setEditing(null);
+    } catch (e) {
+      alert("저장 실패: " + (e as Error).message);
+    }
+    setSaving(false);
+  };
+
+  const handleDelete = async (p: ClientProfile) => {
+    if (!window.confirm(`"${p.name}" 거래처 정보를 삭제하시겠습니까?`)) return;
+    if (p.id) await deleteDoc(doc(db, "client_profiles", p.id));
+  };
+
+  const field = (label: string, key: keyof Omit<ClientProfile, "id" | "template">) => (
+    <div className="flex flex-col gap-1">
+      <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{label}</label>
+      <input
+        className="px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        value={form[key] as string}
+        onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
+        placeholder={label}
+      />
+    </div>
+  );
+
+  if (editing !== null) {
+    return (
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-5">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+            <Building2 className="h-5 w-5 text-blue-600" />
+            {isNew ? "새 거래처 추가" : `"${editing.name}" 정보 수정`}
+          </h2>
+          <button onClick={() => setEditing(null)} className="text-slate-400 hover:text-slate-600">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {field("거래처명 (상호)", "name")}
+          {field("사업자등록번호", "biz_no")}
+          {field("대표자명", "ceo_name")}
+          {field("사업장주소", "address")}
+          {field("전화번호", "phone")}
+          {field("이메일", "email")}
+          {field("업태", "business_type")}
+          {field("종목", "business_item")}
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">거래명세표 양식</label>
+            <select
+              className="px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+              value={form.template}
+              onChange={(e) => setForm((f) => ({ ...f, template: e.target.value as TemplateType }))}
+            >
+              {(Object.entries(TEMPLATE_LABELS) as [TemplateType, string][]).map(([k, v]) => (
+                <option key={k} value={k}>{v}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div className="flex justify-end gap-3">
+          <Button variant="outline" onClick={() => setEditing(null)}>취소</Button>
+          <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={handleSave} disabled={saving}>
+            {saving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Save className="h-4 w-4 mr-1" />}
+            저장
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+          <Building2 className="h-5 w-5 text-blue-600" />
+          거래처 정보 관리
+          <span className="text-sm font-normal text-slate-400">({profiles.length}개)</span>
+        </h2>
+        <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={openNew}>
+          <Plus className="h-4 w-4 mr-1" />새 거래처 추가
+        </Button>
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-blue-500" /></div>
+      ) : profiles.length === 0 ? (
+        <div className="text-center py-16 text-slate-400">
+          <Building2 className="h-12 w-12 mx-auto mb-3 opacity-30" />
+          <p className="text-sm">등록된 거래처 정보가 없습니다.</p>
+          <p className="text-xs mt-1">"새 거래처 추가" 버튼으로 공급받는자 정보를 등록하세요.</p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm border-collapse">
+            <thead>
+              <tr className="bg-slate-50 text-slate-600 text-xs font-semibold uppercase tracking-wide">
+                <th className="px-3 py-2 text-left border border-slate-100">거래처명</th>
+                <th className="px-3 py-2 text-left border border-slate-100">등록번호</th>
+                <th className="px-3 py-2 text-left border border-slate-100">대표자</th>
+                <th className="px-3 py-2 text-left border border-slate-100">주소</th>
+                <th className="px-3 py-2 text-left border border-slate-100">전화</th>
+                <th className="px-3 py-2 text-center border border-slate-100">양식</th>
+                <th className="px-3 py-2 text-center border border-slate-100">관리</th>
+              </tr>
+            </thead>
+            <tbody>
+              {profiles.map((p) => (
+                <tr key={p.id} className="hover:bg-blue-50 transition-colors border-b border-slate-100">
+                  <td className="px-3 py-2 font-semibold text-slate-800">{p.name}</td>
+                  <td className="px-3 py-2 text-slate-600 font-mono text-xs">{p.biz_no || "-"}</td>
+                  <td className="px-3 py-2 text-slate-600">{p.ceo_name || "-"}</td>
+                  <td className="px-3 py-2 text-slate-600 text-xs max-w-[200px] truncate">{p.address || "-"}</td>
+                  <td className="px-3 py-2 text-slate-600 text-xs">{p.phone || "-"}</td>
+                  <td className="px-3 py-2 text-center">
+                    <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+                      {TEMPLATE_LABELS[p.template] || "기본양식"}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 text-center">
+                    <div className="flex justify-center gap-2">
+                      <button onClick={() => openEdit(p)} className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50">
+                        <Pencil className="h-4 w-4" />
+                      </button>
+                      <button onClick={() => handleDelete(p)} className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50">
+                        <Trash2Icon className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <p className="text-xs text-slate-400 border-t border-slate-100 pt-3">
+        * 거래처명이 거래명세표의 거래처명과 일치해야 공급받는자 정보가 자동으로 채워집니다.
+      </p>
     </div>
   );
 }

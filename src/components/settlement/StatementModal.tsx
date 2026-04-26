@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { db } from "../../lib/firebase";
 import {
-  collection, onSnapshot, orderBy, query, updateDoc, doc,
+  collection, onSnapshot, orderBy, query, updateDoc, doc, getDocs, where,
 } from "firebase/firestore";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
@@ -119,17 +119,138 @@ function VerticalLabel({ text }: { text: string }) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// 거래처별 양식 템플릿
+// ─────────────────────────────────────────────────────────────
+export type TemplateType = "basic" | "samil" | "jiyoo" | "rapid";
+
+interface ColDef { header: string; width?: string; align?: "left"|"center"|"right"; }
+
+const TEMPLATES: Record<TemplateType, { label: string; cols: ColDef[]; renderRow: (item: SettlementItem) => (string|number)[]; }> = {
+  basic: {
+    label: "기본양식",
+    cols: [
+      { header: "날  짜",             width: "80px",  align: "center" },
+      { header: "거 래 내 역 / 품 명",              align: "left"   },
+      { header: "수 량",              width: "40px",  align: "center" },
+      { header: "단  가",             width: "90px",  align: "right"  },
+      { header: "공 급 가 액",        width: "100px", align: "right"  },
+      { header: "세  액",             width: "80px",  align: "right"  },
+      { header: "비  고",             width: "80px",  align: "left"   },
+    ],
+    renderRow: (item) => [
+      item.date,
+      item.description,
+      item.quantity > 1 ? item.quantity : "",
+      item.unit_price > 0 && item.unit_price !== item.supply_amount ? item.unit_price.toLocaleString() : "",
+      item.supply_amount.toLocaleString(),
+      item.tax_amount > 0 ? item.tax_amount.toLocaleString() : "",
+      "", // 비고 빈칸
+    ],
+  },
+  samil: {
+    label: "삼일강업양식",
+    cols: [
+      { header: "날  짜",   width: "72px",  align: "center" },
+      { header: "고 객 명",              align: "left"   },
+      { header: "출 발 지",              align: "center" },
+      { header: "도 착 지",              align: "center" },
+      { header: "차  종",   width: "52px",  align: "center" },
+      { header: "기 사 명", width: "60px",  align: "center" },
+      { header: "금  액",   width: "90px",  align: "right"  },
+      { header: "차량번호", width: "72px",  align: "center" },
+    ],
+    renderRow: (item) => [
+      item.date,
+      item.description,
+      (item as any).departure ?? "",
+      (item as any).destination ?? "",
+      (item as any).vehicle_type ?? "",
+      (item as any).driver ?? "",
+      item.supply_amount.toLocaleString(),
+      (item as any).vehicle_no ?? "",
+    ],
+  },
+  jiyoo: {
+    label: "지유전자양식",
+    cols: [
+      { header: "날  짜",   width: "80px",  align: "center" },
+      { header: "품    목",              align: "left"   },
+      { header: "규    격", width: "70px",  align: "center" },
+      { header: "수  량",   width: "44px",  align: "center" },
+      { header: "단  가",   width: "90px",  align: "right"  },
+      { header: "공급가액", width: "100px", align: "right"  },
+      { header: "비  고",   width: "80px",  align: "left"   },
+    ],
+    renderRow: (item) => [
+      item.date,
+      item.description,
+      (item as any).spec ?? "",
+      item.quantity > 1 ? item.quantity : "",
+      item.unit_price > 0 ? item.unit_price.toLocaleString() : "",
+      item.supply_amount.toLocaleString(),
+      "",
+    ],
+  },
+  rapid: {
+    label: "래피드양식",
+    cols: [
+      { header: "날  짜",     width: "80px",  align: "center" },
+      { header: "접수번호",   width: "80px",  align: "center" },
+      { header: "출  발  지",             align: "center" },
+      { header: "도  착  지",             align: "center" },
+      { header: "운    임",   width: "90px",  align: "right"  },
+      { header: "비  고",     width: "80px",  align: "left"   },
+    ],
+    renderRow: (item) => [
+      item.date,
+      (item as any).receipt_no ?? "",
+      (item as any).departure ?? "",
+      (item as any).destination ?? "",
+      item.supply_amount.toLocaleString(),
+      "",
+    ],
+  },
+};
+
+function detectTemplate(clientName: string, profile?: ClientProfile | null): TemplateType {
+  if (profile?.template) return profile.template as TemplateType;
+  const n = clientName;
+  if (n.includes("삼일강업")) return "samil";
+  if (n.includes("지유전자") || n.includes("지유")) return "jiyoo";
+  if (n.includes("래피드") || n.includes("rapid")) return "rapid";
+  return "basic";
+}
+
+// ─────────────────────────────────────────────────────────────
+// 거래처 프로필 타입
+// ─────────────────────────────────────────────────────────────
+export interface ClientProfile {
+  id?: string;
+  name: string;
+  biz_no: string;
+  ceo_name: string;
+  address: string;
+  phone: string;
+  email: string;
+  business_type: string;
+  business_item: string;
+  template: TemplateType;
+}
+
+// ─────────────────────────────────────────────────────────────
 // 거래명세표 본문 (인쇄/캡처 대상)
 // ─────────────────────────────────────────────────────────────
 const DocumentBody = React.forwardRef<
   HTMLDivElement,
-  { record: ArRecord; items: SettlementItem[] }
->(({ record, items }, ref) => {
+  { record: ArRecord; items: SettlementItem[]; profile?: ClientProfile | null }
+>(({ record, items, profile }, ref) => {
   const [year, month] = record.billing_month.split("-");
   const supplyTotal = record.total_amount;
   const vatTotal    = Math.round(supplyTotal * VAT_RATE);
   const grandTotal  = supplyTotal + vatTotal;
   const dateRange   = monthDateRange(record.billing_month);
+  const tmpl = TEMPLATES[detectTemplate(record.client_name, profile)];
+  const colCount = tmpl.cols.length;
 
   const cellStyle = (extra?: React.CSSProperties): React.CSSProperties => ({
     border: "1px solid #555",
@@ -165,8 +286,8 @@ const DocumentBody = React.forwardRef<
       <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: "0", fontSize: "11px" }}>
         <tbody>
           <tr>
-            {/* 공급자 */}
-            <td style={{ width: "50%", verticalAlign: "top", padding: 0 }}>
+            {/* 공급자 (도장 우측 배치) */}
+            <td style={{ width: "50%", verticalAlign: "top", padding: 0, position: "relative" }}>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <tbody>
                   <tr>
@@ -174,6 +295,10 @@ const DocumentBody = React.forwardRef<
                     <td style={labelCell}>등&nbsp;록&nbsp;번&nbsp;호</td>
                     <td colSpan={3} style={cellStyle({ fontWeight: "bold", letterSpacing: "2px" })}>
                       {SUPPLIER.biz_no}
+                    </td>
+                    {/* 도장: 공급자 열 오른쪽 */}
+                    <td rowSpan={6} style={{ border: "none", width: "76px", verticalAlign: "middle", textAlign: "center", padding: "0 4px" }}>
+                      <CompanyStamp size={68} />
                     </td>
                   </tr>
                   <tr>
@@ -204,7 +329,7 @@ const DocumentBody = React.forwardRef<
               </table>
             </td>
 
-            {/* 공급받는자 */}
+            {/* 공급받는자 (저장된 프로필 사용) */}
             <td style={{ width: "50%", verticalAlign: "top", padding: 0, borderLeft: "2px solid #555" }}>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <tbody>
@@ -212,39 +337,35 @@ const DocumentBody = React.forwardRef<
                     <VerticalLabel text="공급받는자" />
                     <td style={labelCell}>등&nbsp;록&nbsp;번&nbsp;호</td>
                     <td colSpan={3} style={cellStyle({ fontWeight: "bold", letterSpacing: "2px" })}>
-                      {record.client_biz_no || "\u00A0"}
+                      {profile?.biz_no || record.client_biz_no || "\u00A0"}
                     </td>
                   </tr>
                   <tr>
                     <td style={labelCell}>상호(법인명)</td>
                     <td style={cellStyle({ fontWeight: "bold" })}>{record.client_name}</td>
                     <td style={{ ...cellStyle({ backgroundColor: "#f0f0f0", fontWeight: "bold", width: "30px" }) }}>성명</td>
-                    <td style={cellStyle()}>{"\u00A0"}</td>
+                    <td style={cellStyle()}>{profile?.ceo_name || "\u00A0"}</td>
                   </tr>
                   <tr>
                     <td style={labelCell}>사업장주소</td>
-                    <td colSpan={3} style={cellStyle()}>{"\u00A0"}</td>
+                    <td colSpan={3} style={cellStyle()}>{profile?.address || "\u00A0"}</td>
                   </tr>
                   <tr>
                     <td style={labelCell}>업&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;태</td>
-                    <td style={cellStyle()}>{"\u00A0"}</td>
+                    <td style={cellStyle()}>{profile?.business_type || "\u00A0"}</td>
                     <td style={{ ...cellStyle({ backgroundColor: "#f0f0f0", fontWeight: "bold", width: "30px" }) }}>종목</td>
-                    <td style={cellStyle()}>{"\u00A0"}</td>
+                    <td style={cellStyle()}>{profile?.business_item || "\u00A0"}</td>
                   </tr>
                   <tr>
                     <td style={labelCell}>전&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;화</td>
-                    <td colSpan={3} style={cellStyle()}>{"\u00A0"}</td>
+                    <td colSpan={3} style={cellStyle()}>{profile?.phone || "\u00A0"}</td>
                   </tr>
                   <tr>
                     <td style={labelCell}>E-mail</td>
-                    <td colSpan={3} style={cellStyle()}>{"\u00A0"}</td>
+                    <td colSpan={3} style={cellStyle()}>{profile?.email || "\u00A0"}</td>
                   </tr>
                 </tbody>
               </table>
-              {/* 도장 */}
-              <div style={{ position: "absolute", right: "40px", marginTop: "-60px" }}>
-                <CompanyStamp size={68} />
-              </div>
             </td>
           </tr>
         </tbody>
@@ -283,75 +404,65 @@ const DocumentBody = React.forwardRef<
             <td style={{ ...cellStyle({ backgroundColor: "#f0f0f0", fontWeight: "bold", textAlign: "center" }) }}>
               비&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;고
             </td>
-            <td colSpan={3} style={cellStyle()}>{record.memo || "\u00A0"}</td>
+            <td colSpan={3} style={cellStyle()}>&nbsp;</td>
           </tr>
         </tbody>
       </table>
 
-      {/* ── 품목 테이블 ── */}
+      {/* ── 품목 테이블 (양식별 헤더) ── */}
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "11px", marginTop: "0" }}>
         <thead>
           <tr style={{ backgroundColor: "#2c3e50", color: "#fff" }}>
-            {["날 짜", "거 래 내 역 / 품 명", "수 량", "단 가", "공 급 가 액", "세 액", "비 고"].map((h) => (
-              <th
-                key={h}
-                style={{
-                  border: "1px solid #444",
-                  padding: "5px 4px",
-                  fontWeight: "700",
-                  textAlign: "center",
-                  letterSpacing: "1px",
-                  fontSize: "10px",
-                }}
-              >{h}</th>
+            {tmpl.cols.map((col) => (
+              <th key={col.header} style={{
+                border: "1px solid #444",
+                padding: "5px 4px",
+                fontWeight: "700",
+                textAlign: "center",
+                letterSpacing: "1px",
+                fontSize: "10px",
+                width: col.width,
+              }}>{col.header}</th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {items.map((item, i) => (
-            <tr key={i} style={{ height: "24px", backgroundColor: i % 2 === 0 ? "#fff" : "#f9fafb" }}>
-              <td style={{ border: "1px solid #bbb", padding: "3px 6px", textAlign: "center", whiteSpace: "nowrap", width: "80px" }}>
-                {item.date}
-              </td>
-              <td style={{ border: "1px solid #bbb", padding: "3px 8px" }}>{item.description}</td>
-              <td style={{ border: "1px solid #bbb", padding: "3px 6px", textAlign: "center", width: "40px" }}>
-                {item.quantity > 1 ? item.quantity.toLocaleString() : ""}
-              </td>
-              <td style={{ border: "1px solid #bbb", padding: "3px 8px", textAlign: "right", width: "90px", fontFamily: "monospace" }}>
-                {item.unit_price > 0 && item.unit_price !== item.supply_amount
-                  ? item.unit_price.toLocaleString()
-                  : ""}
-              </td>
-              <td style={{ border: "1px solid #bbb", padding: "3px 8px", textAlign: "right", width: "100px", fontWeight: "700", fontFamily: "monospace" }}>
-                {item.supply_amount.toLocaleString()}
-              </td>
-              <td style={{ border: "1px solid #bbb", padding: "3px 8px", textAlign: "right", width: "80px", fontFamily: "monospace" }}>
-                {item.tax_amount > 0 ? item.tax_amount.toLocaleString() : ""}
-              </td>
-              <td style={{ border: "1px solid #bbb", padding: "3px 8px", fontSize: "10px", color: "#555" }}>{item.memo}</td>
-            </tr>
-          ))}
+          {items.map((item, i) => {
+            const cells = tmpl.renderRow(item);
+            return (
+              <tr key={i} style={{ height: "24px", backgroundColor: i % 2 === 0 ? "#fff" : "#f9fafb" }}>
+                {cells.map((cell, ci) => (
+                  <td key={ci} style={{
+                    border: "1px solid #bbb",
+                    padding: "3px 6px",
+                    textAlign: tmpl.cols[ci]?.align || "left",
+                    fontFamily: (tmpl.cols[ci]?.align === "right") ? "monospace" : undefined,
+                    fontWeight: (tmpl.cols[ci]?.align === "right" && ci > 0) ? "700" : undefined,
+                    width: tmpl.cols[ci]?.width,
+                    fontSize: "11px",
+                  }}>{cell}</td>
+                ))}
+              </tr>
+            );
+          })}
           {/* 빈 행 패딩 */}
           {Array.from({ length: Math.max(0, 10 - items.length) }).map((_, i) => (
             <tr key={`empty-${i}`} style={{ height: "24px" }}>
-              {[1,2,3,4,5,6,7].map((c) => (
-                <td key={c} style={{ border: "1px solid #ddd", padding: "3px 6px" }}>&nbsp;</td>
+              {tmpl.cols.map((_, ci) => (
+                <td key={ci} style={{ border: "1px solid #ddd", padding: "3px 6px" }}>&nbsp;</td>
               ))}
             </tr>
           ))}
         </tbody>
         <tfoot>
           <tr style={{ backgroundColor: "#f0f0f0" }}>
-            <td colSpan={4} style={{ border: "1px solid #555", padding: "5px 12px", textAlign: "right", fontWeight: "bold" }}>
-              페이지 소계
+            <td colSpan={colCount - 2} style={{ border: "1px solid #555", padding: "5px 12px", textAlign: "right", fontWeight: "bold" }}>
+              합  계
             </td>
             <td style={{ border: "1px solid #555", padding: "5px 8px", textAlign: "right", fontWeight: "900", fontFamily: "monospace", fontSize: "12px" }}>
               {supplyTotal.toLocaleString()}
             </td>
-            <td style={{ border: "1px solid #555", padding: "5px 8px", textAlign: "right", fontFamily: "monospace" }}>
-              {vatTotal > 0 ? vatTotal.toLocaleString() : ""}
-            </td>
-            <td style={{ border: "1px solid #555" }}></td>
+            <td style={{ border: "1px solid #555" }}>&nbsp;</td>
           </tr>
         </tfoot>
       </table>
@@ -391,6 +502,17 @@ export default function StatementModal({
 }) {
   const [items, setItems]           = useState<SettlementItem[]>([]);
   const [loadingItems, setLoading]  = useState(true);
+  const [clientProfile, setClientProfile] = useState<ClientProfile | null>(null);
+
+  // 거래처 프로필 로드
+  useEffect(() => {
+    getDocs(query(collection(db, "client_profiles"), where("name", "==", record.client_name)))
+      .then((snap) => {
+        if (!snap.empty) setClientProfile({ id: snap.docs[0].id, ...snap.docs[0].data() } as ClientProfile);
+      })
+      .catch(() => {});
+  }, [record.client_name]);
+
   // 이메일: 저장된 주소를 배열로 관리 (여러 담당자 지원)
   const [recipients, setRecipients] = useState<string[]>(() => {
     const saved = record.contact_email ?? "";
@@ -728,7 +850,7 @@ export default function StatementModal({
             </div>
           ) : (
             <div className="p-4 flex justify-center" style={{ position: "relative" }}>
-              <DocumentBody ref={docRef} record={record} items={items} />
+              <DocumentBody ref={docRef} record={record} items={items} profile={clientProfile} />
             </div>
           )}
         </div>
