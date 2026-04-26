@@ -86,6 +86,9 @@ interface ArRecord {
 const COL_LABEL: Record<ColKey, string> = {
   date: "날짜", client: "거래처명", amount: "요금",
   deliveryfee: "탁송료", memo: "비고", jeeyo: "적요", bizno: "사업자번호", duedate: "결제일",
+  row_client: "고객명(상호)",
+  departure: "출발동·출발지", destination: "도착동·도착지", vehicle_type: "차량·톤수",
+  driver: "기사명", vehicle_no: "차량번호", unload_client: "하차지고객",
 };
 
 function currentMonth() {
@@ -210,7 +213,10 @@ function ColumnMappingPanel({ result, overrides, onOverride }: {
   result: ParseResult; overrides: Partial<Record<ColKey, number>>; onOverride: (k: ColKey, i: number) => void;
 }) {
   const REQUIRED: ColKey[] = ["client", "amount"];
-  const OPTIONAL: ColKey[] = ["deliveryfee", "duedate", "memo", "jeeyo", "date", "bizno"];
+  const OPTIONAL: ColKey[] = [
+    "deliveryfee", "duedate", "memo", "jeeyo", "date", "bizno",
+    "row_client", "departure", "destination", "vehicle_type", "driver", "vehicle_no", "unload_client",
+  ];
   const effectiveIdx = (key: ColKey) => overrides[key] !== undefined ? overrides[key]! : result.detectedIdx[key];
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-2">
@@ -409,6 +415,11 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
         const i = patchedIdx[key];
         return i !== -1 ? (row._original[headers[i]] ?? "") : "";
       };
+      const strOpt = (key: ColKey, fallback?: string) => {
+        if (patchedIdx[key] === -1) return fallback;
+        const s = String(getVal(key)).trim();
+        return s || undefined;
+      };
       return {
         ...row,
         clientName:  String(getVal("client")).trim() || row.clientName,
@@ -420,6 +431,13 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
         jeeyo: patchedIdx["jeeyo"] !== -1
           ? String(getVal("jeeyo")).trim() || undefined
           : row.jeeyo,
+        rowClient:    strOpt("row_client", row.rowClient),
+        departure:    strOpt("departure", row.departure),
+        destination:  strOpt("destination", row.destination),
+        vehicleType:  strOpt("vehicle_type", row.vehicleType),
+        driver:       strOpt("driver", row.driver),
+        vehicleNo:    strOpt("vehicle_no", row.vehicleNo),
+        unloadClient: strOpt("unload_client", row.unloadClient),
       };
     });
     const split = applyEntitySplit(patched, splitRules);

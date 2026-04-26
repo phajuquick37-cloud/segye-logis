@@ -129,6 +129,33 @@ function VerticalLabel({ text }: { text: string }) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// 출발동·도착동 표시용 (고객명 열이 출발지로 오인된 경우 숨김)
+// ─────────────────────────────────────────────────────────────
+function normStmtCell(s: string): string {
+  try {
+    return s.normalize("NFKC").trim().replace(/\s+/g, "");
+  } catch {
+    return String(s ?? "").trim().replace(/\s+/g, "");
+  }
+}
+
+function displayDeparture(item: SettlementItem): string {
+  const d = (item.departure ?? "").trim();
+  if (!d) return "";
+  const ref = normStmtCell(item.row_client || item.description || "");
+  if (ref && normStmtCell(d) === ref) return "";
+  return d;
+}
+
+function displayDestination(item: SettlementItem): string {
+  const d = (item.destination ?? "").trim();
+  if (!d) return "";
+  const ref = normStmtCell(item.row_client || item.description || "");
+  if (ref && normStmtCell(d) === ref) return "";
+  return d;
+}
+
+// ─────────────────────────────────────────────────────────────
 // 거래처별 양식 템플릿
 // ─────────────────────────────────────────────────────────────
 export type TemplateType = "basic" | "samil" | "jiyoo" | "rapid";
@@ -149,9 +176,9 @@ const TEMPLATES: Record<TemplateType, { label: string; cols: ColDef[]; renderRow
     renderRow: (item) => [
       item.date,
       item.row_client || item.description || "",
-      item.departure   || "",
-      item.destination || "",
-      item.vehicle_type|| "",
+      displayDeparture(item),
+      displayDestination(item),
+      (item.vehicle_type ?? "").trim(),
       item.supply_amount.toLocaleString(),
     ],
   },
@@ -170,9 +197,9 @@ const TEMPLATES: Record<TemplateType, { label: string; cols: ColDef[]; renderRow
     renderRow: (item) => [
       item.date,
       item.row_client || item.description || "",
-      item.departure   || "",
-      item.destination || "",
-      item.vehicle_type|| "",
+      displayDeparture(item),
+      displayDestination(item),
+      (item.vehicle_type ?? "").trim(),
       item.driver      || "",
       item.supply_amount.toLocaleString(),
       item.vehicle_no  || "",
@@ -192,10 +219,10 @@ const TEMPLATES: Record<TemplateType, { label: string; cols: ColDef[]; renderRow
     renderRow: (item) => [
       item.date,
       item.row_client    || item.description || "",
-      item.departure     || "",
+      displayDeparture(item),
       item.unload_client || "",
-      item.destination   || "",
-      item.vehicle_type  || "",
+      displayDestination(item),
+      (item.vehicle_type ?? "").trim(),
       item.supply_amount.toLocaleString(),
     ],
   },
@@ -211,11 +238,11 @@ const TEMPLATES: Record<TemplateType, { label: string; cols: ColDef[]; renderRow
     ],
     renderRow: (item) => [
       item.date,
-      item.departure   || "",
-      item.destination || "",
+      displayDeparture(item),
+      displayDestination(item),
       item.jeeyo       || "",
       item.supply_amount.toLocaleString(),
-      item.vehicle_type|| "",
+      (item.vehicle_type ?? "").trim(),
     ],
   },
 };
