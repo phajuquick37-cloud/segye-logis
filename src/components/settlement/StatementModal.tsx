@@ -6,7 +6,7 @@ import {
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
-import { X, Download, Mail, FileSpreadsheet, Printer, CheckCircle, AlertTriangle, Loader2, ImageIcon } from "lucide-react";
+import { X, Download, Mail, FileSpreadsheet, Printer, CheckCircle, AlertTriangle, Loader2, ImageIcon, Send } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import { SUPPLIER, VAT_RATE } from "../../config/companyInfo";
 
@@ -779,74 +779,68 @@ export default function StatementModal({
             <Printer className="h-3.5 w-3.5" />인쇄
           </Button>
 
-          {/* 이메일 — 담당자 여러 명 지원 */}
-          <div className="flex flex-col gap-1.5 ml-auto w-full sm:w-auto">
-            {/* 수신인 배지 */}
-            {recipients.length > 0 && (
-              <div className="flex flex-wrap gap-1">
-                {recipients.map((email) => (
-                  <span
-                    key={email}
-                    className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 border border-blue-200 text-xs rounded-full px-2.5 py-1 font-medium"
-                  >
-                    <Mail className="h-3 w-3" />{email}
-                    <button
-                      onClick={() => removeRecipient(email)}
-                      className="ml-0.5 text-blue-400 hover:text-red-500 transition-colors"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
-            {/* 입력 영역 */}
-            <div className="flex items-center gap-1.5">
-              <div className="relative">
-                <Mail className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-                <input
-                  type="text"
-                  value={emailInput}
-                  onChange={(e) => setEmailInput(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addRecipient(); } }}
-                  placeholder="담당자 이메일 (Enter로 추가)"
-                  className="pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg text-sm w-52 focus:outline-none focus:ring-2 focus:ring-blue-400"
-                />
-              </div>
-              <Button onClick={addRecipient} variant="outline" size="sm" disabled={!emailInput.trim()} className="text-slate-600">
-                추가
-              </Button>
-              <Button
-                onClick={handleSaveEmail}
-                variant="outline"
-                size="sm"
-                className="gap-1.5 text-slate-600"
-                disabled={recipients.length === 0}
-              >
-                {emailSaved ? <><CheckCircle className="h-3.5 w-3.5 text-green-500" />저장됨</> : "저장"}
-              </Button>
-              <Button
-                onClick={handleSendEmail}
-                disabled={sending || recipients.length === 0}
-                size="sm"
-                className="gap-1.5 bg-blue-600 hover:bg-blue-700 font-bold"
-              >
-                {sending
-                  ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />전송 중 ({recipients.length}명)...</>
-                  : <><ImageIcon className="h-3.5 w-3.5" />PNG 발송 ({recipients.length}명)</>}
-              </Button>
-            </div>
-          </div>
         </div>
 
-        {/* 이메일 결과 */}
-        {(sentOk || sentErr) && (
-          <div className={`px-6 py-2 text-sm flex items-center gap-2 ${sentOk ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}>
-            {sentOk
-              ? <><CheckCircle className="h-4 w-4" />{recipients.length}명({recipients.join(", ")})에게 거래명세표 PNG가 발송되었습니다.</>
-              : <><AlertTriangle className="h-4 w-4" />{sentErr}</>}
+        {/* ── 메일 전송 섹션 (눈에 잘 보이는 별도 바) ── */}
+        <div className="px-6 py-3 bg-blue-50 border-b border-blue-100">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1.5 text-sm font-semibold text-blue-800 shrink-0">
+              <Mail className="h-4 w-4" />거래명세표 PNG 메일 전송
+            </div>
+
+            {/* 수신인 배지 */}
+            {recipients.map((email) => (
+              <span key={email} className="inline-flex items-center gap-1 bg-white text-blue-700 border border-blue-300 text-xs rounded-full px-2.5 py-1 font-medium">
+                {email}
+                <button onClick={() => removeRecipient(email)} className="text-blue-400 hover:text-red-500">
+                  <X className="h-3 w-3" />
+                </button>
+              </span>
+            ))}
+
+            {/* 이메일 입력 */}
+            <input
+              type="text"
+              value={emailInput}
+              onChange={(e) => setEmailInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addRecipient(); } }}
+              placeholder="이메일 입력 후 Enter"
+              className="px-3 py-1.5 border border-blue-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 w-44"
+            />
+            <Button onClick={addRecipient} variant="outline" size="sm" disabled={!emailInput.trim()}
+              className="border-blue-300 text-blue-600 hover:bg-blue-100">
+              추가
+            </Button>
+
+            {/* 저장 버튼 */}
+            <Button onClick={handleSaveEmail} variant="outline" size="sm"
+              disabled={recipients.length === 0}
+              className="border-slate-300 text-slate-600 hover:bg-white gap-1">
+              {emailSaved ? <><CheckCircle className="h-3.5 w-3.5 text-green-500" />저장됨</> : "주소 저장"}
+            </Button>
+
+            {/* 전송 버튼 */}
+            <Button
+              onClick={handleSendEmail}
+              disabled={sending || recipients.length === 0 || loadingItems}
+              size="sm"
+              className="gap-1.5 bg-blue-600 hover:bg-blue-700 text-white font-bold ml-auto"
+            >
+              {sending
+                ? <><Loader2 className="h-4 w-4 animate-spin" />전송 중 ({recipients.length}명)...</>
+                : <><Send className="h-4 w-4" />PNG 메일 전송 ({recipients.length}명)</>}
+            </Button>
           </div>
-        )}
+
+          {/* 전송 결과 */}
+          {(sentOk || sentErr) && (
+            <div className={`mt-2 flex items-center gap-2 text-sm rounded-lg px-3 py-2 ${sentOk ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"}`}>
+              {sentOk
+                ? <><CheckCircle className="h-4 w-4 shrink-0" />{recipients.length}명에게 거래명세표 PNG 발송 완료</>
+                : <><AlertTriangle className="h-4 w-4 shrink-0" />{sentErr}</>}
+            </div>
+          )}
+        </div>
 
         {/* ── 거래명세표 본문 ── */}
         <div className="overflow-x-auto">

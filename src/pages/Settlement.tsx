@@ -1235,30 +1235,35 @@ export default function Settlement() {
                             </div>
                           </td>
 
-                          {/* 액션 버튼 (명세서 + 메일 + 삭제) */}
+                          {/* 액션 버튼 */}
                           <td className="px-2 py-3">
-                            <div className="flex items-center gap-1">
+                            <div className="flex items-center gap-1.5">
+                              {/* 명세서 보기 */}
                               <button
                                 onClick={() => setSelectedRecord(r)}
-                                className="text-slate-300 hover:text-blue-500 transition-colors p-1 rounded"
+                                className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg border border-slate-200 text-slate-500 hover:text-blue-600 hover:border-blue-300 hover:bg-blue-50 transition-colors"
                                 title="거래명세표 보기"
                               >
                                 <FileText className="h-3.5 w-3.5" />
+                                <span>명세표</span>
                               </button>
+                              {/* 메일 전송 */}
                               <button
                                 onClick={() => setQuickMailRecord(r)}
-                                className={`transition-colors p-1 rounded ${
+                                className={`flex items-center gap-1 text-xs px-2 py-1 rounded-lg border font-semibold transition-colors ${
                                   r.contact_email
-                                    ? "text-blue-400 hover:text-blue-600"
-                                    : "text-slate-300 hover:text-blue-400"
+                                    ? "bg-blue-600 border-blue-600 text-white hover:bg-blue-700"
+                                    : "border-blue-300 text-blue-600 hover:bg-blue-50"
                                 }`}
-                                title={r.contact_email ? `메일전송: ${r.contact_email}` : "이메일 전송 (주소 없음 — 입력 필요)"}
+                                title={r.contact_email ? `메일전송: ${r.contact_email}` : "이메일 전송"}
                               >
                                 <Mail className="h-3.5 w-3.5" />
+                                <span>메일</span>
                               </button>
+                              {/* 삭제 */}
                               <button
                                 onClick={() => handleDelete(r.id)}
-                                className="text-slate-200 hover:text-red-500 transition-colors p-1 rounded"
+                                className="p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors"
                                 title="삭제"
                               >
                                 <Trash2 className="h-3.5 w-3.5" />
