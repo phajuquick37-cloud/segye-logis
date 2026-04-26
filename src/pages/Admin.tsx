@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/ca
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../../components/ui/table";
-import { LogIn, LogOut, Trash2, CheckCircle, Clock, PlusCircle, FileUp, X, Lock, Eye, Receipt, DollarSign, ChevronLeft, ChevronRight, ZoomIn, BarChart3 } from "lucide-react";
+import { LogIn, LogOut, Trash2, CheckCircle, Clock, PlusCircle, FileUp, X, Lock, Eye, Receipt, DollarSign, ChevronLeft, ChevronRight, ZoomIn, BarChart3, RefreshCw } from "lucide-react";
 import { Link } from "react-router-dom";
 
 type Tab = "inquiries" | "notices" | "taxinvoices";
@@ -30,6 +30,14 @@ const CATEGORIES = ["공지", "안내", "이벤트", "긴급"];
 const STAFF_EMAIL = "staff@segyelogis.com";
 const STAFF_PASSWORD = "quick7998!";
 const ADMIN_EMAILS = ["phajuquick37@gmail.com", STAFF_EMAIL];
+
+/** config.py tax_platform_exclude_substrings 와 동기화 (목록에서 숨김용) */
+const TAX_PLATFORM_EXCLUDE_SUBSTRINGS = ["university.qoo10", "qoo10.jp"];
+function isExcludedTaxPlatformDisplay(p: string) {
+  if (!p) return false;
+  const x = p.toLowerCase();
+  return TAX_PLATFORM_EXCLUDE_SUBSTRINGS.some((s) => x.includes(s));
+}
 
 export default function Admin() {
   const [user, setUser] = useState<any>(null);
@@ -55,6 +63,9 @@ export default function Admin() {
   // 세금계산서 검색 + 필터
   const [invoiceSearch, setInvoiceSearch] = useState("");
   const [invoiceStatusFilter, setInvoiceStatusFilter] = useState<"all" | "pending" | "paid">("all");
+  const [hideExcludedTaxPlatforms, setHideExcludedTaxPlatforms] = useState(true);
+  const [taxCollectLoading, setTaxCollectLoading] = useState(false);
+  const [taxCollectMessage, setTaxCollectMessage] = useState("");
 
   // 비밀번호 입력 상태
   const [passwordInput, setPasswordInput] = useState("");
@@ -143,6 +154,33 @@ export default function Admin() {
   };
 
   const handleLogout = () => signOut(auth);
+
+  const taxInvoicesForList = hideExcludedTaxPlatforms
+    ? taxInvoices.filter((i) => !isExcludedTaxPlatformDisplay(String(i.platform || "")))
+    : taxInvoices;
+
+  const runTaxCollect = async () => {
+    const taxApiUrl = (import.meta.env.VITE_TAX_AUTOMATION_URL || "").trim();
+    const secret = (import.meta.env.VITE_TAX_AUTOMATION_SECRET || "").trim();
+    if (!taxApiUrl) {
+      setTaxCollectMessage("VITE_TAX_AUTOMATION_URL 이 없습니다. Cloud Run 서비스 URL을 빌드 환경에 설정하세요.");
+      return;
+    }
+    setTaxCollectLoading(true);
+    setTaxCollectMessage("");
+    try {
+      const headers: Record<string, string> = {};
+      if (secret) headers["X-Tax-Collect-Secret"] = secret;
+      const r = await fetch(`${taxApiUrl.replace(/\/$/, "")}/api/run`, { method: "POST", headers });
+      const j = (await r.json().catch(() => ({}))) as { detail?: string; message?: string };
+      if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : `${r.status} ${r.statusText}`);
+      setTaxCollectMessage(j.message || "수집을 시작했습니다. 잠시 후 목록이 갱신됩니다.");
+    } catch (e) {
+      setTaxCollectMessage(`실패: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setTaxCollectLoading(false);
+    }
+  };
 
   const updateStatus = async (id: string, status: string) => {
     await updateDoc(doc(db, "inquiries", id), { status });
@@ -707,14 +745,14 @@ export default function Admin() {
           {/* 요약 카드 */}
           <div className="grid gap-6 md:grid-cols-4">
             {[
-              { label: "전체", value: taxInvoices.length, color: "text-slate-800" },
-              { label: "미처리", value: taxInvoices.filter((i) => i.status === "pending").length, color: "text-orange-600" },
-              { label: "입금 완료", value: taxInvoices.filter((i) => i.status === "paid").length, color: "text-green-600" },
+              { label: "전체", value: taxInvoicesForList.length, color: "text-slate-800" },
+              { label: "미처리", value: taxInvoicesForList.filter((i) => i.status === "pending").length, color: "text-orange-600" },
+              { label: "입금 완료", value: taxInvoicesForList.filter((i) => i.status === "paid").length, color: "text-green-600" },
               {
                 label: "이번달 합계",
                 value: (() => {
                   const now = new Date();
-                  const total = taxInvoices
+                  const total = taxInvoicesForList
                     .filter((i) => i.issue_date?.startsWith(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`))
                     .reduce((sum, i) => sum + (i.total_amount || 0), 0);
                   return total.toLocaleString() + "원";
@@ -736,10 +774,35 @@ export default function Admin() {
           {/* 목록 */}
           <Card>
             <CardHeader>
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-                <CardTitle className="flex items-center gap-2">
-                  <Receipt className="h-5 w-5 text-blue-600" />
-                  수집된 세금계산서 목록
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <CardTitle className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+                  <span className="flex items-center gap-2">
+                    <Receipt className="h-5 w-5 text-blue-600" />
+                    수집된 세금계산서 목록
+                  </span>
+                  <span className="flex flex-wrap items-center gap-2 text-xs font-normal text-slate-600">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="gap-1.5 h-8"
+                      onClick={runTaxCollect}
+                      disabled={taxCollectLoading}
+                    >
+                      <RefreshCw className={`h-3.5 w-3.5 ${taxCollectLoading ? "animate-spin" : ""}`} />
+                      {taxCollectLoading ? "요청 중…" : "지금 수집 실행"}
+                    </Button>
+                    <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        className="rounded border-slate-300"
+                        checked={hideExcludedTaxPlatforms}
+                        onChange={(e) => setHideExcludedTaxPlatforms(e.target.checked)}
+                      />
+                      Qoo10 등 제외 출처 숨기기
+                    </label>
+                  </span>
                 </CardTitle>
                 {/* 검색창 + 상태 필터 + 삭제 버튼들 */}
                 <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
@@ -779,12 +842,21 @@ export default function Admin() {
                     ))}
                   </div>
                 </div>
+                </div>
+                {taxCollectMessage ? (
+                  <p className="text-sm text-slate-600 border border-slate-100 bg-slate-50 rounded-lg px-3 py-2">{taxCollectMessage}</p>
+                ) : null}
+                {hideExcludedTaxPlatforms && taxInvoices.length > taxInvoicesForList.length ? (
+                  <p className="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+                    제외 출처 {taxInvoices.length - taxInvoicesForList.length}건은 목록에서 숨겼습니다. 체크를 해제하면 전체가 보입니다.
+                  </p>
+                ) : null}
               </div>
             </CardHeader>
             <CardContent>
               {(() => {
                 const q = invoiceSearch.trim().toLowerCase();
-                const filtered = taxInvoices.filter((inv) => {
+                const filtered = taxInvoicesForList.filter((inv) => {
                   const matchStatus =
                     invoiceStatusFilter === "all" || inv.status === invoiceStatusFilter;
                   const matchSearch =
@@ -983,13 +1055,13 @@ export default function Admin() {
                     })()}
                     {filtered.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={7} className="text-center py-12 text-slate-400">
+                        <TableCell colSpan={8} className="text-center py-12 text-slate-400">
                           {q || invoiceStatusFilter !== "all"
                             ? "검색 조건에 맞는 세금계산서가 없습니다."
                             : "수집된 세금계산서가 없습니다."}
                           <br />
                           {!q && invoiceStatusFilter === "all" && (
-                            <span className="text-xs">Python 봇을 실행하면 자동으로 수집됩니다.</span>
+                            <span className="text-xs">위의 「지금 수집 실행」 또는 Cloud Run에서 매시간 자동 수집됩니다.</span>
                           )}
                         </TableCell>
                       </TableRow>

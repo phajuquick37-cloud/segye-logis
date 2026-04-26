@@ -2,6 +2,9 @@
 # Google Cloud Build — 자동 빌드 + Cloud Run 배포
 # 트리거: GitHub master 브랜치에 push 될 때마다 실행
 # ============================================================
+# 선택: 트리거에서 치환 변수 _TAX_COLLECT_SECRET 를 넘기면 POST /api/run 보호에 사용됩니다.
+substitutions:
+  _TAX_COLLECT_SECRET: ""
 
 steps:
   # ── Step 1: Docker 이미지 빌드 ──────────────────────────────
@@ -39,7 +42,7 @@ steps:
       - 'asia-northeast3'                          # Cloud Run 배포 리전 (서울 유지)
       - '--platform'
       - 'managed'
-      - '--no-allow-unauthenticated'               # 외부 직접 호출 차단 (API 키 없이 호출 불가)
+      - '--allow-unauthenticated'                  # 관리자 페이지에서 POST; 앱 레벨 TAX_COLLECT_SECRET 권장
       - '--memory'
       - '2Gi'                                      # Playwright + OCR 에 충분한 메모리
       - '--cpu'
@@ -52,6 +55,8 @@ steps:
       - '1'                                        # 스케줄러 유지: 항상 1개 실행
       - '--max-instances'
       - '1'
+      - '--set-env-vars'
+      - 'TAX_COLLECT_SECRET=${_TAX_COLLECT_SECRET}'
 
 # 빌드 결과 이미지 등록
 images:

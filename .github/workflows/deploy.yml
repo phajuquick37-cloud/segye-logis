@@ -46,17 +46,22 @@ jobs:
           docker push gcr.io/gen-lang-client-0127550748/tax-automation:latest
 
       # 7. Cloud Run 배포
+      # - min-instances 1: 인스턴스가 꺼지면 프로세스 내 스케줄러가 멈추므로 항상 1유지
+      # - allow-unauthenticated: 브라우저(관리자)에서 POST /api/run 호출 가능. 보호는 TAX_COLLECT_SECRET 헤더로
       - name: Deploy to Cloud Run
+        env:
+          TAX_COLLECT_SECRET: ${{ secrets.TAX_COLLECT_SECRET }}
         run: |
           gcloud run deploy tax-automation \
             --image gcr.io/gen-lang-client-0127550748/tax-automation:${{ github.sha }} \
             --region asia-northeast3 \
             --platform managed \
-            --no-allow-unauthenticated \
+            --allow-unauthenticated \
             --memory 2Gi \
             --cpu 2 \
             --timeout 3600s \
             --concurrency 1 \
-            --min-instances 0 \
+            --min-instances 1 \
             --max-instances 1 \
+            --set-env-vars "TAX_COLLECT_SECRET=${TAX_COLLECT_SECRET}" \
             --project gen-lang-client-0127550748

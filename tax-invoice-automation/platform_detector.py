@@ -61,8 +61,8 @@ def extract_platform_from_page(page_title: str = "", page_text: str = "") -> str
     platform_keywords = {
         "화물맨": ["화물맨", "hwamulman", "tax12", "tax15"],
         "원콜(ONEBILL)": ["원콜", "onebill", "onecall", "ONEBILL"],
+        "로지노트플러스": ["로지노트플러스", "로지노트 플러스", "logynote plus", "loginote plus"],
         "로지노트": ["로지노트", "loginote", "logynote"],
-        "홈택스": ["홈택스", "hometax", "국세청"],
     }
 
     for platform, keywords in platform_keywords.items():
@@ -84,6 +84,11 @@ def get_platform_info(platform_name: str) -> Dict:
             "full_name": "원콜 ONEBILL",
             "biz_input_hint": "사업자등록번호",
             "typical_flow": "링크 → 인증 → 계산서 열람",
+        },
+        "로지노트플러스": {
+            "full_name": "로지노트 플러스",
+            "biz_input_hint": "사업자번호",
+            "typical_flow": "링크 → 로그인/인증 → 계산서 확인",
         },
         "로지노트": {
             "full_name": "로지노트 물류 플랫폼",

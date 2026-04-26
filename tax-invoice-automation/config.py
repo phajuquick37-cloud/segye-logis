@@ -3,10 +3,17 @@
 # =============================================================================
 
 import os as _os
+import re as _re
 
 # config.py가 위치한 디렉터리 → Windows/Linux 양쪽에서 절대 경로 보장
 _BASE_DIR = _os.path.dirname(_os.path.abspath(__file__))
 _CREDENTIALS_FILE = _os.path.join(_BASE_DIR, "google_credentials.json")
+
+# 화물맨 등 tax10.co.kr ~ tax99.co.kr 스타일 발신 메일
+_TAX_NUMBER_SENDER_RE = _re.compile(r"@tax\d{1,3}\.", _re.IGNORECASE)
+
+# subject_keywords용 tax10 ~ tax40 (제목에 tax16 등만 있는 알림 대비)
+_SUBJECT_TAX_NUMBERS = [f"tax{n}" for n in range(10, 41)]
 
 # --- 이메일 설정 (Gmail IMAP) ---
 EMAIL_CONFIG = {
@@ -17,12 +24,21 @@ EMAIL_CONFIG = {
 }
 
 # --- 이메일 필터 ---
+_EMAIL_DAYS = _os.environ.get("TAX_EMAIL_DAYS_LIMIT", "365").strip()
+try:
+    _EMAIL_DAYS_INT = max(1, min(3650, int(_EMAIL_DAYS)))
+except ValueError:
+    _EMAIL_DAYS_INT = 365
+
 EMAIL_FILTER = {
     # ── 제목 키워드: 세금계산서 발행 알림만 수집 ───────────────────────────
     "subject_keywords": [
         "세금계산서", "전자세금계산서", "계산서 발행", "계산서발행",
-        "ONEBILL", "화물맨", "로지노트", "전국24시", "24시콜",
-        "tax12", "tax15", "tax16", "tax17", "tax18", "tax19", "tax20",
+        "ONEBILL", "화물맨", "로지노트", "로지노트플러스", "로지노트 플러스",
+        "logynote plus", "loginote plus",
+        "전국24시", "24시콜",
+        "tax12", "tax15",
+        *_SUBJECT_TAX_NUMBERS,
     ],
     # ── 본문 링크 텍스트 키워드 (버튼명) ──────────────────────────────────
     "button_keywords": [
@@ -37,40 +53,79 @@ EMAIL_FILTER = {
     ],
     # ── 발신자 도메인 차단 목록 ──────────────────────────────────────────────
     # 허용목록으로 대부분 걸러지지만, 아래는 무조건 차단 (피싱/스팸 방어)
+    # 허용 발신자가 아닌 메일만 걸러냄 (noreply@ 단독 금지는 넣지 않음 — tax12 알림이 noreply인 경우 많음)
     "sender_domain_blocklist": [
-        # Qoo10 계열 전체
         "qoo10.jp", "qoo10.com", "qoo10.co.kr", "university.qoo10",
-        # 국내외 마켓플레이스
         "gmarket.co.kr", "auction.co.kr", "11st.co.kr", "coupang.com",
         "tmon.co.kr", "wemakeprice.com", "interpark.com",
         "amazon.com", "aliexpress.com", "ebay.com",
-        # 광고·뉴스레터 패턴 (발신자 로컬파트 기준)
-        "marketing@", "newsletter@", "noreply@", "no-reply@",
+        "marketing@", "newsletter@",
         "promotions@", "promo@", "ads@", "info@qoo10",
-        # SNS (세금계산서 플랫폼이 포털메일을 쓰는 경우를 위해 제거하지 않음)
-        # naver.com, kakao.com 은 허용목록으로 제어
     ],
     # ── 발신자 허용 목록 ──────────────────────────────────────────────────
-    # 아래 문자열이 발신자(From)에 포함될 때만 수집
-    # (나머지는 제목 키워드와 무관하게 거부)
+    # 화물맨·전국24시콜·원콜·로지노트(플러스)·tax(숫자) 도메인 만 (그 외 발신은 무시)
     "sender_domain_allowlist": [
-        # 화물맨 (tax12/tax15 플랫폼)
         "tax12.co.kr", "tax15.co.kr", "hwamulman", "cargo12",
-        # 원콜 / ONEBILL
         "onebill", "onecall", "1call",
-        # 로지노트
         "loginote", "logynote", "logi-note",
-        # 전국24시콜화물 (도메인: 15887924.com, 이메일: ysm7924@naver.com 등)
+        "logynoteplus", "loginoteplus", "lgnoteplus",
+        "plus.logynote", "plus.loginote", "logynote-plus",
         "15887924", "ysm7924", "call24network", "24si.co",
-        # 홈택스 / 국세청
-        "hometax.go.kr", "nts.go.kr", "keci.or.kr",
     ],
-    # 4월10일부터 수집 (오늘 4월26일 기준 16일 → 여유있게 20일)
-    # 이후 매시간 자동 수집되므로 days_limit은 유지 (누락 방지)
+    # 휴지통은 보지 않음. 보관함만 보려면 INBOX 만; 보관·전체(휴지통 제외)까지 보려면 All Mail 추가
+    "imap_folders": ["INBOX", "[Gmail]/All Mail"],
     "unread_only": False,
     "mark_as_read": False,
-    "days_limit": 20,
+    "days_limit": _EMAIL_DAYS_INT,
+    # ── 본문/버튼 링크 URL 차단 (발신자는 허용돼도 링크가 Qoo10 등이면 제외) ──
+    "tax_invoice_url_blocklist": [
+        "university.qoo10.jp",
+        "university.qoo10",
+        "qoo10.jp",
+        "qoo10.com",
+        "qoo10.co.kr",
+    ],
+    # ── 저장 제외할 발행출처 문자열 (부분 일치, 소문자 비교) ──
+    # 예: 플랫폼명 "기타(university.qoo10.jp)" 전체 제외
+    "tax_platform_exclude_substrings": [
+        "university.qoo10",
+        "qoo10.jp",
+    ],
 }
+
+
+def is_blocked_tax_invoice_url(url: str) -> bool:
+    if not url or not isinstance(url, str):
+        return False
+    u = url.lower()
+    for pat in EMAIL_FILTER.get("tax_invoice_url_blocklist", []):
+        if pat.lower() in u:
+            return True
+    return False
+
+
+def is_excluded_tax_platform(platform: str) -> bool:
+    if not platform or not isinstance(platform, str):
+        return False
+    p = platform.lower()
+    for pat in EMAIL_FILTER.get("tax_platform_exclude_substrings", []):
+        if pat.lower() in p:
+            return True
+    return False
+
+
+def sender_matches_allowed_platforms(from_addr: str) -> bool:
+    """화물맨·24시콜·원콜·로지노트(플러스)·taxNN.co.kr 계열만 True."""
+    if not from_addr or not isinstance(from_addr, str):
+        return False
+    fl = from_addr.lower()
+    allow = EMAIL_FILTER.get("sender_domain_allowlist", [])
+    if any(a.lower() in fl for a in allow):
+        return True
+    if _TAX_NUMBER_SENDER_RE.search(fl):
+        return True
+    return False
+
 
 # --- 발행 플랫폼 감지 규칙 ---
 PLATFORM_RULES = {
@@ -84,6 +139,11 @@ PLATFORM_RULES = {
         "subject_keywords": ["ONEBILL", "원콜", "onebill"],
         "sender_keywords": ["onecall", "onebill", "1call"],
     },
+    "로지노트플러스": {
+        "domains": ["logynoteplus", "loginoteplus", "lgnoteplus", "plus.logynote", "plus.loginote"],
+        "subject_keywords": ["로지노트플러스", "로지노트 플러스", "logynote plus"],
+        "sender_keywords": ["logynoteplus", "loginoteplus", "plus.logynote", "plus.loginote"],
+    },
     "로지노트": {
         "domains": ["loginote", "logynote", "logi-note"],
         "subject_keywords": ["로지노트", "loginote"],
@@ -93,11 +153,6 @@ PLATFORM_RULES = {
         "domains": ["15887924", "ysm7924", "call24network", "24si.co"],
         "subject_keywords": ["전국24시", "24시콜", "15887924"],
         "sender_keywords": ["15887924", "ysm7924", "call24network"],
-    },
-    "홈택스": {
-        "domains": ["hometax.go.kr", "nts.go.kr", "keci.or.kr"],
-        "subject_keywords": ["국세청", "홈택스"],
-        "sender_keywords": ["nts.go.kr", "hometax", "keci.or.kr"],
     },
 }
 

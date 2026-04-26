@@ -14,7 +14,8 @@ from playwright.async_api import async_playwright, Page, Browser, BrowserContext
 
 from config import (
     BROWSER_CONFIG, BUSINESS_CONFIG,
-    BIZ_NUMBER_INPUT_SELECTORS, CONFIRM_BUTTON_SELECTORS
+    BIZ_NUMBER_INPUT_SELECTORS, CONFIRM_BUTTON_SELECTORS,
+    is_blocked_tax_invoice_url, is_excluded_tax_platform,
 )
 from platform_detector import detect_platform, extract_platform_from_page
 
@@ -310,12 +311,21 @@ class TaxInvoiceBrowser:
             "error": None,
         }
 
+        if is_blocked_tax_invoice_url(url):
+            result["error"] = "blocked_url"
+            logger.info(f"🚫 링크 스킵 (차단 URL): {url[:80]}")
+            return result
+
         # 플랫폼 사전 감지
         result["platform"] = detect_platform(
             email_subject=email_info.get("subject", ""),
             email_from=email_info.get("from", ""),
             url=url,
         )
+        if is_excluded_tax_platform(result["platform"]):
+            result["error"] = "excluded_platform"
+            logger.info(f"🚫 링크 스킵 (제외 플랫폼): {result['platform']}")
+            return result
 
         output_dir.mkdir(parents=True, exist_ok=True)
         page = await self.context.new_page()
@@ -387,8 +397,22 @@ class TaxInvoiceBrowser:
 
             # 8. DOM 데이터 추출
             result["dom_data"] = await extract_dom_data(page)
-            result["success"] = True
-            logger.info(f"✅ 처리 완료 | 플랫폼: {result['platform']} | 스크린샷: {len(result['screenshots'])}개")
+            try:
+                page_url = page.url or ""
+            except Exception:
+                page_url = ""
+            if is_blocked_tax_invoice_url(page_url):
+                result["error"] = "blocked_url_after_redirect"
+                result["success"] = False
+                logger.info(f"🚫 리다이렉트 후 차단 URL — 스킵: {page_url[:80]}")
+            elif is_excluded_tax_platform(result["platform"]):
+                result["error"] = "excluded_platform"
+                result["success"] = False
+                logger.info(f"🚫 제외 플랫폼(페이지 반영 후) — 스킵: {result['platform']}")
+            else:
+                result["success"] = True
+            if result["success"]:
+                logger.info(f"✅ 처리 완료 | 플랫폼: {result['platform']} | 스크린샷: {len(result['screenshots'])}개")
 
         except Exception as e:
             result["error"] = str(e)

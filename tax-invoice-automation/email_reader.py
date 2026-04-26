@@ -14,7 +14,12 @@ from email.utils import parsedate_to_datetime
 from typing import List, Dict
 from bs4 import BeautifulSoup
 
-from config import EMAIL_CONFIG, EMAIL_FILTER
+from config import (
+    EMAIL_CONFIG,
+    EMAIL_FILTER,
+    is_blocked_tax_invoice_url,
+    sender_matches_allowed_platforms,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -216,126 +221,150 @@ class EmailReader:
             except Exception:
                 pass
 
+    @staticmethod
+    def _select_imap_folder(mail: imaplib.IMAP4_SSL, folder: str) -> bool:
+        """Gmail 등에서 폴더명 인용 시도."""
+        name = (folder or "INBOX").strip()
+        for candidate in (name, f'"{name}"'):
+            try:
+                typ, _ = mail.select(candidate)
+                if typ == "OK":
+                    return True
+            except Exception:
+                continue
+        return False
+
     def fetch_tax_invoice_emails(self) -> List[Dict]:
         if not self.mail:
             return []
 
         results = []
+        seen_dedupe_keys = set()
+
+        # 검색 조건 구성 (폴더 공통)
+        criteria_parts = []
+        if EMAIL_FILTER.get("unread_only"):
+            criteria_parts.append("UNSEEN")
+        days = EMAIL_FILTER.get("days_limit", 0)
+        if days > 0:
+            since = (datetime.now() - timedelta(days=days)).strftime("%d-%b-%Y")
+            criteria_parts.append(f'SINCE "{since}"')
+        criteria = " ".join(criteria_parts) if criteria_parts else "ALL"
+
+        folders = EMAIL_FILTER.get("imap_folders") or ["INBOX"]
+        keywords = EMAIL_FILTER.get("subject_keywords", [])
+
         try:
-            self.mail.select("INBOX")
+            for folder in folders:
+                if not self._select_imap_folder(self.mail, folder):
+                    logger.warning(f"IMAP 폴더를 열 수 없습니다 (건너뜀): {folder}")
+                    continue
 
-            # 검색 조건 구성
-            criteria_parts = []
-            if EMAIL_FILTER.get("unread_only"):
-                criteria_parts.append("UNSEEN")
-            days = EMAIL_FILTER.get("days_limit", 0)
-            if days > 0:
-                since = (datetime.now() - timedelta(days=days)).strftime("%d-%b-%Y")
-                criteria_parts.append(f'SINCE "{since}"')
-            criteria = " ".join(criteria_parts) if criteria_parts else "ALL"
+                logger.info(f"[{folder}] 이메일 검색 조건: {criteria}")
+                _, msg_ids = self.mail.search(None, criteria)
+                ids = msg_ids[0].split()
+                logger.info(f"[{folder}] 검색된 메일 수: {len(ids)}개")
 
-            logger.info(f"이메일 검색 조건: {criteria}")
-            _, msg_ids = self.mail.search(None, criteria)
-            ids = msg_ids[0].split()
-            logger.info(f"검색된 메일 수: {len(ids)}개")
+                for msg_id in ids:
+                    try:
+                        _, data = self.mail.fetch(msg_id, "(RFC822)")
+                        msg = email.message_from_bytes(data[0][1])
 
-            keywords = EMAIL_FILTER.get("subject_keywords", [])
-
-            for msg_id in ids:
-                try:
-                    _, data = self.mail.fetch(msg_id, "(RFC822)")
-                    msg = email.message_from_bytes(data[0][1])
-
-                    subject = decode_str(msg.get("Subject", ""))
-                    from_addr = decode_str(msg.get("From", ""))
-                    date_str = msg.get("Date", "")
-                    from_lower = from_addr.lower()
-                    subj_lower = subject.lower()
-
-                    # ── 1순위: 발신자 도메인 차단 (blocklist) ─────────────────
-                    # 블랙리스트에 해당하면 키워드·허용목록 검사 없이 즉시 제외
-                    blocklist = EMAIL_FILTER.get("sender_domain_blocklist", [])
-                    if blocklist and any(bk.lower() in from_lower for bk in blocklist):
-                        logger.info(f"🚫 차단 발신자: [{from_addr[:50]}] / 제목: [{subject[:40]}]")
-                        continue
-
-                    # ── 2순위: 발신자 도메인 허용 (allowlist) ─────────────────
-                    # allowlist가 있으면 발신자가 목록에 없는 메일은 제외
-                    # ※ 제목 키워드로는 우회 불가 — 발신자만 검사
-                    allowlist = EMAIL_FILTER.get("sender_domain_allowlist", [])
-                    if allowlist:
-                        sender_allowed = any(ak.lower() in from_lower for ak in allowlist)
-                        if not sender_allowed:
-                            logger.info(f"⛔ 허용목록 미해당: [{from_addr[:50]}] / 제목: [{subject[:40]}]")
+                        mid_raw = msg.get("Message-ID", "") or ""
+                        mid = decode_str(mid_raw).strip()
+                        dedupe_key = mid if mid else f"{folder}:{msg_id.decode()}"
+                        if dedupe_key in seen_dedupe_keys:
                             continue
 
-                    # ── 3순위: 제목 키워드 필터 ───────────────────────────────
-                    if keywords and not any(kw.lower() in subj_lower for kw in keywords):
-                        continue
+                        subject = decode_str(msg.get("Subject", ""))
+                        from_addr = decode_str(msg.get("From", ""))
+                        date_str = msg.get("Date", "")
+                        subj_lower = subject.lower()
 
-                    try:
-                        received_date = parsedate_to_datetime(date_str)
-                    except Exception:
-                        received_date = datetime.now()
-
-                    body = get_email_body(msg)
-
-                    # ── 4순위: 공급받는자 검증 ─────────────────────────────────
-                    # 이메일 본문에 "세계로지스"가 없으면 당사 앞으로 발행된
-                    # 계산서가 아니므로 제외
-                    recipient_kws = EMAIL_FILTER.get("recipient_keywords", [])
-                    if recipient_kws:
-                        body_all = (body["html"] + body["text"]).lower()
-                        if not any(rk.lower() in body_all for rk in recipient_kws):
+                        # ── 1순위: 화물맨·24시콜·원콜·로지노트(플러스)·@taxNN. 발신만 ──
+                        if not sender_matches_allowed_platforms(from_addr):
                             logger.info(
-                                f"⏭ 수신자 미일치 (세계로지스 미포함) — 제목: [{subject[:40]}]"
+                                f"⛔ 수집 대상 발신자 아님: [{from_addr[:50]}] / 제목: [{subject[:40]}]"
                             )
                             continue
 
-                    # 1순위: 버튼 텍스트 링크
-                    links = []
-                    if body["html"]:
-                        links = extract_button_links(body["html"])
+                        # ── 2순위: 제목 키워드 필터 ───────────────────────────────
+                        if keywords and not any(kw.lower() in subj_lower for kw in keywords):
+                            continue
 
-                    # 2순위: fallback — 모든 링크에서 세금계산서 관련 URL 필터링
-                    if not links:
-                        all_links = extract_all_links(body["html"], body["text"])
-                        tax_kws = ["invoice", "세금", "tax", "bill", "계산서",
-                                   "hometax", "onebill", "tax12", "tax15", "loginote"]
-                        links = [lnk for lnk in all_links
-                                 if any(kw in lnk["url"].lower() for kw in tax_kws)]
+                        try:
+                            received_date = parsedate_to_datetime(date_str)
+                        except Exception:
+                            received_date = datetime.now()
 
-                    # 3순위: 이미지형 메일 — 인라인/첨부 이미지 추출
-                    images = extract_inline_images(msg)
+                        body = get_email_body(msg)
 
-                    # 링크도 없고 이미지도 없으면 건너뜀
-                    if not links and not images:
-                        logger.warning(f"링크·이미지 모두 없음 — [{subject}]")
-                        continue
+                        # ── 3순위: 공급받는자 검증 (세계로지스 발행분만) ───────────
+                        recipient_kws = EMAIL_FILTER.get("recipient_keywords", [])
+                        if recipient_kws:
+                            body_all = (body["html"] + body["text"]).lower()
+                            if not any(rk.lower() in body_all for rk in recipient_kws):
+                                logger.info(
+                                    f"⏭ 수신자 미일치 (세계로지스 미포함) — 제목: [{subject[:40]}]"
+                                )
+                                continue
 
-                    email_type = "link" if links else "image"
-                    email_info = {
-                        "msg_id": msg_id.decode(),
-                        "subject": subject,
-                        "from": from_addr,
-                        "date": received_date.isoformat(),
-                        "links": links,          # [{"url":..., "text":..., "priority":...}]
-                        "images": images,        # [{"data": bytes, "ext": str, ...}]
-                        "email_type": email_type,
-                        "html_body": body["html"],
-                        "text_body": body["text"],
-                    }
-                    results.append(email_info)
-                    logger.info(
-                        f"📧 [{subject[:40]}] | 발신: {from_addr[:30]} "
-                        f"| 유형: {email_type} | 링크 {len(links)}개 | 이미지 {len(images)}개"
-                    )
+                        # 1순위: 버튼 텍스트 링크
+                        links = []
+                        if body["html"]:
+                            links = extract_button_links(body["html"])
 
-                    if EMAIL_FILTER.get("mark_as_read"):
-                        self.mail.store(msg_id, "+FLAGS", "\\Seen")
+                        # 2순위: fallback — 모든 링크에서 세금계산서 관련 URL 필터링
+                        if not links:
+                            all_links = extract_all_links(body["html"], body["text"])
+                            tax_kws = [
+                                "invoice", "세금", "tax", "bill", "계산서",
+                                "hometax", "onebill", "tax12", "tax15", "loginote", "logynote",
+                            ]
+                            links = [lnk for lnk in all_links
+                                     if any(kw in lnk["url"].lower() for kw in tax_kws)]
 
-                except Exception as e:
-                    logger.error(f"메일 처리 오류 (id={msg_id}): {e}")
+                        # 차단 URL 제거 (허용 발신자 메일에 마켓/교육 링크가 섞인 경우)
+                        before_n = len(links)
+                        links = [lnk for lnk in links if not is_blocked_tax_invoice_url(lnk.get("url", ""))]
+
+                        # 이미지형 메일 — 인라인/첨부 이미지 추출
+                        images = extract_inline_images(msg)
+                        if before_n > 0 and not links and not images:
+                            logger.info(
+                                f"🚫 차단 URL만 있음 — 제목: [{subject[:40]}]"
+                            )
+                            continue
+
+                        # 링크도 없고 이미지도 없으면 건너뜀
+                        if not links and not images:
+                            logger.warning(f"링크·이미지 모두 없음 — [{subject}]")
+                            continue
+
+                        email_type = "link" if links else "image"
+                        email_info = {
+                            "msg_id": msg_id.decode(),
+                            "subject": subject,
+                            "from": from_addr,
+                            "date": received_date.isoformat(),
+                            "links": links,
+                            "images": images,
+                            "email_type": email_type,
+                            "html_body": body["html"],
+                            "text_body": body["text"],
+                        }
+                        results.append(email_info)
+                        seen_dedupe_keys.add(dedupe_key)
+                        logger.info(
+                            f"📧 [{subject[:40]}] | 발신: {from_addr[:30]} "
+                            f"| 유형: {email_type} | 링크 {len(links)}개 | 이미지 {len(images)}개"
+                        )
+
+                        if EMAIL_FILTER.get("mark_as_read"):
+                            self.mail.store(msg_id, "+FLAGS", "\\Seen")
+
+                    except Exception as e:
+                        logger.error(f"메일 처리 오류 (folder={folder}, id={msg_id}): {e}")
 
         except Exception as e:
             logger.error(f"메일 조회 실패: {e}")

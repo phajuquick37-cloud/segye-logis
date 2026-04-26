@@ -136,11 +136,15 @@ def save_invoice(result: Dict) -> Optional[str]:
         return None
 
     try:
-        from google.cloud.firestore_v1 import SERVER_TIMESTAMP
+        from config import is_blocked_tax_invoice_url, is_excluded_tax_platform
 
         record = result.get("invoice_record", {})
         supplier = record.get("supplier", {})
         platform = result.get("platform", "기타")
+        src_url = result.get("url") or ""
+        if is_blocked_tax_invoice_url(src_url) or is_excluded_tax_platform(platform):
+            logger.info(f"Firestore 저장 생략 (차단 URL 또는 제외 플랫폼): {platform} | {src_url[:60]}")
+            return None
         invoice_date = record.get("issue_date") or datetime.now().strftime("%Y-%m-%d")
 
         # 스크린샷 Storage 업로드
