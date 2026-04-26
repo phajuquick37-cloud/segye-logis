@@ -933,8 +933,12 @@ export default function Settlement() {
 
   const sorted = useMemo(() =>
     [...filtered].sort((a, b) => {
+      // 합계금액 내림차순 (금액 많은 업체가 위)
+      // 같은 금액이면 입금확인 완료(checked) 항목을 아래로
+      const diff = calcGrandTotal(b) - calcGrandTotal(a);
+      if (diff !== 0) return diff;
       if (a.checked !== b.checked) return a.checked ? 1 : -1;
-      return calcGrandTotal(b) - calcGrandTotal(a);
+      return a.client_name.localeCompare(b.client_name, "ko");
     }),
     [filtered]
   );
