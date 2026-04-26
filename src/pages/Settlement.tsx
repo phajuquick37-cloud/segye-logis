@@ -29,7 +29,7 @@ import {
 import { useStaffProfile } from "../hooks/useStaffProfile";
 import MonthlyHistory, { useMonthClosures } from "../components/settlement/MonthlyHistory";
 import StatementModal, { DocumentBody, SettlementItem, ClientProfile as ModalClientProfile } from "../components/settlement/StatementModal";
-import html2canvas from "html2canvas";
+import { captureStatementToCanvas } from "../utils/statementCapture";
 import { SUPPLIER, VAT_RATE } from "../config/companyInfo";
 
 // ─────────────────────────────────────────────────────────────
@@ -1817,7 +1817,7 @@ function QuickMailPanel({ record, onClose }: { record: ArRecord; onClose: () => 
     setSending(true);
     setSentErr("");
     try {
-      const canvas = await html2canvas(docRef.current, { scale: 2, useCORS: true, backgroundColor: "#ffffff", logging: false });
+      const canvas = await captureStatementToCanvas(docRef.current, { scale: 2 });
       const imageBase64 = canvas.toDataURL("image/png", 0.92);
       // 수신인 Firestore 저장
       await updateDoc(doc(db, "ar_records", record.id), { contact_email: recipients.join(", ") });

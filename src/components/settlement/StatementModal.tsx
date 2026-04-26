@@ -5,7 +5,7 @@ import {
 } from "firebase/firestore";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
-import html2canvas from "html2canvas";
+import { captureStatementToCanvas } from "../../utils/statementCapture";
 import { X, Download, Mail, FileSpreadsheet, Printer, CheckCircle, AlertTriangle, Loader2, ImageIcon, Send } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import { SUPPLIER, VAT_RATE } from "../../config/companyInfo";
@@ -626,9 +626,7 @@ export default function StatementModal({
     if (!docRef.current) return;
     setPngBusy(true);
     try {
-      const canvas = await html2canvas(docRef.current, {
-        scale: 2, useCORS: true, backgroundColor: "#ffffff", logging: false,
-      });
+      const canvas = await captureStatementToCanvas(docRef.current, { scale: 2 });
       const link = document.createElement("a");
       link.download = `거래명세표_${record.client_name}_${record.billing_month}.png`;
       link.href = canvas.toDataURL("image/png");
@@ -643,9 +641,7 @@ export default function StatementModal({
     if (!docRef.current) return;
     setPdfBusy(true);
     try {
-      const canvas = await html2canvas(docRef.current, {
-        scale: 2, useCORS: true, backgroundColor: "#ffffff", logging: false,
-      });
+      const canvas = await captureStatementToCanvas(docRef.current, { scale: 2 });
       const imgData = canvas.toDataURL("image/png");
       const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
       const w = pdf.internal.pageSize.getWidth();
@@ -702,9 +698,7 @@ export default function StatementModal({
     if (!docRef.current) return;
     setSending(true); setSentOk(false); setSentErr("");
     try {
-      const canvas = await html2canvas(docRef.current, {
-        scale: 1.5, useCORS: true, backgroundColor: "#ffffff", logging: false,
-      });
+      const canvas = await captureStatementToCanvas(docRef.current, { scale: 1.5 });
       const imageBase64 = canvas.toDataURL("image/png", 0.92);
       // 담당자 목록 Firestore 저장
       await updateDoc(doc(db, "ar_records", record.id), { contact_email: recipients.join(", ") });
