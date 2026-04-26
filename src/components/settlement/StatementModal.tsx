@@ -139,9 +139,9 @@ const TEMPLATES: Record<TemplateType, { label: string; cols: ColDef[]; renderRow
     cols: [
       { header: "날  짜",          width: "80px",  align: "center" },
       { header: "고객명 (상호)",                   align: "left"   },
-      { header: "출 발 지",                        align: "center" },
-      { header: "도 착 지",                        align: "center" },
-      { header: "톤수 (차종)",     width: "72px",  align: "center" },
+      { header: "출 발 동",                        align: "center" },
+      { header: "도 착 동",                        align: "center" },
+      { header: "차  량",          width: "72px",  align: "center" },
       { header: "금  액",          width: "100px", align: "right"  },
     ],
     renderRow: (item) => [
@@ -158,9 +158,9 @@ const TEMPLATES: Record<TemplateType, { label: string; cols: ColDef[]; renderRow
     cols: [
       { header: "날  짜",    width: "72px",  align: "center" },
       { header: "고객명(상호)",              align: "left"   },
-      { header: "출 발 지",                  align: "center" },
-      { header: "도 착 지",                  align: "center" },
-      { header: "톤  수",    width: "52px",  align: "center" },
+      { header: "출 발 동",                  align: "center" },
+      { header: "도 착 동",                  align: "center" },
+      { header: "차  량",    width: "52px",  align: "center" },
       { header: "기 사 명",  width: "60px",  align: "center" },
       { header: "금  액",    width: "90px",  align: "right"  },
       { header: "차량번호",  width: "72px",  align: "center" },
@@ -181,10 +181,10 @@ const TEMPLATES: Record<TemplateType, { label: string; cols: ColDef[]; renderRow
     cols: [
       { header: "날  짜",      width: "72px",  align: "center" },
       { header: "고 객 명",                    align: "left"   },
-      { header: "출 발 지",                    align: "center" },
+      { header: "출 발 동",                    align: "center" },
       { header: "하차지고객",                  align: "center" },
-      { header: "도 착 지",                    align: "center" },
-      { header: "톤  수",      width: "52px",  align: "center" },
+      { header: "도 착 동",                    align: "center" },
+      { header: "차  량",      width: "52px",  align: "center" },
       { header: "금  액",      width: "90px",  align: "right"  },
     ],
     renderRow: (item) => [
@@ -201,11 +201,11 @@ const TEMPLATES: Record<TemplateType, { label: string; cols: ColDef[]; renderRow
     label: "래피드양식",
     cols: [
       { header: "날  짜",    width: "72px",  align: "center" },
-      { header: "출 발 지",                  align: "center" },
-      { header: "도 착 지",                  align: "center" },
+      { header: "출 발 동",                  align: "center" },
+      { header: "도 착 동",                  align: "center" },
       { header: "비  고",                    align: "left"   },
       { header: "금  액",    width: "90px",  align: "right"  },
-      { header: "톤  수",    width: "52px",  align: "center" },
+      { header: "차  량",    width: "52px",  align: "center" },
     ],
     renderRow: (item) => [
       item.date,
