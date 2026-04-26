@@ -244,7 +244,7 @@ function ColumnMappingPanel({ result, overrides, onOverride }: {
     <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-2">
       <p className="text-sm font-bold text-slate-700">컬럼 매핑 확인</p>
       <p className="text-xs text-slate-500 leading-relaxed">
-        <strong className="text-slate-600">거래처명</strong>이 있고 <strong className="text-slate-600">지급</strong> 열에 <strong>「신용」</strong>이 적힌 행만 신용내역에 집계됩니다. 거래처명 공란·지급이 선불/착불 등이면 제외됩니다.
+        <strong className="text-slate-600">거래처명</strong>이 있어도 <strong className="text-slate-600">지급</strong>이 <strong>선불·착불</strong>이면 월별 신용내역·정산에서 <strong>제외</strong>됩니다. 예) 거래처명 「김희철」, 지급 「선불」→ 집계 안 됨. <strong>「신용」</strong>이 적힌 행만 집계됩니다.
       </p>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
         {([...REQUIRED, ...OPTIONAL] as ColKey[]).map((key) => {
@@ -702,8 +702,8 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
           <div className="text-xs leading-relaxed">
             <span className="font-semibold text-slate-900">신용거래처 마감 규칙</span>
             <span className="block mt-1">
-              <strong>거래처명</strong>에 상호가 있고, <strong>지급</strong> 열에 <strong>「신용」</strong>이 표시된 행만 신용내역에 집계됩니다.
-              거래처명 공란·지급이 <strong>선불·착불</strong> 등이면 <strong>제외</strong>됩니다. (지급 열은 컬럼 매핑에서 반드시 지정하세요.)
+              <strong>거래처명</strong>에 상호가 있어도 <strong>지급</strong>이 <strong>선불·착불·선착불</strong>이면 <strong>월별 신용내역·정산에서 제외</strong>됩니다. (예: 거래처명 「김희철」, 지급 「선불」)
+              <strong>「신용」</strong>이 지급란에 있는 행만 집계됩니다. 지급 열은 컬럼 매핑에서 반드시 지정하세요.
             </span>
           </div>
         </div>

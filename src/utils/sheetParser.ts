@@ -176,13 +176,16 @@ export function normalizePaymentCell(val: unknown): string {
 }
 
 /**
- * 신용내역 집계 대상 지급 여부: 「신용」 포함 시만 true (선불·착불만 표기된 행은 false)
+ * 신용내역 집계 대상 지급 여부:
+ * · 지급란에 선불·착불·선착불이 있으면 거래처명이 있어도 제외
+ * · 「신용」이 있어야 집계 (비신용 제외)
  */
 export function isCreditPaymentForSettlement(val: unknown): boolean {
   const s = normalizePaymentCell(val);
   if (!s) return false;
   const c = s.replace(/\s+/g, "");
   if (/비신용/.test(c)) return false;
+  if (/선착불|선불|착불/.test(c)) return false;
   return /신용/.test(c);
 }
 
