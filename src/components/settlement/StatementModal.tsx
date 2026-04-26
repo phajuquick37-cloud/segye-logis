@@ -211,11 +211,13 @@ const TEMPLATES: Record<TemplateType, { label: string; cols: ColDef[]; renderRow
 };
 
 function detectTemplate(clientName: string, profile?: ClientProfile | null): TemplateType {
-  if (profile?.template) return profile.template as TemplateType;
+  // 1. 거래처명 기반 자동 감지 (우선)
   const n = clientName;
-  if (n.includes("삼일강업")) return "samil";
-  if (n.includes("지유전자") || n.includes("지유")) return "jiyoo";
-  if (n.includes("래피드") || n.includes("rapid")) return "rapid";
+  if (n.includes("삼일강업"))                          return "samil";
+  if (n.includes("지유전자") || n.includes("지유"))    return "jiyoo";
+  if (n.includes("래피드") || n.includes("래피어드") || n.includes("rapid")) return "rapid";
+  // 2. 프로필에서 기본양식이 아닌 양식을 명시한 경우 적용
+  if (profile?.template && profile.template !== "basic") return profile.template as TemplateType;
   return "basic";
 }
 
