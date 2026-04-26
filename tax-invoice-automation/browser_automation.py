@@ -87,6 +87,9 @@ async def input_business_number(page: Page) -> bool:
 
 async def click_confirm_button(page: Page) -> bool:
     """공통 선택자로 확인/조회 버튼 클릭"""
+    # 버튼 클릭 후 networkidle 대기 60초, 초과 시 domcontentloaded로 폴백
+    _WAIT_MS = 60000
+
     for selector in CONFIRM_BUTTON_SELECTORS:
         try:
             el = await page.wait_for_selector(selector, timeout=3000, state="visible")
@@ -94,7 +97,14 @@ async def click_confirm_button(page: Page) -> bool:
                 await el.scroll_into_view_if_needed()
                 await el.click()
                 logger.info(f"확인 버튼 클릭: {selector}")
-                await page.wait_for_load_state("networkidle", timeout=15000)
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=_WAIT_MS)
+                except Exception:
+                    logger.warning("networkidle 초과 — domcontentloaded로 폴백")
+                    try:
+                        await page.wait_for_load_state("domcontentloaded", timeout=_WAIT_MS)
+                    except Exception:
+                        pass
                 return True
         except Exception:
             continue
@@ -102,7 +112,14 @@ async def click_confirm_button(page: Page) -> bool:
     # Enter 키 fallback
     try:
         await page.keyboard.press("Enter")
-        await page.wait_for_load_state("networkidle", timeout=10000)
+        try:
+            await page.wait_for_load_state("networkidle", timeout=_WAIT_MS)
+        except Exception:
+            logger.warning("Enter 후 networkidle 초과 — domcontentloaded로 폴백")
+            try:
+                await page.wait_for_load_state("domcontentloaded", timeout=_WAIT_MS)
+            except Exception:
+                pass
         logger.info("Enter 키로 제출")
         return True
     except Exception as e:

@@ -2,6 +2,12 @@
 # 세계로지스 세금계산서 자동화 툴 v2 - 통합 설정 파일
 # =============================================================================
 
+import os as _os
+
+# config.py가 위치한 디렉터리 → Windows/Linux 양쪽에서 절대 경로 보장
+_BASE_DIR = _os.path.dirname(_os.path.abspath(__file__))
+_CREDENTIALS_FILE = _os.path.join(_BASE_DIR, "google_credentials.json")
+
 # --- 이메일 설정 (Gmail IMAP) ---
 EMAIL_CONFIG = {
     "imap_server": "imap.gmail.com",
@@ -22,10 +28,10 @@ EMAIL_FILTER = {
         "확인하기", "상세보기", "조회하기", "열람",
         "세금계산서 확인", "계산서 보기",
     ],
-    # ★ 3월부터 전체 수집 모드 (60일치, 읽은 메일 포함)
+    # ★ 3월~현재 강제 전체 수집 (90일치, 읽은 메일 포함)
     "unread_only": False,
     "mark_as_read": False,
-    "days_limit": 60,
+    "days_limit": 90,
 }
 
 # --- 발행 플랫폼 감지 규칙 ---
@@ -62,8 +68,8 @@ BUSINESS_CONFIG = {
 
 # --- Firebase Admin SDK 설정 ---
 FIREBASE_ADMIN_CONFIG = {
-    # Firebase Console → 프로젝트 설정 → 서비스 계정 → 새 비공개 키 생성 후 저장
-    "credentials_file": "google_credentials.json",
+    # 절대 경로 사용 — 서버 작업 디렉터리와 무관하게 파일을 찾음
+    "credentials_file": _CREDENTIALS_FILE,
     # 실제 홈페이지 Firebase 프로젝트
     "project_id": "gen-lang-client-0127550748",
     # Firebase Storage 버킷명
@@ -150,8 +156,8 @@ STORAGE_CONFIG = {
 # --- Google Sheets 설정 ---
 SHEETS_CONFIG = {
     "enabled": True,
-    # Google Cloud 서비스 계정 JSON 파일 경로
-    "credentials_file": "google_credentials.json",
+    # 절대 경로 사용 — 서버 작업 디렉터리와 무관하게 파일을 찾음
+    "credentials_file": _CREDENTIALS_FILE,
     # 스프레드시트 ID (URL에서 추출: /spreadsheets/d/[ID]/edit)
     "spreadsheet_id": "",   # ← 실제 스프레드시트 ID 입력
     # 데이터 기록할 시트 이름
