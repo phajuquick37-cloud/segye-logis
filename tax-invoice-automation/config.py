@@ -28,16 +28,24 @@ EMAIL_FILTER = {
         "확인하기", "상세보기", "조회하기", "열람",
         "세금계산서 확인", "계산서 보기",
     ],
-    # ── 발신자 도메인 차단 목록 (잡이메일 제외) ──
-    # 아래 도메인이 포함된 발신자는 키워드 매칭돼도 무시
+    # ── 발신자 도메인 차단 목록 ──────────────────────────────────────────────
+    # 아래 문자열이 발신자(From)에 포함되면 키워드 매칭과 무관하게 무조건 제외
     "sender_domain_blocklist": [
-        "qoo10.jp", "qoo10.com", "gmarket.co.kr", "auction.co.kr",
-        "11st.co.kr", "coupang.com", "naver.com", "kakao.com",
+        # Qoo10 계열 전체 차단 (university.qoo10.jp 등 모든 서브도메인 포함)
+        "qoo10.jp", "qoo10.com", "qoo10.co.kr", "university.qoo10",
+        # 국내외 마켓플레이스
+        "gmarket.co.kr", "auction.co.kr", "11st.co.kr", "coupang.com",
+        "tmon.co.kr", "wemakeprice.com", "interpark.com",
         "amazon.com", "aliexpress.com", "ebay.com",
-        "university.qoo10", "marketing@", "newsletter@", "noreply@", "no-reply@",
+        # SNS / 포털
+        "naver.com", "kakao.com", "daum.net",
+        # 광고·뉴스레터 발신 패턴
+        "marketing@", "newsletter@", "noreply@", "no-reply@",
+        "promotions@", "promo@", "ads@", "info@qoo10",
     ],
-    # ── 발신자 도메인 허용 목록 (비어 있으면 차단목록만 적용) ──
-    # 물류 세금계산서 플랫폼 발신자 도메인 또는 키워드
+    # ── 발신자 도메인 허용 목록 ──────────────────────────────────────────────
+    # allowlist가 설정되면 "발신자"가 이 목록에 매칭되는 메일만 수집
+    # (subject 키워드만 맞고 발신자가 다르면 거부 → 스팸 차단 강화)
     "sender_domain_allowlist": [
         "tax12.co.kr", "tax15.co.kr", "hwamulman", "cargo12",
         "onebill", "onecall", "1call",

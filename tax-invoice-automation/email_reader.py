@@ -249,28 +249,29 @@ class EmailReader:
                     subject = decode_str(msg.get("Subject", ""))
                     from_addr = decode_str(msg.get("From", ""))
                     date_str = msg.get("Date", "")
+                    from_lower = from_addr.lower()
+                    subj_lower = subject.lower()
 
-                    # 제목 키워드 필터
-                    if keywords and not any(kw.lower() in subject.lower() for kw in keywords):
-                        continue
-
-                    # ── 발신자 도메인 차단 필터 ──────────────────────────────
+                    # ── 1순위: 발신자 도메인 차단 (blocklist) ─────────────────
+                    # 블랙리스트에 해당하면 키워드·허용목록 검사 없이 즉시 제외
                     blocklist = EMAIL_FILTER.get("sender_domain_blocklist", [])
-                    if blocklist and any(bk.lower() in from_addr.lower() for bk in blocklist):
-                        logger.info(f"🚫 차단 발신자 스킵: [{from_addr[:40]}] 제목: [{subject[:40]}]")
+                    if blocklist and any(bk.lower() in from_lower for bk in blocklist):
+                        logger.info(f"🚫 차단 발신자: [{from_addr[:50]}] / 제목: [{subject[:40]}]")
                         continue
 
-                    # ── 발신자 도메인 허용 필터 (설정된 경우만 적용) ──────────
+                    # ── 2순위: 발신자 도메인 허용 (allowlist) ─────────────────
+                    # allowlist가 있으면 발신자가 목록에 없는 메일은 제외
+                    # ※ 제목 키워드로는 우회 불가 — 발신자만 검사
                     allowlist = EMAIL_FILTER.get("sender_domain_allowlist", [])
                     if allowlist:
-                        # 허용목록이 있을 때 — 허용된 키워드가 발신자 OR 제목에 있어야 통과
-                        allowed = (
-                            any(ak.lower() in from_addr.lower() for ak in allowlist)
-                            or any(ak.lower() in subject.lower() for ak in allowlist)
-                        )
-                        if not allowed:
-                            logger.info(f"⛔ 허용목록 미해당 스킵: [{from_addr[:40]}] 제목: [{subject[:40]}]")
+                        sender_allowed = any(ak.lower() in from_lower for ak in allowlist)
+                        if not sender_allowed:
+                            logger.info(f"⛔ 허용목록 미해당: [{from_addr[:50]}] / 제목: [{subject[:40]}]")
                             continue
+
+                    # ── 3순위: 제목 키워드 필터 ───────────────────────────────
+                    if keywords and not any(kw.lower() in subj_lower for kw in keywords):
+                        continue
 
                     try:
                         received_date = parsedate_to_datetime(date_str)
