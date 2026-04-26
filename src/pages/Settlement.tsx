@@ -37,6 +37,16 @@ type TemplateType = "basic" | "samil" | "jiyoo" | "rapid";
 const TEMPLATE_LABELS: Record<TemplateType, string> = {
   basic: "기본양식", samil: "삼일강업양식", jiyoo: "지유전자양식", rapid: "래피드양식",
 };
+
+/** 신용거래처명 비교용 정규화 (공백·유니코드 통일) */
+function normalizeCreditKey(name: string): string {
+  try {
+    return name.normalize("NFKC").trim().replace(/\s+/g, " ");
+  } catch {
+    return String(name ?? "").trim().replace(/\s+/g, " ");
+  }
+}
+
 interface ClientProfile {
   id?: string;
   name: string;
@@ -353,15 +363,21 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
 
   // ── 신용거래처 등록 목록 (client_profiles) ──
   const [creditNames, setCreditNames] = useState<Set<string>>(new Set());
+  const [profilesLoaded, setProfilesLoaded] = useState(false);
   const [skippedCount, setSkipped]    = useState(0);
 
   useEffect(() => {
     getDocs(query(collection(db, "client_profiles"), orderBy("name")))
       .then((snap) => {
-        const names = new Set(snap.docs.map((d) => (d.data().name as string).trim()));
+        const names = new Set(
+          snap.docs
+            .map((d) => normalizeCreditKey((d.data().name as string) ?? ""))
+            .filter(Boolean)
+        );
         setCreditNames(names);
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setProfilesLoaded(true));
   }, []);
 
   const handleFiles = async (incoming: File[]) => {
@@ -403,19 +419,28 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
       };
     });
     const split = applyEntitySplit(patched, splitRules);
-    setSplitRows(split);
 
     // ── 신용거래처 필터 ──────────────────────────────────────────────────────
-    // client_profiles에 등록된 거래처만 포함. 미등록이면 전체 포함(fallback).
-    let filtered = split;
+    // 1) 프로필 목록 로딩 전에는 마감 데이터를 만들지 않음 (레이스로 전체 행 저장 방지)
+    // 2) 로딩 후: 등록된 신용거래처만 포함. 미등록 시 행 0건 (일반 신용고객 전부 제외)
+    if (!profilesLoaded) {
+      setSplitRows([]);
+      setPreview([]);
+      setSkipped(0);
+      return;
+    }
+
+    let filtered: SplitRow[];
     if (creditNames.size > 0) {
-      filtered = split.filter((r) => creditNames.has(r.clientName.trim()));
+      filtered = split.filter((r) => creditNames.has(normalizeCreditKey(r.clientName)));
       setSkipped(split.length - filtered.length);
     } else {
-      setSkipped(0);
+      filtered = [];
+      setSkipped(split.length);
     }
+    setSplitRows(filtered);
     setPreview(aggregateToRecords(filtered, billingMonth));
-  }, [currentResult, colOverrides, splitRules, billingMonth, creditNames]);
+  }, [currentResult, colOverrides, splitRules, billingMonth, creditNames, profilesLoaded]);
 
   useEffect(() => {
     if (!currentResult) return;
@@ -426,14 +451,15 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
     });
   }, [currentResult]);
 
-  // ── 파일 파싱 완료 후 자동저장 ──
+  // ── 파일 파싱 완료 후 자동저장 (신용거래처 목록 로드 후에만) ──
   useEffect(() => {
+    if (!profilesLoaded) return;
     if (preview.length > 0 && !autoSaveRef.current && !saving && !saved) {
       autoSaveRef.current = true;
       handleSave();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [preview]);
+  }, [preview, profilesLoaded]);
 
   // Firestore 는 undefined 값을 거부 → undefined 키를 모두 제거
   const stripUndefined = (obj: Record<string, any>): Record<string, any> =>
@@ -604,7 +630,12 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
         <SplitRulesPanel rules={splitRules} onChange={setSplitR} />
 
         {/* 신용거래처 필터 결과 안내 */}
-        {creditNames.size > 0 ? (
+        {!profilesLoaded ? (
+          <div className="flex items-center gap-2 text-sm bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-600">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            등록된 신용거래처 목록을 불러오는 중…
+          </div>
+        ) : creditNames.size > 0 ? (
           <div className={`flex items-start gap-2 text-sm rounded-lg px-3 py-2 border ${
             skippedCount > 0
               ? "bg-amber-50 border-amber-200 text-amber-800"
@@ -628,13 +659,13 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
             </div>
           </div>
         ) : (
-          <div className="flex items-start gap-2 text-sm bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-blue-700">
+          <div className="flex items-start gap-2 text-sm bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-amber-900">
             <Building2 className="h-4 w-4 mt-0.5 shrink-0" />
             <div>
-              <span className="font-semibold">신용거래처 미등록 상태</span>
+              <span className="font-semibold">신용거래처 미등록 — 마감 불가</span>
               <div className="mt-0.5 text-xs">
-                "거래처 정보" 탭에서 신용거래처를 등록하면, 업로드 시 해당 거래처만 자동으로 포함됩니다.
-                현재는 <strong>거래처명 컬럼이 있는 행 전체</strong>를 포함합니다.
+                <strong>거래처 정보</strong> 탭에서 신용거래처를 1건 이상 등록해야 신용내역에 반영됩니다.
+                일반 신용고객(미등록) 행은 <strong>자동으로 제외</strong>됩니다.
               </div>
             </div>
           </div>
@@ -1724,19 +1755,21 @@ function ClientProfilesPanel() {
   };
 
   const handleSave = async () => {
-    if (!form.name.trim()) { alert("거래처명을 입력하세요."); return; }
+    const nameNorm = normalizeCreditKey(form.name);
+    if (!nameNorm) { alert("거래처명을 입력하세요."); return; }
     setSaving(true);
     try {
+      const payload = { ...form, name: nameNorm };
       if (isNew) {
-        await addDoc(collection(db, "client_profiles"), { ...form });
+        await addDoc(collection(db, "client_profiles"), payload);
       } else if (editing?.id) {
-        await setDoc(doc(db, "client_profiles", editing.id), { ...form }, { merge: true });
+        await setDoc(doc(db, "client_profiles", editing.id), payload, { merge: true });
       }
 
       // 이메일이 있으면 신용내역(ar_records) 중 같은 거래처명인 항목에 contact_email 자동 동기화
       if (form.email?.trim()) {
         const snap = await getDocs(
-          query(collection(db, "ar_records"), where("client_name", "==", form.name.trim()))
+          query(collection(db, "ar_records"), where("client_name", "==", nameNorm))
         );
         const batch = writeBatch(db);
         snap.docs.forEach((d) => {
