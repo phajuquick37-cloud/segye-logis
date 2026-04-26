@@ -102,6 +102,23 @@ function calcGrandTotal(r: { total_amount: number; delivery_fee?: number }): num
   return Math.round((r.total_amount + (r.delivery_fee ?? 0)) * 1.1);
 }
 
+const FIRESTORE_BATCH_LIMIT = 450;
+
+/** `ar_records` 문서와 `items` 서브컬렉션을 함께 삭제 (배치 한도 이하 청크) */
+async function deleteArRecordCascade(parentId: string) {
+  const itemsRef = collection(db, "ar_records", parentId, "items");
+  const snap = await getDocs(itemsRef);
+  const docs = snap.docs;
+  for (let i = 0; i < docs.length; i += FIRESTORE_BATCH_LIMIT) {
+    const batch = writeBatch(db);
+    for (const d of docs.slice(i, i + FIRESTORE_BATCH_LIMIT)) {
+      batch.delete(d.ref);
+    }
+    await batch.commit();
+  }
+  await deleteDoc(doc(db, "ar_records", parentId));
+}
+
 // ─────────────────────────────────────────────────────────────
 // 전광판 (ScoreBoard)
 // ─────────────────────────────────────────────────────────────
@@ -442,24 +459,14 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
     });
     const split = applyEntitySplit(patched, splitRules);
 
-    // ── 신용거래처 필터 ──────────────────────────────────────────────────────
-    // 1) 프로필 목록 로딩 전에는 마감 데이터를 만들지 않음 (레이스로 전체 행 저장 방지)
-    // 2) 로딩 후: 등록된 신용거래처만 포함. 미등록 시 행 0건 (일반 신용고객 전부 제외)
-    if (!profilesLoaded) {
-      setSplitRows([]);
-      setPreview([]);
-      setSkipped(0);
-      return;
+    // ── 마감 파일: 거래처 정보 없이도 전체 행 포함 (이전과 동일)
+    //    등록된 신용거래처 목록이 있으면, 미등록 행 수만 안내(선택 삭제는 신용내역 탭에서)
+    const filtered = split;
+    let unregistered = 0;
+    if (profilesLoaded && creditNames.size > 0) {
+      unregistered = split.filter((r) => !creditNames.has(normalizeCreditKey(r.clientName))).length;
     }
-
-    let filtered: SplitRow[];
-    if (creditNames.size > 0) {
-      filtered = split.filter((r) => creditNames.has(normalizeCreditKey(r.clientName)));
-      setSkipped(split.length - filtered.length);
-    } else {
-      filtered = [];
-      setSkipped(split.length);
-    }
+    setSkipped(unregistered);
     setSplitRows(filtered);
     setPreview(aggregateToRecords(filtered, billingMonth));
   }, [currentResult, colOverrides, splitRules, billingMonth, creditNames, profilesLoaded]);
@@ -473,15 +480,14 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
     });
   }, [currentResult]);
 
-  // ── 파일 파싱 완료 후 자동저장 (신용거래처 목록 로드 후에만) ──
+  // ── 파일 파싱 완료 후 자동저장 ──
   useEffect(() => {
-    if (!profilesLoaded) return;
     if (preview.length > 0 && !autoSaveRef.current && !saving && !saved) {
       autoSaveRef.current = true;
       handleSave();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [preview, profilesLoaded]);
+  }, [preview]);
 
   // Firestore 는 undefined 값을 거부 → undefined 키를 모두 제거
   const stripUndefined = (obj: Record<string, any>): Record<string, any> =>
@@ -656,7 +662,7 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
         {!profilesLoaded ? (
           <div className="flex items-center gap-2 text-sm bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-600">
             <Loader2 className="h-4 w-4 animate-spin" />
-            등록된 신용거래처 목록을 불러오는 중…
+            거래처 등록 목록 확인 중… (업로드에는 영향 없음)
           </div>
         ) : creditNames.size > 0 ? (
           <div className={`flex items-start gap-2 text-sm rounded-lg px-3 py-2 border ${
@@ -666,29 +672,29 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
           }`}>
             <Building2 className="h-4 w-4 mt-0.5 shrink-0" />
             <div>
-              <span className="font-semibold">신용거래처 필터 적용 중</span>
+              <span className="font-semibold">마감 파일 전체 반영</span>
               <span className="ml-2 text-xs opacity-80">
-                (등록된 신용거래처 {creditNames.size}개 기준)
+                (등록 거래처 {creditNames.size}개 기준 안내)
               </span>
               {skippedCount > 0 && (
                 <div className="mt-0.5 text-xs">
-                  일반/미등록 고객 행 <strong>{skippedCount}행</strong> 제외됨 —
-                  신용거래처로 추가하려면 <strong>거래처 정보</strong> 탭에서 등록하세요.
+                  거래처 정보에 <strong>없는 이름</strong>의 행이 <strong>{skippedCount}행</strong> 있습니다.
+                  저장 후 <strong>신용내역</strong>에서 해당 업체를 체크하고 <strong>선택 삭제</strong>하면 합계가 다시 계산됩니다.
                 </div>
               )}
               {skippedCount === 0 && (
-                <div className="mt-0.5 text-xs">모든 행이 등록된 신용거래처입니다.</div>
+                <div className="mt-0.5 text-xs">모든 행의 거래처명이 등록 목록과 일치합니다.</div>
               )}
             </div>
           </div>
         ) : (
-          <div className="flex items-start gap-2 text-sm bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-amber-900">
+          <div className="flex items-start gap-2 text-sm bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 text-blue-900">
             <Building2 className="h-4 w-4 mt-0.5 shrink-0" />
             <div>
-              <span className="font-semibold">신용거래처 미등록 — 마감 불가</span>
+              <span className="font-semibold">거래처 정보 미등록</span>
               <div className="mt-0.5 text-xs">
-                <strong>거래처 정보</strong> 탭에서 신용거래처를 1건 이상 등록해야 신용내역에 반영됩니다.
-                일반 신용고객(미등록) 행은 <strong>자동으로 제외</strong>됩니다.
+                엑셀의 <strong>거래처명 기준 전체 행</strong>이 마감에 포함됩니다.
+                일반 신용고객이 섞였다면 <strong>신용내역</strong>에서 체크 후 <strong>선택 삭제</strong>하세요.
               </div>
             </div>
           </div>
@@ -879,7 +885,7 @@ export default function Settlement() {
       { wch: 16 }, { wch: 16 }, { wch: 8 }, { wch: 12 },
     ];
     // 제목 병합
-    ws["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 8 } }];
+    ws["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 9 } }];
 
     // 데이터 행 숫자 서식
     const fmtMoney = "#,##0";
@@ -905,7 +911,9 @@ export default function Settlement() {
     )) return;
     setDeleting(true);
     try {
-      await Promise.all(monthRecords.map((r) => deleteDoc(doc(db, "ar_records", r.id))));
+      for (const r of monthRecords) {
+        await deleteArRecordCascade(r.id);
+      }
     } catch (e) {
       alert(`삭제 실패: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -914,13 +922,16 @@ export default function Settlement() {
   };
 
   // ── 컬럼 너비 조절 ──
-  const COL_KEYS = ["거래처명","신용건수","요금","탁송료","합계","비고","결제일","입금확인","액션"] as const;
-  const DEFAULT_COL_W = [220, 72, 130, 110, 150, 80, 120, 76, 68];
+  const COL_KEYS = ["선택","거래처명","신용건수","요금","탁송료","합계","비고","결제일","입금확인","액션"] as const;
+  const LEGACY_COL_WIDTH_LEN = 9;
+  const DEFAULT_COL_W = [44, 220, 72, 130, 110, 150, 80, 120, 76, 68];
   const [colWidths, setColWidths] = useState<number[]>(() => {
     try {
       const s = localStorage.getItem("settlement_col_widths");
       const parsed = s ? JSON.parse(s) : null;
-      return Array.isArray(parsed) && parsed.length === DEFAULT_COL_W.length ? parsed : DEFAULT_COL_W;
+      if (Array.isArray(parsed) && parsed.length === DEFAULT_COL_W.length) return parsed;
+      if (Array.isArray(parsed) && parsed.length === LEGACY_COL_WIDTH_LEN) return [44, ...parsed];
+      return DEFAULT_COL_W;
     } catch { return DEFAULT_COL_W; }
   });
   const resizeDrag = useRef<{ idx: number; x0: number; w0: number } | null>(null);
@@ -954,6 +965,20 @@ export default function Settlement() {
   // 세부 내역 확장
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [itemsCache, setItemsCache] = useState<Record<string, any[]>>({});
+  const [selectedArIds, setSelectedArIds] = useState<Set<string>>(() => new Set());
+  const [batchDeleting, setBatchDeleting] = useState(false);
+
+  useEffect(() => {
+    setSelectedArIds(new Set());
+  }, [filterMonth]);
+
+  useEffect(() => {
+    setSelectedArIds((prev) => {
+      const valid = new Set(records.map((r) => r.id));
+      const next = new Set([...prev].filter((id) => valid.has(id)));
+      return next.size === prev.size && [...prev].every((id) => next.has(id)) ? prev : next;
+    });
+  }, [records]);
 
   const toggleExpand = useCallback(async (r: ArRecord) => {
     if (expandedId === r.id) { setExpandedId(null); return; }
@@ -1027,7 +1052,78 @@ export default function Settlement() {
   const handleDelete = async (id: string) => {
     if (currentMonthClosed) { alert("마감 확정된 달의 데이터는 삭제할 수 없습니다."); return; }
     if (!window.confirm("이 항목을 삭제하시겠습니까?")) return;
-    await deleteDoc(doc(db, "ar_records", id));
+    await deleteArRecordCascade(id);
+    setSelectedArIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    setExpandedId((e) => (e === id ? null : e));
+    setItemsCache((prev) => {
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  };
+
+  const selectedInViewCount = useMemo(
+    () => sorted.filter((r) => selectedArIds.has(r.id)).length,
+    [sorted, selectedArIds]
+  );
+  const allVisibleSelected =
+    sorted.length > 0 && sorted.every((r) => selectedArIds.has(r.id));
+
+  const toggleSelectRow = (id: string) => {
+    if (currentMonthClosed) return;
+    setSelectedArIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAllVisible = () => {
+    if (currentMonthClosed || sorted.length === 0) return;
+    setSelectedArIds((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) sorted.forEach((r) => next.delete(r.id));
+      else sorted.forEach((r) => next.add(r.id));
+      return next;
+    });
+  };
+
+  const handleBatchDeleteSelected = async () => {
+    if (currentMonthClosed) {
+      alert(`${filterMonth}은 마감 확정된 달입니다.\n월별 이력 탭에서 마감을 해제한 후 삭제하세요.`);
+      return;
+    }
+    const ids = sorted.filter((r) => selectedArIds.has(r.id)).map((r) => r.id);
+    if (ids.length === 0) return;
+    if (!window.confirm(`선택한 ${ids.length}건의 신용내역을 삭제할까요?\n이 작업은 되돌릴 수 없습니다.`)) return;
+    setBatchDeleting(true);
+    try {
+      for (const id of ids) {
+        await deleteArRecordCascade(id);
+      }
+      setSelectedArIds((prev) => {
+        const next = new Set(prev);
+        ids.forEach((id) => next.delete(id));
+        return next;
+      });
+      setExpandedId((e) => (e && ids.includes(e) ? null : e));
+      setItemsCache((prev) => {
+        const next = { ...prev };
+        ids.forEach((id) => { delete next[id]; });
+        return next;
+      });
+    } catch (e) {
+      alert(`삭제 실패: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBatchDeleting(false);
+    }
   };
 
   // 월별이력 탭에서 "이 달 보기" 클릭 시
@@ -1156,6 +1252,18 @@ export default function Settlement() {
                   {search && <span className="ml-2 text-sm text-blue-600 font-normal">"{search}" 검색 중</span>}
                 </h2>
                 <span className="text-sm text-slate-400">{filtered.length}개 거래처</span>
+                {selectedInViewCount > 0 && !currentMonthClosed && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5 border-red-300 text-red-600 hover:bg-red-50"
+                    disabled={batchDeleting}
+                    onClick={handleBatchDeleteSelected}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    {batchDeleting ? "삭제 중…" : `선택 삭제 (${selectedInViewCount})`}
+                  </Button>
+                )}
                 <button
                   onClick={resetColWidths}
                   title="컬럼 너비 초기화"
@@ -1186,6 +1294,29 @@ export default function Settlement() {
                   </colgroup>
                   <thead>
                     <tr className="bg-slate-800 text-white select-none">
+                      <th
+                        className="px-2 py-3 text-xs font-bold tracking-wide relative overflow-hidden align-middle"
+                        style={{ width: colWidths[0] }}
+                      >
+                        <div className="flex justify-center">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-slate-500 accent-blue-400 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                            checked={allVisibleSelected}
+                            disabled={currentMonthClosed || sorted.length === 0}
+                            onChange={toggleSelectAllVisible}
+                            title="현재 목록 전체 선택"
+                            aria-label="현재 목록 전체 선택"
+                          />
+                        </div>
+                        <div
+                          onMouseDown={(e) => startResize(e, 0)}
+                          className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize flex items-center justify-center group"
+                          title="드래그하여 너비 조절"
+                        >
+                          <div className="w-0.5 h-4 bg-white/25 rounded-full group-hover:bg-white/70 transition-colors" />
+                        </div>
+                      </th>
                       {[
                         "거래처명", "신용건수", "요금", "탁송료",
                         "합계(부가포함)", "비고", "결제일", "입금확인", "",
@@ -1193,13 +1324,12 @@ export default function Settlement() {
                         <th
                           key={idx}
                           className="px-3 py-3 text-xs font-bold tracking-wide relative overflow-hidden"
-                          style={{ width: colWidths[idx] }}
+                          style={{ width: colWidths[idx + 1] }}
                         >
                           <span className="block text-center truncate">{label}</span>
-                          {/* 드래그 핸들 */}
                           {idx < 8 && (
                             <div
-                              onMouseDown={(e) => startResize(e, idx)}
+                              onMouseDown={(e) => startResize(e, idx + 1)}
                               className="absolute right-0 top-0 bottom-0 w-1.5 cursor-col-resize flex items-center justify-center group"
                               title="드래그하여 너비 조절"
                             >
@@ -1219,6 +1349,16 @@ export default function Settlement() {
                       return (
                         <React.Fragment key={r.id}>
                         <tr className={`transition-colors ${r.checked ? "bg-green-100 border-l-4 border-l-green-600" : isOverdue ? "bg-red-50 hover:bg-red-100/60" : "hover:bg-slate-50"}`}>
+                          <td className="px-2 py-3 text-center align-middle">
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 rounded border-slate-300 accent-blue-600 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                              checked={selectedArIds.has(r.id)}
+                              disabled={currentMonthClosed}
+                              onChange={() => toggleSelectRow(r.id)}
+                              aria-label={`${r.client_name} 선택`}
+                            />
+                          </td>
 
                           {/* 거래처명 — 클릭 시 거래명세표 모달 열기 / ▶ 클릭 시 세부 내역 펼치기 */}
                           <td className="px-4 py-3">
@@ -1342,7 +1482,7 @@ export default function Settlement() {
                         {/* ── 세부 내역 서브행 ── */}
                         {isExpanded && (
                           <tr>
-                            <td colSpan={9} className="bg-blue-50/50 border-b border-blue-100 px-8 py-4">
+                            <td colSpan={10} className="bg-blue-50/50 border-b border-blue-100 px-8 py-4">
                               <p className="text-xs font-bold text-blue-700 mb-2">
                                 {r.client_name} · {filterMonth.split("-")[0]}년 {filterMonth.split("-")[1]}월 마감 내역
                               </p>
@@ -1391,7 +1531,7 @@ export default function Settlement() {
                     })}
                     {sorted.length === 0 && (
                       <tr>
-                        <td colSpan={9} className="text-center py-16 text-slate-400">
+                        <td colSpan={10} className="text-center py-16 text-slate-400">
                           <Upload className="h-8 w-8 mx-auto mb-3 text-slate-300" />
                           {search ? `"${search}"에 해당하는 거래처가 없습니다.` : "등록된 신용내역이 없습니다."}
                           <br /><span className="text-xs mt-1 block">파일 업로드 또는 직접 등록 버튼을 사용하세요.</span>
@@ -1406,6 +1546,7 @@ export default function Settlement() {
                       const totalUnpaid   = totalGrand - totalPaid;
                       return (
                         <tr className="bg-slate-800 text-white font-bold text-sm border-t-2 border-slate-600">
+                          <td className="px-2 py-3" />
                           <td className="px-4 py-3">
                             합 계 <span className="font-normal text-xs text-slate-400 ml-1">{sorted.length}개 거래처</span>
                           </td>
