@@ -44,6 +44,14 @@ async def startup():
     start_scheduler(interval_minutes=60)
     logger.info("서버 시작 + 스케줄러 가동")
 
+    # 서버 시작 직후 즉시 1회 수집 (60분 대기 없이 바로 시작)
+    async def _initial_run():
+        logger.info("🚀 서버 시작 직후 초기 수집 실행")
+        result = await run_pipeline(manual=False)
+        logger.info(f"초기 수집 완료: {result}")
+
+    asyncio.create_task(_initial_run())
+
 
 @app.on_event("shutdown")
 async def shutdown():

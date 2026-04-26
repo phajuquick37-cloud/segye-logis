@@ -97,10 +97,17 @@ export default function Admin() {
       setNotices(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     });
 
-    // 세금계산서 작성일(issue_date) 기준 정렬 — 이메일 수신일과 무관하게 계산서 날짜순
+    // 세금계산서 — Firestore에서 내려받은 뒤 issue_date 내림차순으로 클라이언트 정렬
     const q3 = query(collection(db, "tax_invoices"), orderBy("created_at", "desc"));
     const unsub3 = onSnapshot(q3, (snap) => {
-      setTaxInvoices(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as any[];
+      // issue_date(발행일) 기준 내림차순, 없으면 created_at 기준
+      docs.sort((a, b) => {
+        const da = a.issue_date || a.created_at?.toDate?.()?.toISOString?.() || "";
+        const db2 = b.issue_date || b.created_at?.toDate?.()?.toISOString?.() || "";
+        return da > db2 ? -1 : da < db2 ? 1 : 0;
+      });
+      setTaxInvoices(docs);
     });
 
     return () => { unsub1(); unsub2(); unsub3(); };
@@ -863,7 +870,36 @@ export default function Admin() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filtered.map((inv: any) => (
+                    {(() => {
+                      // 일별 그룹화
+                      let lastDate = "";
+                      return filtered.flatMap((inv: any) => {
+                        const dateLabel = inv.issue_date
+                          ? inv.issue_date.slice(0, 10)
+                          : "날짜 미확인";
+                        const rows: React.ReactNode[] = [];
+                        if (dateLabel !== lastDate) {
+                          lastDate = dateLabel;
+                          const dayInvoices = filtered.filter((i: any) =>
+                            (i.issue_date?.slice(0, 10) || "날짜 미확인") === dateLabel
+                          );
+                          const dayTotal = dayInvoices.reduce(
+                            (s: number, i: any) => s + (Number(i.total_amount) || 0), 0
+                          );
+                          rows.push(
+                            <TableRow key={`group-${dateLabel}`} className="bg-slate-100 hover:bg-slate-100">
+                              <TableCell colSpan={8} className="py-1.5 px-4">
+                                <span className="font-bold text-slate-700 text-sm">
+                                  📅 {dateLabel}
+                                </span>
+                                <span className="ml-3 text-xs text-slate-500">
+                                  {dayInvoices.length}건 · 합계 {dayTotal.toLocaleString()}원
+                                </span>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        }
+                        rows.push(
                       <TableRow
                         key={inv.id}
                         className={`cursor-pointer hover:bg-blue-50 transition-colors ${checkedIds.has(inv.id) ? "bg-red-50" : ""}`}
@@ -941,7 +977,10 @@ export default function Admin() {
                           </div>
                         </TableCell>
                       </TableRow>
-                    ))}
+                        );
+                        return rows;
+                      });
+                    })()}
                     {filtered.length === 0 && (
                       <TableRow>
                         <TableCell colSpan={7} className="text-center py-12 text-slate-400">

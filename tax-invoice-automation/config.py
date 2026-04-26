@@ -65,10 +65,11 @@ EMAIL_FILTER = {
         # 홈택스 / 국세청
         "hometax.go.kr", "nts.go.kr", "keci.or.kr",
     ],
-    # 읽은 메일 포함 90일치 수집
+    # 4월10일부터 수집 (오늘 4월26일 기준 16일 → 여유있게 20일)
+    # 이후 매시간 자동 수집되므로 days_limit은 유지 (누락 방지)
     "unread_only": False,
     "mark_as_read": False,
-    "days_limit": 90,
+    "days_limit": 20,
 }
 
 # --- 발행 플랫폼 감지 규칙 ---
