@@ -254,6 +254,24 @@ class EmailReader:
                     if keywords and not any(kw.lower() in subject.lower() for kw in keywords):
                         continue
 
+                    # ── 발신자 도메인 차단 필터 ──────────────────────────────
+                    blocklist = EMAIL_FILTER.get("sender_domain_blocklist", [])
+                    if blocklist and any(bk.lower() in from_addr.lower() for bk in blocklist):
+                        logger.info(f"🚫 차단 발신자 스킵: [{from_addr[:40]}] 제목: [{subject[:40]}]")
+                        continue
+
+                    # ── 발신자 도메인 허용 필터 (설정된 경우만 적용) ──────────
+                    allowlist = EMAIL_FILTER.get("sender_domain_allowlist", [])
+                    if allowlist:
+                        # 허용목록이 있을 때 — 허용된 키워드가 발신자 OR 제목에 있어야 통과
+                        allowed = (
+                            any(ak.lower() in from_addr.lower() for ak in allowlist)
+                            or any(ak.lower() in subject.lower() for ak in allowlist)
+                        )
+                        if not allowed:
+                            logger.info(f"⛔ 허용목록 미해당 스킵: [{from_addr[:40]}] 제목: [{subject[:40]}]")
+                            continue
+
                     try:
                         received_date = parsedate_to_datetime(date_str)
                     except Exception:

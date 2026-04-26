@@ -28,6 +28,22 @@ EMAIL_FILTER = {
         "확인하기", "상세보기", "조회하기", "열람",
         "세금계산서 확인", "계산서 보기",
     ],
+    # ── 발신자 도메인 차단 목록 (잡이메일 제외) ──
+    # 아래 도메인이 포함된 발신자는 키워드 매칭돼도 무시
+    "sender_domain_blocklist": [
+        "qoo10.jp", "qoo10.com", "gmarket.co.kr", "auction.co.kr",
+        "11st.co.kr", "coupang.com", "naver.com", "kakao.com",
+        "amazon.com", "aliexpress.com", "ebay.com",
+        "university.qoo10", "marketing@", "newsletter@", "noreply@", "no-reply@",
+    ],
+    # ── 발신자 도메인 허용 목록 (비어 있으면 차단목록만 적용) ──
+    # 물류 세금계산서 플랫폼 발신자 도메인 또는 키워드
+    "sender_domain_allowlist": [
+        "tax12.co.kr", "tax15.co.kr", "hwamulman", "cargo12",
+        "onebill", "onecall", "1call",
+        "loginote", "logynote", "logi-note",
+        "hometax.go.kr", "nts.go.kr", "keci.or.kr",
+    ],
     # ★ 3월~현재 강제 전체 수집 (90일치, 읽은 메일 포함)
     "unread_only": False,
     "mark_as_read": False,

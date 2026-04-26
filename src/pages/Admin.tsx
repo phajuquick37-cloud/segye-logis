@@ -98,7 +98,7 @@ export default function Admin() {
     });
 
     // 세금계산서 작성일(issue_date) 기준 정렬 — 이메일 수신일과 무관하게 계산서 날짜순
-    const q3 = query(collection(db, "tax_invoices"), orderBy("issue_date", "desc"));
+    const q3 = query(collection(db, "tax_invoices"), orderBy("created_at", "desc"));
     const unsub3 = onSnapshot(q3, (snap) => {
       setTaxInvoices(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
     });
@@ -159,6 +159,32 @@ export default function Admin() {
     setPayerName(invoice.payer_name || "");
     setPayMemo(invoice.pay_memo || "");
     setPayConfirm(null);
+  };
+
+  // 세금계산서 개별 삭제
+  const deleteInvoice = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    if (!window.confirm("이 세금계산서를 삭제하시겠습니까?")) return;
+    await deleteDoc(doc(db, "tax_invoices", id));
+  };
+
+  // 잡이메일(pending + 공급자 없음) 일괄 삭제
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const deleteBadInvoices = async () => {
+    const bad = taxInvoices.filter(
+      (i) => i.status === "pending" && !i.supplier_name && !i.total_amount
+    );
+    if (bad.length === 0) { alert("삭제할 잘못 수집된 데이터가 없습니다."); return; }
+    if (!window.confirm(`잘못 수집된 데이터 ${bad.length}건을 일괄 삭제하시겠습니까?\n(공급자·금액 없는 미처리 건)`)) return;
+    setBulkDeleting(true);
+    try {
+      await Promise.all(bad.map((i) => deleteDoc(doc(db, "tax_invoices", i.id))));
+      alert(`${bad.length}건 삭제 완료`);
+    } catch (e) {
+      alert("삭제 실패: " + String(e));
+    } finally {
+      setBulkDeleting(false);
+    }
   };
 
   // 지급 승인 확인 후 처리
@@ -688,8 +714,19 @@ export default function Admin() {
                   <Receipt className="h-5 w-5 text-blue-600" />
                   수집된 세금계산서 목록
                 </CardTitle>
-                {/* 검색창 + 상태 필터 */}
+                {/* 검색창 + 상태 필터 + 일괄삭제 */}
                 <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5 border-red-300 text-red-600 hover:bg-red-50 whitespace-nowrap"
+                    onClick={deleteBadInvoices}
+                    disabled={bulkDeleting}
+                    title="공급자·금액 없는 미처리 잡이메일 데이터 일괄 삭제"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                    {bulkDeleting ? "삭제 중..." : "잡이메일 일괄삭제"}
+                  </Button>
                   <div className="relative">
                     <svg className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z" />
@@ -813,14 +850,26 @@ export default function Admin() {
                           )}
                         </TableCell>
                         <TableCell className="text-right">
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="text-slate-500"
-                            onClick={(e) => { e.stopPropagation(); openInvoiceModal(inv); }}
-                          >
-                            <Eye className="h-4 w-4" />
-                          </Button>
+                          <div className="flex items-center justify-end gap-1">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="text-slate-500 hover:text-blue-600"
+                              onClick={(e) => { e.stopPropagation(); openInvoiceModal(inv); }}
+                              title="상세 보기"
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="text-slate-400 hover:text-red-600"
+                              onClick={(e) => deleteInvoice(e, inv.id)}
+                              title="삭제"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
