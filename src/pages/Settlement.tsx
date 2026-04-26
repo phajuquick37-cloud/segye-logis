@@ -502,9 +502,9 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
 
           rowsToSave.forEach((row) => {
             const rowAmt = safeN((row as any).amount ?? 0);
-            batch.set(doc(collection(db, "ar_records", arRef.id, "items")), {
+            const itemData: Record<string, any> = {
               date:          row.date || `${aggregated.billing_month}-01`,
-              description:   row.memo || `${aggregated.billing_month} 화물 운송비`,
+              description:   (row as any).rowClient || row.memo || `${aggregated.billing_month} 화물 운송비`,
               quantity:      1,
               unit_price:    rowAmt,
               supply_amount: rowAmt,
@@ -512,7 +512,16 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
               total_amount:  rowAmt,
               memo:          row.memo || "",
               created_at:    serverTimestamp(),
-            });
+            };
+            // 거래명세표 세부 항목 필드 — 엑셀에서 감지된 경우에만 저장
+            if ((row as any).departure)    itemData.departure    = (row as any).departure;
+            if ((row as any).destination)  itemData.destination  = (row as any).destination;
+            if ((row as any).vehicleType)  itemData.vehicle_type = (row as any).vehicleType;
+            if ((row as any).driver)       itemData.driver       = (row as any).driver;
+            if ((row as any).vehicleNo)    itemData.vehicle_no   = (row as any).vehicleNo;
+            if ((row as any).unloadClient) itemData.unload_client= (row as any).unloadClient;
+            if ((row as any).rowClient)    itemData.row_client   = (row as any).rowClient;
+            batch.set(doc(collection(db, "ar_records", arRef.id, "items")), itemData);
           });
         });
 

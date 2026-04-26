@@ -3,7 +3,10 @@ import * as XLSX from "xlsx";
 // ─────────────────────────────────────────────────────────────
 // 컬럼 키 정의
 // ─────────────────────────────────────────────────────────────
-export type ColKey = "date" | "client" | "amount" | "deliveryfee" | "memo" | "bizno" | "duedate";
+export type ColKey =
+  | "date" | "client" | "amount" | "deliveryfee" | "memo" | "bizno" | "duedate"
+  | "departure" | "destination" | "vehicle_type" | "driver" | "vehicle_no"
+  | "unload_client" | "row_client";
 
 /** 각 컬럼 키별 인식 후보 헤더명 (앞쪽일수록 우선순위 높음) */
 export const COL_HINTS: Record<ColKey, string[]> = {
@@ -12,8 +15,6 @@ export const COL_HINTS: Record<ColKey, string[]> = {
     "인도일", "처리일", "주문일", "거래날짜", "기일", "date",
   ],
   // ★ 신용거래처 컬럼 — "거래처명" 계열만 인식
-  //   "고객명", "수신처명" 등 일반 배송 수하인 컬럼은 제외하여
-  //   개인(일반) 고객이 신용내역에 섞이는 것을 방지
   client: [
     "거래처명", "거래처",
     "업체명", "업체",
@@ -35,6 +36,14 @@ export const COL_HINTS: Record<ColKey, string[]> = {
   memo: ["비고", "메모", "특이사항", "참고", "적요", "내용", "memo", "note", "notes"],
   bizno: ["사업자번호", "사업자등록번호", "biz_no", "bizno"],
   duedate: ["결제일", "결제일자", "납입일", "지급기한", "납기일", "납기", "만기일", "결제기한", "due_date", "duedate"],
+  // ── 거래명세표 세부 항목 컬럼 ──
+  departure:     ["출발지", "출발", "상차지", "상차", "출발처", "발송지", "from"],
+  destination:   ["도착지", "목적지", "하차지", "도착", "배송지", "도착처", "to"],
+  vehicle_type:  ["톤수", "차종", "차량종류", "차량형태", "톤", "ton", "tonnage"],
+  driver:        ["기사명", "기사", "운전자", "드라이버", "driver"],
+  vehicle_no:    ["차량번호", "차번", "번호판", "차량번", "plate"],
+  unload_client: ["하차지고객", "하차고객", "하차처고객", "하차처"],
+  row_client:    ["고객명", "고객", "고객명(상호)", "수하인", "customer"],
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -48,6 +57,14 @@ export interface RawRow {
   memo: string;
   bizNo: string;
   dueDate: string;
+  // 거래명세표 세부 항목 필드
+  departure?: string;
+  destination?: string;
+  vehicleType?: string;
+  driver?: string;
+  vehicleNo?: string;
+  unloadClient?: string;
+  rowClient?: string;   // 행별 고객명(상호) — 거래처명과 별도
   /** 원본 셀 값 전체 (컬럼 헤더 → 값) */
   _original: Record<string, any>;
 }
@@ -60,6 +77,13 @@ export interface DetectedCols {
   memo: string | null;
   bizno: string | null;
   duedate: string | null;
+  departure: string | null;
+  destination: string | null;
+  vehicle_type: string | null;
+  driver: string | null;
+  vehicle_no: string | null;
+  unload_client: string | null;
+  row_client: string | null;
   /** 파일 내 전체 헤더 목록 */
   allHeaders: string[];
 }
@@ -194,28 +218,43 @@ function sheetToResult(
   }
 
   const detectedIdx: Record<ColKey, number> = {
-    client:      pickBest(COL_HINTS.client),
-    amount:      pickBest(COL_HINTS.amount),
-    deliveryfee: pickBest(COL_HINTS.deliveryfee),
-    date:        pickBest(COL_HINTS.date),
-    duedate:     pickBest(COL_HINTS.duedate),
-    memo:        pickBest(COL_HINTS.memo),
-    bizno:       pickBest(COL_HINTS.bizno),
+    client:       pickBest(COL_HINTS.client),
+    amount:       pickBest(COL_HINTS.amount),
+    deliveryfee:  pickBest(COL_HINTS.deliveryfee),
+    date:         pickBest(COL_HINTS.date),
+    duedate:      pickBest(COL_HINTS.duedate),
+    memo:         pickBest(COL_HINTS.memo),
+    bizno:        pickBest(COL_HINTS.bizno),
+    departure:    pickBest(COL_HINTS.departure),
+    destination:  pickBest(COL_HINTS.destination),
+    vehicle_type: pickBest(COL_HINTS.vehicle_type),
+    driver:       pickBest(COL_HINTS.driver),
+    vehicle_no:   pickBest(COL_HINTS.vehicle_no),
+    unload_client:pickBest(COL_HINTS.unload_client),
+    row_client:   pickBest(COL_HINTS.row_client),
   };
 
   if (detectedIdx.date    === -1) warnings.push("날짜 컬럼을 자동으로 찾지 못했습니다. 수동으로 지정해주세요.");
   if (detectedIdx.client  === -1) warnings.push("거래처명 컬럼을 자동으로 찾지 못했습니다. 수동으로 지정해주세요.");
   if (detectedIdx.amount  === -1) warnings.push("금액 컬럼을 자동으로 찾지 못했습니다. 수동으로 지정해주세요.");
 
+  const h = (k: ColKey) => detectedIdx[k] !== -1 ? headers[detectedIdx[k]] : null;
   const detected: DetectedCols = {
-    date:        detectedIdx.date        !== -1 ? headers[detectedIdx.date]        : null,
-    client:      detectedIdx.client      !== -1 ? headers[detectedIdx.client]      : null,
-    amount:      detectedIdx.amount      !== -1 ? headers[detectedIdx.amount]      : null,
-    deliveryfee: detectedIdx.deliveryfee !== -1 ? headers[detectedIdx.deliveryfee] : null,
-    memo:        detectedIdx.memo        !== -1 ? headers[detectedIdx.memo]        : null,
-    bizno:       detectedIdx.bizno       !== -1 ? headers[detectedIdx.bizno]       : null,
-    duedate:     detectedIdx.duedate     !== -1 ? headers[detectedIdx.duedate]     : null,
-    allHeaders: headers,
+    date:         h("date"),
+    client:       h("client"),
+    amount:       h("amount"),
+    deliveryfee:  h("deliveryfee"),
+    memo:         h("memo"),
+    bizno:        h("bizno"),
+    duedate:      h("duedate"),
+    departure:    h("departure"),
+    destination:  h("destination"),
+    vehicle_type: h("vehicle_type"),
+    driver:       h("driver"),
+    vehicle_no:   h("vehicle_no"),
+    unload_client:h("unload_client"),
+    row_client:   h("row_client"),
+    allHeaders:   headers,
   };
 
   const get = (row: any[], key: ColKey, override?: number) => {
@@ -236,14 +275,22 @@ function sheetToResult(
     const _original: Record<string, any> = {};
     headers.forEach((h, idx) => { if (h) _original[h] = row[idx]; });
 
+    const str = (k: ColKey) => { const v = get(row, k); return v != null ? String(v).trim() : ""; };
     rows.push({
-      date:        parseDate(get(row, "date")),
+      date:         parseDate(get(row, "date")),
       clientName,
-      amount:      parseAmount(get(row, "amount")),
-      deliveryFee: parseAmount(get(row, "deliveryfee")),
-      memo:        String(get(row, "memo")).trim(),
-      bizNo:       String(get(row, "bizno")).trim(),
-      dueDate:     parseDate(get(row, "duedate")),
+      amount:       parseAmount(get(row, "amount")),
+      deliveryFee:  parseAmount(get(row, "deliveryfee")),
+      memo:         str("memo"),
+      bizNo:        str("bizno"),
+      dueDate:      parseDate(get(row, "duedate")),
+      departure:    str("departure")    || undefined,
+      destination:  str("destination")  || undefined,
+      vehicleType:  str("vehicle_type") || undefined,
+      driver:       str("driver")       || undefined,
+      vehicleNo:    str("vehicle_no")   || undefined,
+      unloadClient: str("unload_client")|| undefined,
+      rowClient:    str("row_client")   || undefined,
       _original,
     });
   }
@@ -254,8 +301,16 @@ function sheetToResult(
 function emptyResult(fileName: string, sheetName: string, warnings: string[]): ParseResult {
   return {
     rows: [],
-    detected: { date: null, client: null, amount: null, deliveryfee: null, memo: null, bizno: null, duedate: null, allHeaders: [] },
-    detectedIdx: { date: -1, client: -1, amount: -1, deliveryfee: -1, memo: -1, bizno: -1, duedate: -1 },
+    detected: {
+      date: null, client: null, amount: null, deliveryfee: null, memo: null, bizno: null, duedate: null,
+      departure: null, destination: null, vehicle_type: null, driver: null, vehicle_no: null,
+      unload_client: null, row_client: null, allHeaders: [],
+    },
+    detectedIdx: {
+      date: -1, client: -1, amount: -1, deliveryfee: -1, memo: -1, bizno: -1, duedate: -1,
+      departure: -1, destination: -1, vehicle_type: -1, driver: -1, vehicle_no: -1,
+      unload_client: -1, row_client: -1,
+    },
     fileName,
     sheetName,
     warnings,
@@ -338,16 +393,24 @@ export function reapplyColMap(
       return idx !== -1 ? row[headers[idx]] ?? "" : "";
     };
 
+    const str2 = (v: any) => v != null ? String(v).trim() : "";
     // _original을 이용해 재파싱
     const rows: RawRow[] = result.rows.map((r) => ({
-      date:        parseDate(get(r._original, "date")),
-      clientName:  String(get(r._original, "client")).trim() || r.clientName,
-      amount:      parseAmount(get(r._original, "amount")),
-      deliveryFee: parseAmount(get(r._original, "deliveryfee")),
-      memo:        String(get(r._original, "memo")).trim(),
-      bizNo:       String(get(r._original, "bizno")).trim(),
-      dueDate:     parseDate(get(r._original, "duedate")),
-      _original:   r._original,
+      date:         parseDate(get(r._original, "date")),
+      clientName:   String(get(r._original, "client")).trim() || r.clientName,
+      amount:       parseAmount(get(r._original, "amount")),
+      deliveryFee:  parseAmount(get(r._original, "deliveryfee")),
+      memo:         str2(get(r._original, "memo")),
+      bizNo:        str2(get(r._original, "bizno")),
+      dueDate:      parseDate(get(r._original, "duedate")),
+      departure:    str2(get(r._original, "departure"))    || undefined,
+      destination:  str2(get(r._original, "destination"))  || undefined,
+      vehicleType:  str2(get(r._original, "vehicle_type")) || undefined,
+      driver:       str2(get(r._original, "driver"))       || undefined,
+      vehicleNo:    str2(get(r._original, "vehicle_no"))   || undefined,
+      unloadClient: str2(get(r._original, "unload_client"))|| undefined,
+      rowClient:    str2(get(r._original, "row_client"))   || undefined,
+      _original:    r._original,
     })).filter((r) => r.clientName);
 
     return { ...result, rows, detectedIdx: patched };

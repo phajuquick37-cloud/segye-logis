@@ -16,13 +16,21 @@ import { SUPPLIER, VAT_RATE } from "../../config/companyInfo";
 export interface SettlementItem {
   id?: string;
   date: string;
-  description: string;
+  description: string;  // 행별 고객명(상호) — row_client 또는 메모
   quantity: number;
   unit_price: number;
   supply_amount: number;
   tax_amount: number;
   total_amount: number;
   memo: string;
+  // 거래명세표 세부 항목 (엑셀에서 자동 감지)
+  departure?: string;     // 출발지
+  destination?: string;   // 도착지
+  vehicle_type?: string;  // 톤수(차종)
+  driver?: string;        // 기사명
+  vehicle_no?: string;    // 차량번호
+  unload_client?: string; // 하차지고객
+  row_client?: string;    // 행별 고객명
 }
 
 export interface ArRecord {
@@ -138,10 +146,10 @@ const TEMPLATES: Record<TemplateType, { label: string; cols: ColDef[]; renderRow
     ],
     renderRow: (item) => [
       item.date,
-      item.description,
-      (item as any).departure    ?? "",
-      (item as any).destination  ?? "",
-      (item as any).vehicle_type ?? "",
+      item.row_client || item.description || "",
+      item.departure   || "",
+      item.destination || "",
+      item.vehicle_type|| "",
       item.supply_amount.toLocaleString(),
     ],
   },
@@ -159,13 +167,13 @@ const TEMPLATES: Record<TemplateType, { label: string; cols: ColDef[]; renderRow
     ],
     renderRow: (item) => [
       item.date,
-      item.description,
-      (item as any).departure    ?? "",
-      (item as any).destination  ?? "",
-      (item as any).vehicle_type ?? "",
-      (item as any).driver       ?? "",
+      item.row_client || item.description || "",
+      item.departure   || "",
+      item.destination || "",
+      item.vehicle_type|| "",
+      item.driver      || "",
       item.supply_amount.toLocaleString(),
-      (item as any).vehicle_no   ?? "",
+      item.vehicle_no  || "",
     ],
   },
   jiyoo: {
@@ -181,11 +189,11 @@ const TEMPLATES: Record<TemplateType, { label: string; cols: ColDef[]; renderRow
     ],
     renderRow: (item) => [
       item.date,
-      item.description,
-      (item as any).departure    ?? "",
-      (item as any).unload_client ?? "",
-      (item as any).destination  ?? "",
-      (item as any).vehicle_type ?? "",
+      item.row_client    || item.description || "",
+      item.departure     || "",
+      item.unload_client || "",
+      item.destination   || "",
+      item.vehicle_type  || "",
       item.supply_amount.toLocaleString(),
     ],
   },
@@ -201,11 +209,11 @@ const TEMPLATES: Record<TemplateType, { label: string; cols: ColDef[]; renderRow
     ],
     renderRow: (item) => [
       item.date,
-      (item as any).departure    ?? "",
-      (item as any).destination  ?? "",
-      item.memo                  ?? "",
+      item.departure   || "",
+      item.destination || "",
+      item.memo        || "",
       item.supply_amount.toLocaleString(),
-      (item as any).vehicle_type ?? "",
+      item.vehicle_type|| "",
     ],
   },
 };
