@@ -1506,7 +1506,7 @@ function QuickMailPanel({ record, onClose }: { record: ArRecord; onClose: () => 
   const [items, setItems]     = useState<SettlementItem[]>([]);
   const [profile, setProfile] = useState<ModalClientProfile | null>(null);
   const [loading, setLoading] = useState(true);
-  const [recipients, setRecipients] = useState<string[]>(() =>
+  const [recipients, setRecipients] = useState<string[]>(
     record.contact_email ? record.contact_email.split(",").map(e => e.trim()).filter(Boolean) : []
   );
   const [emailInput, setEmailInput] = useState("");
@@ -1529,8 +1529,18 @@ function QuickMailPanel({ record, onClose }: { record: ArRecord; onClose: () => 
       }]);
       setLoading(false);
     });
+    // 프로필 로드 → 거래처 정보에 이메일이 있으면 수신인에 자동 적용 (중복 제외)
     getDocs(query(collection(db, "client_profiles"), where("name", "==", record.client_name)))
-      .then((snap) => { if (!snap.empty) setProfile({ id: snap.docs[0].id, ...snap.docs[0].data() } as ModalClientProfile); })
+      .then((snap) => {
+        if (!snap.empty) {
+          const p = { id: snap.docs[0].id, ...snap.docs[0].data() } as ModalClientProfile;
+          setProfile(p);
+          if (p.email?.trim()) {
+            const profEmails = p.email.split(",").map((e: string) => e.trim()).filter(Boolean);
+            setRecipients(prev => Array.from(new Set([...prev, ...profEmails])));
+          }
+        }
+      })
       .catch(() => {});
     return unsub;
   }, [record]);
@@ -1707,6 +1717,21 @@ function ClientProfilesPanel() {
       } else if (editing?.id) {
         await setDoc(doc(db, "client_profiles", editing.id), { ...form }, { merge: true });
       }
+
+      // 이메일이 있으면 신용내역(ar_records) 중 같은 거래처명인 항목에 contact_email 자동 동기화
+      if (form.email?.trim()) {
+        const snap = await getDocs(
+          query(collection(db, "ar_records"), where("client_name", "==", form.name.trim()))
+        );
+        const batch = writeBatch(db);
+        snap.docs.forEach((d) => {
+          if (!d.data().contact_email) {   // 이미 직접 입력한 이메일이 있으면 덮어쓰지 않음
+            batch.update(d.ref, { contact_email: form.email.trim() });
+          }
+        });
+        await batch.commit();
+      }
+
       setEditing(null);
     } catch (e) {
       alert("저장 실패: " + (e as Error).message);
@@ -1807,6 +1832,7 @@ function ClientProfilesPanel() {
                 <th className="px-3 py-2 text-left border border-slate-100">대표자</th>
                 <th className="px-3 py-2 text-left border border-slate-100">주소</th>
                 <th className="px-3 py-2 text-left border border-slate-100">전화</th>
+                <th className="px-3 py-2 text-left border border-slate-100">이메일</th>
                 <th className="px-3 py-2 text-center border border-slate-100">양식</th>
                 <th className="px-3 py-2 text-center border border-slate-100">관리</th>
               </tr>
@@ -1817,8 +1843,18 @@ function ClientProfilesPanel() {
                   <td className="px-3 py-2 font-semibold text-slate-800">{p.name}</td>
                   <td className="px-3 py-2 text-slate-600 font-mono text-xs">{p.biz_no || "-"}</td>
                   <td className="px-3 py-2 text-slate-600">{p.ceo_name || "-"}</td>
-                  <td className="px-3 py-2 text-slate-600 text-xs max-w-[200px] truncate">{p.address || "-"}</td>
+                  <td className="px-3 py-2 text-slate-600 text-xs max-w-[160px] truncate">{p.address || "-"}</td>
                   <td className="px-3 py-2 text-slate-600 text-xs">{p.phone || "-"}</td>
+                  <td className="px-3 py-2 text-xs max-w-[180px]">
+                    {p.email ? (
+                      <span className="flex items-center gap-1 text-blue-600">
+                        <Mail className="h-3 w-3 shrink-0" />
+                        <span className="truncate">{p.email}</span>
+                      </span>
+                    ) : (
+                      <span className="text-slate-300">-</span>
+                    )}
+                  </td>
                   <td className="px-3 py-2 text-center">
                     <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
                       {TEMPLATE_LABELS[p.template] || "기본양식"}
