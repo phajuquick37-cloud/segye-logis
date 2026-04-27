@@ -309,6 +309,7 @@ class TaxInvoiceBrowser:
             "dom_data": {},
             "platform": "기타",
             "error": None,
+            "rfc_message_id": (email_info.get("rfc_message_id") or ""),
         }
 
         if is_blocked_tax_invoice_url(url):
@@ -469,6 +470,7 @@ class TaxInvoiceBrowser:
             "email_subject": email_info.get("subject"),
             "email_from": email_info.get("from"),
             "email_date": email_info.get("date"),
+            "rfc_message_id": (email_info.get("rfc_message_id") or ""),
         }
 
         for idx, img_data in enumerate(images, 1):
@@ -509,6 +511,7 @@ class TaxInvoiceBrowser:
             res["email_subject"] = email_info.get("subject")
             res["email_from"] = email_info.get("from")
             res["email_date"] = email_info.get("date")
+            res["rfc_message_id"] = email_info.get("rfc_message_id") or ""
             results.append(res)
 
         return results

@@ -12,7 +12,12 @@ from config import STORAGE_CONFIG
 from email_reader import EmailReader
 from browser_automation import TaxInvoiceBrowser
 from data_extractor import process_and_save, save_summary
-from firebase_writer import save_invoices, check_duplicate
+from firebase_writer import (
+    save_invoices,
+    check_duplicate,
+    check_duplicate_ingest,
+    make_ingest_fingerprint,
+)
 from sheets_writer import SheetsWriter
 
 logger = logging.getLogger(__name__)
@@ -66,11 +71,20 @@ async def run_pipeline(manual: bool = False) -> dict:
                 results = await browser.process_email(email_info, out_dir)
                 finals = process_and_save(email_info, results)
 
-                # 중복 필터링
+                # 중복 필터링 (승인번호 + 수집 지문: RFC Message-ID + URL + 제목)
                 for f in finals:
                     inv_no = f.get("invoice_record", {}).get("invoice_number")
+                    fp = make_ingest_fingerprint(
+                        f.get("rfc_message_id") or "",
+                        f.get("url") or "",
+                        str(inv_no or ""),
+                        f.get("email_subject") or "",
+                    )
                     if inv_no and check_duplicate(inv_no):
-                        logger.info(f"중복 건 건너뜀: {inv_no}")
+                        logger.info(f"중복 건 건너뜀(승인번호): {inv_no}")
+                        continue
+                    if fp and check_duplicate_ingest(fp):
+                        logger.info(f"중복 건 건너뜀(수집지문): {fp[:12]}…")
                         continue
                     all_finals.append(f)
 

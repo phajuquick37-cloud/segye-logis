@@ -16,6 +16,7 @@ from datetime import datetime
 from fastapi import FastAPI, BackgroundTasks, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+from config import SCHEDULE_INTERVAL_MINUTES, EMAIL_FILTER
 from scheduler import start_scheduler, stop_scheduler, get_next_run
 from pipeline import run_pipeline, is_running
 
@@ -53,8 +54,11 @@ async def startup():
             "TAX_COLLECT_SECRET 미설정 — POST /api/run 은 URL을 아는 누구나 호출할 수 있습니다. "
             "Cloud Run 환경 변수에 시크릿을 설정하세요."
         )
-    start_scheduler(interval_minutes=60)
-    logger.info("서버 시작 + 스케줄러 가동")
+    start_scheduler(interval_minutes=SCHEDULE_INTERVAL_MINUTES)
+    logger.info(
+        f"서버 시작 + 스케줄러 가동 (매 {SCHEDULE_INTERVAL_MINUTES}분, "
+        f"수집 시작일≧{EMAIL_FILTER.get('imap_since_min_date') or '제한없음'})"
+    )
 
     # 서버 시작 직후 즉시 1회 수집 (60분 대기 없이 바로 시작)
     async def _initial_run():
@@ -91,11 +95,14 @@ async def health():
 
 @app.get("/api/status")
 async def status():
+    m = EMAIL_FILTER.get("imap_since_min_date")
     return {
         "status": "ok",
         "running": is_running(),
         "next_scheduled_run": get_next_run(),
         "server_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "schedule_interval_minutes": SCHEDULE_INTERVAL_MINUTES,
+        "collection_min_received": str(m) if m else None,
     }
 
 

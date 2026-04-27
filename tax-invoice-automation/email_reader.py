@@ -323,6 +323,13 @@ class EmailReader:
                         except Exception:
                             received_date = datetime.now()
 
+                        min_recv = EMAIL_FILTER.get("min_received_date")
+                        if min_recv and received_date.date() < min_recv:
+                            logger.info(
+                                f"⏭ 수신일이 수집 시작 이전 — {received_date.date()} < {min_recv} — {subject[:40]}"
+                            )
+                            continue
+
                         # ── 3순위: 공급받는자 검증 (세계로지스 발행분만) ───────────
                         recipient_kws = EMAIL_FILTER.get("recipient_keywords", [])
                         if recipient_kws:
@@ -373,6 +380,7 @@ class EmailReader:
                         email_type = "link" if links else "image"
                         email_info = {
                             "msg_id": msg_id.decode(),
+                            "rfc_message_id": mid,
                             "subject": subject,
                             "from": from_addr,
                             "date": received_date.isoformat(),

@@ -5,6 +5,7 @@ Firebase 연동 모듈
 - 입금 상태 업데이트 (status / payer_name / pay_memo)
 """
 
+import hashlib
 import logging
 import mimetypes
 import os
@@ -164,7 +165,23 @@ def save_invoice(result: Dict) -> Optional[str]:
             return None
         invoice_date = record.get("issue_date") or datetime.now().strftime("%Y-%m-%d")
 
-        # 스크린샷 Storage 업로드
+        ingest_fp = make_ingest_fingerprint(
+            result.get("rfc_message_id") or "",
+            src_url,
+            str(record.get("invoice_number") or ""),
+            result.get("email_subject") or "",
+        )
+        if ingest_fp and check_duplicate_ingest(ingest_fp):
+            logger.info(
+                "Firestore 저장 생략 (동일 RFC·URL·승인번호·제목): "
+                f"{ingest_fp[:12]}…"
+            )
+            return None
+        if record.get("invoice_number") and check_duplicate(record.get("invoice_number")):
+            logger.info(f"Firestore 저장 생략 (승인번호 중복): {record.get('invoice_number')}")
+            return None
+
+        # 스크린샷 Storage 업로드 (중복 아닌 경우만)
         local_screenshots = result.get("screenshots", [])
         storage_urls = upload_screenshots(local_screenshots, platform, invoice_date)
 
@@ -175,6 +192,7 @@ def save_invoice(result: Dict) -> Optional[str]:
             "platform": platform,
             "issue_date": invoice_date,
             "invoice_number": record.get("invoice_number") or "",
+            "ingest_fingerprint": ingest_fp,
             "supplier_name": supplier.get("name") or "",
             "supplier_biz_no": supplier.get("business_number") or "",
             "supply_amount": record.get("supply_amount") or 0,
@@ -242,6 +260,32 @@ def update_payment_status(
         return True
     except Exception as e:
         logger.error(f"상태 업데이트 실패: {e}")
+        return False
+
+
+def make_ingest_fingerprint(
+    rfc_message_id: str,
+    source_url: str,
+    invoice_number: str,
+    email_subject: str = "",
+) -> str:
+    """
+    Message-ID + 원본 URL + 승인번호 + 제목으로 동일 수집 건 식별.
+    승인번호 OCR 누락 시에도 메일+URL 조합으로 중복 방지.
+    """
+    raw = f"{rfc_message_id or ''}|{source_url or ''}|{invoice_number or ''}|{email_subject or ''}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def check_duplicate_ingest(fingerprint: str) -> bool:
+    if not fingerprint or not _init_firebase():
+        return False
+    try:
+        col = _firestore_client.collection("tax_invoices")
+        docs = col.where("ingest_fingerprint", "==", fingerprint).limit(1).get()
+        return len(docs) > 0
+    except Exception as e:
+        logger.warning(f"ingest_fingerprint 중복 확인 실패: {e}")
         return False
 
 

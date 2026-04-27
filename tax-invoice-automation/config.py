@@ -74,8 +74,14 @@ try:
 except ValueError:
     _EMAIL_DAYS_INT = 1825
 
-# 메일함 전역 하한. 비우면(기본) IMAP SINCE = 오늘−days_limit 만 사용 → 과거(예: 2024) 메일도 포함.
-_SINCE_MIN_RAW = _env("TAX_EMAIL_SINCE_MIN", "")
+# 수집 시작일 하한(기본 2026-04-10). TAX_EMAIL_SINCE_MIN 을 "" 로 두면 하한 없음(전체 days_limit 구간).
+_env_since = _os.environ.get("TAX_EMAIL_SINCE_MIN")
+if _env_since is None:
+    _SINCE_MIN_RAW = "2026-04-10"
+elif not str(_env_since).strip():
+    _SINCE_MIN_RAW = ""
+else:
+    _SINCE_MIN_RAW = str(_env_since).strip()
 _IMAP_SINCE_MIN_DATE = None
 if _SINCE_MIN_RAW.strip():
     try:
@@ -86,6 +92,13 @@ if _SINCE_MIN_RAW.strip():
             ).date()
     except Exception:
         _IMAP_SINCE_MIN_DATE = None
+
+# Cloud Run / 스케줄러: 매 1시간(분 단위, 기본 60)
+SCHEDULE_INTERVAL_MINUTES = _env_int("TAX_SCHEDULE_INTERVAL_MINUTES", 60)
+if SCHEDULE_INTERVAL_MINUTES < 5:
+    SCHEDULE_INTERVAL_MINUTES = 5
+if SCHEDULE_INTERVAL_MINUTES > 24 * 60:
+    SCHEDULE_INTERVAL_MINUTES = 24 * 60
 
 # Gmail은 보조함까지 보려면 [Gmail]/All Mail; Daum은 INBOX 위주 (없는 폴더는 스킵)
 _default_imap_folders = (
@@ -172,6 +185,8 @@ EMAIL_FILTER = {
         "마켓플레이스",
     ],
     "imap_since_min_date": _IMAP_SINCE_MIN_DATE,
+    # 수신일 기준(메일 Date 헤더) — IMAP SINCE 누락 대비
+    "min_received_date": _IMAP_SINCE_MIN_DATE,
 }
 
 
