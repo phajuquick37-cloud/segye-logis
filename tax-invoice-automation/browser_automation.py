@@ -439,7 +439,19 @@ class TaxInvoiceBrowser:
             logger.info("이미지형 메일이지만 추출된 이미지 없음 — 건너뜀")
             return []
 
+        det_pf = detect_platform(
+            email_subject=email_info.get("subject", ""),
+            email_from=email_info.get("from", ""),
+            url="",
+        )
+        if is_excluded_tax_platform(det_pf) or (
+            det_pf and "qoo10" in det_pf.lower()
+        ):
+            logger.info(f"🚫 이미지형 메일 스킵 (제외 플랫폼): {det_pf}")
+            return []
+
         output_dir.mkdir(parents=True, exist_ok=True)
+        plat_label = det_pf if det_pf and det_pf != "기타" else "이미지형 세금계산서"
         result: Dict = {
             "url": "",
             "link_text": "이미지형 세금계산서",
@@ -451,7 +463,7 @@ class TaxInvoiceBrowser:
                 "page_url": "",
                 "page_title": "이미지형 세금계산서",
             },
-            "platform": email_info.get("platform", "이미지형"),
+            "platform": plat_label,
             "error": None,
             "email_type": "image",
             "email_subject": email_info.get("subject"),

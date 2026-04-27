@@ -32,7 +32,13 @@ const STAFF_PASSWORD = "quick7998!";
 const ADMIN_EMAILS = ["phajuquick37@gmail.com", STAFF_EMAIL];
 
 /** config.py tax_platform_exclude_substrings 와 동기화 (목록에서 숨김용) */
-const TAX_PLATFORM_EXCLUDE_SUBSTRINGS = ["university.qoo10", "qoo10.jp"];
+const TAX_PLATFORM_EXCLUDE_SUBSTRINGS = [
+  "university.qoo10",
+  "qoo10.jp",
+  "qoo10.com",
+  "큐텐",
+  "마켓플레이스",
+];
 function isExcludedTaxPlatformDisplay(p: string) {
   if (!p) return false;
   const x = p.toLowerCase();

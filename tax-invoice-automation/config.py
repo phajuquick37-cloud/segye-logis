@@ -5,6 +5,7 @@
 
 import os as _os
 import re as _re
+from datetime import datetime as _dt
 
 _BASE_DIR = _os.path.dirname(_os.path.abspath(__file__))
 
@@ -64,10 +65,30 @@ try:
 except ValueError:
     _EMAIL_DAYS_INT = 365
 
+# 메일함 전역 하한 (예: 2026-04-10부터 재스캔). 환경 변수를 빈 값으로 두면 days_limit만 사용.
+_SINCE_MIN_RAW = _env("TAX_EMAIL_SINCE_MIN", "2026-04-10")
+_IMAP_SINCE_MIN_DATE = None
+if _SINCE_MIN_RAW.strip():
+    try:
+        p = _SINCE_MIN_RAW.replace(".", "-").split("-")
+        if len(p) >= 3:
+            _IMAP_SINCE_MIN_DATE = _dt(
+                int(p[0]), int(p[1]), int(p[2]), tzinfo=None
+            ).date()
+    except Exception:
+        _IMAP_SINCE_MIN_DATE = None
+
 _imap_folders_raw = _env("TAX_IMAP_FOLDERS", "INBOX,[Gmail]/All Mail")
 _IMAP_FOLDERS = [x.strip() for x in _imap_folders_raw.split(",") if x.strip()]
 
+# 필수 우선 수집: 발신자·제목에 있으면 발신 도메인 제한 없이 2차 검증(세계로지스 등)만 통과하면 수집
+_PRIORITY_TAX_KEYWORDS = [
+    "원콜", "24시콜", "화물맨", "로지노트", "세금계산서",
+    "tax",  # 제목·발신에 포함 (차단 메일은 아래 블록에서 걸러짐)
+]
+
 EMAIL_FILTER = {
+    "priority_keywords": _PRIORITY_TAX_KEYWORDS,
     "subject_keywords": [
         "세금계산서", "전자세금계산서", "계산서 발행", "계산서발행",
         "ONEBILL", "화물맨", "로지노트", "로지노트플러스", "로지노트 플러스",
@@ -75,6 +96,7 @@ EMAIL_FILTER = {
         "전국24시", "24시콜",
         "tax12", "tax15",
         *_SUBJECT_TAX_NUMBERS,
+        *_PRIORITY_TAX_KEYWORDS,
     ],
     "button_keywords": [
         "확인하기", "상세보기", "조회하기", "열람",
@@ -84,6 +106,7 @@ EMAIL_FILTER = {
         "세계로지스", "세 계 로 지 스",
     ],
     "sender_domain_blocklist": [
+        "university.qoo10.jp",
         "qoo10.jp", "qoo10.com", "qoo10.co.kr", "university.qoo10",
         "gmarket.co.kr", "auction.co.kr", "11st.co.kr", "coupang.com",
         "tmon.co.kr", "wemakeprice.com", "interpark.com",
@@ -113,7 +136,16 @@ EMAIL_FILTER = {
     "tax_platform_exclude_substrings": [
         "university.qoo10",
         "qoo10.jp",
+        "qoo10.com",
+        "큐텐",
+        "마켓플레이스",
     ],
+    "email_body_block_substrings": [
+        "qoo10",
+        "큐텐",
+        "마켓플레이스",
+    ],
+    "imap_since_min_date": _IMAP_SINCE_MIN_DATE,
 }
 
 
@@ -135,6 +167,66 @@ def is_excluded_tax_platform(platform: str) -> bool:
         if pat.lower() in p:
             return True
     return False
+
+
+def is_blocked_invoice_email(
+    from_addr: str,
+    subject: str,
+    body_html: str = "",
+    body_text: str = "",
+) -> bool:
+    """
+    Qoo10·큐텐·마켓플레이스 등은 발신·제목·본문 어디에든 있으면 수집 제외.
+    """
+    if not from_addr:
+        from_addr = ""
+    fl = from_addr.lower()
+    for dom in EMAIL_FILTER.get("sender_domain_blocklist", []):
+        if dom and dom.lower() in fl:
+            return True
+
+    blob = f"{subject}\n{body_html}\n{body_text}"
+    blob_l = blob.lower()
+    for pat in EMAIL_FILTER.get("email_body_block_substrings", []):
+        if not pat:
+            continue
+        pl = pat.lower()
+        if pl in ("qoo10",):
+            if "qoo10" in blob_l or "qoo 10" in blob_l:
+                return True
+        elif pat in blob or pat.lower() in blob_l:
+            return True
+    # ASCII 대체 표기
+    if "marketplace" in blob_l and ("마켓" in blob or "market" in blob_l):
+        pass  # 너무 광범위 — 제목/본문에 'marketplace' 단독은 차단하지 않음
+    return False
+
+
+def tax_priority_keywords_match(from_addr: str, subject: str) -> bool:
+    """원콜·화물맨·24시콜·로지노트·세금·tax — 발신 또는 제목."""
+    blob = f"{from_addr}\n{subject}"
+    blob_l = blob.lower()
+    for kw in EMAIL_FILTER.get("priority_keywords", []):
+        if not kw:
+            continue
+        if kw.lower() == "tax":
+            if _re.search(r"\btax\b", blob_l, _re.I):
+                return True
+        else:
+            if kw in blob or kw.lower() in blob_l:
+                return True
+    return False
+
+
+def get_imap_since_date_str(days_limit: int) -> str:
+    """IMAP SINCE용 날짜 (DD-Mon-YYYY). TAX_EMAIL_SINCE_MIN이 있으면 그날부터만 검색."""
+    from datetime import datetime, timedelta
+
+    if EMAIL_FILTER.get("imap_since_min_date"):
+        d = EMAIL_FILTER["imap_since_min_date"]
+    else:
+        d = (datetime.now() - timedelta(days=max(1, days_limit))).date()
+    return d.strftime("%d-%b-%Y")
 
 
 def sender_matches_allowed_platforms(from_addr: str) -> bool:

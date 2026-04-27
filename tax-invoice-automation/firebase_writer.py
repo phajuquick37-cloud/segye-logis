@@ -139,7 +139,21 @@ def save_invoice(result: Dict) -> Optional[str]:
         return None
 
     try:
-        from config import is_blocked_tax_invoice_url, is_excluded_tax_platform
+        from config import (
+            is_blocked_tax_invoice_url,
+            is_excluded_tax_platform,
+            is_blocked_invoice_email,
+        )
+
+        if is_blocked_invoice_email(
+            result.get("email_from") or "",
+            result.get("email_subject") or "",
+        ):
+            logger.info(
+                "Firestore 저장 생략 (차단 발신/제목): "
+                f"{(result.get('email_subject') or '')[:50]}"
+            )
+            return None
 
         record = result.get("invoice_record", {})
         supplier = record.get("supplier", {})

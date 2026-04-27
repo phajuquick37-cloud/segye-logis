@@ -8,7 +8,7 @@ import imaplib
 import email
 import re
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
 from typing import List, Dict
@@ -18,7 +18,10 @@ from config import (
     EMAIL_CONFIG,
     EMAIL_FILTER,
     is_blocked_tax_invoice_url,
+    is_blocked_invoice_email,
     sender_matches_allowed_platforms,
+    tax_priority_keywords_match,
+    get_imap_since_date_str,
 )
 
 logger = logging.getLogger(__name__)
@@ -251,8 +254,8 @@ class EmailReader:
         if EMAIL_FILTER.get("unread_only"):
             criteria_parts.append("UNSEEN")
         days = EMAIL_FILTER.get("days_limit", 0)
-        if days > 0:
-            since = (datetime.now() - timedelta(days=days)).strftime("%d-%b-%Y")
+        if days > 0 or EMAIL_FILTER.get("imap_since_min_date"):
+            since = get_imap_since_date_str(days if days > 0 else 365)
             criteria_parts.append(f'SINCE "{since}"')
         criteria = " ".join(criteria_parts) if criteria_parts else "ALL"
 
@@ -286,23 +289,34 @@ class EmailReader:
                         date_str = msg.get("Date", "")
                         subj_lower = subject.lower()
 
-                        # ── 1순위: 화물맨·24시콜·원콜·로지노트(플러스)·@taxNN. 발신만 ──
-                        if not sender_matches_allowed_platforms(from_addr):
+                        body = get_email_body(msg)
+
+                        # 차단(Qoo10·큐텐·마켓플레이스 등): 발신·제목·본문
+                        if is_blocked_invoice_email(
+                            from_addr, subject, body["html"], body["text"]
+                        ):
                             logger.info(
-                                f"⛔ 수집 대상 발신자 아님: [{from_addr[:50]}] / 제목: [{subject[:40]}]"
+                                f"🚫 차단 목록 메일 스킵: [{subject[:40]}] | {from_addr[:40]}"
                             )
                             continue
 
-                        # ── 2순위: 제목 키워드 필터 ───────────────────────────────
-                        if keywords and not any(kw.lower() in subj_lower for kw in keywords):
+                        priority = tax_priority_keywords_match(from_addr, subject)
+                        allowed_sender = sender_matches_allowed_platforms(from_addr)
+                        if not allowed_sender and not priority:
+                            logger.info(
+                                f"⛔ 수집 대상 발신/키워드 아님: [{from_addr[:50]}] / [{subject[:40]}]"
+                            )
                             continue
+
+                        # 제목 키워드 (우선 키워드가 발신·제목에 있으면 통과)
+                        if keywords and not any(kw.lower() in subj_lower for kw in keywords):
+                            if not priority:
+                                continue
 
                         try:
                             received_date = parsedate_to_datetime(date_str)
                         except Exception:
                             received_date = datetime.now()
-
-                        body = get_email_body(msg)
 
                         # ── 3순위: 공급받는자 검증 (세계로지스 발행분만) ───────────
                         recipient_kws = EMAIL_FILTER.get("recipient_keywords", [])
@@ -374,6 +388,13 @@ class EmailReader:
         except Exception as e:
             logger.error(f"메일 조회 실패: {e}")
 
+        # 우선 키워드(원콜·화물맨 등) 메일을 먼저 처리
+        results.sort(
+            key=lambda e: (
+                0 if tax_priority_keywords_match(e.get("from", ""), e.get("subject", "")) else 1,
+                e.get("date") or "",
+            )
+        )
         return results
 
     def __enter__(self):

@@ -29,7 +29,17 @@ def ocr_image(image_path: str) -> str:
         from PIL import Image
         pytesseract.pytesseract.tesseract_cmd = OCR_CONFIG["tesseract_path"]
         img = Image.open(image_path)
-        text = pytesseract.image_to_string(img, lang=OCR_CONFIG["languages"])
+        # 세금계산서 표·한글 혼합에 단일 텍스트 블록 모드가 안정적인 편
+        cfg = "--psm 6"
+        text = pytesseract.image_to_string(
+            img, lang=OCR_CONFIG["languages"], config=cfg
+        )
+        if len(text.strip()) < 30:
+            text2 = pytesseract.image_to_string(
+                img, lang=OCR_CONFIG["languages"], config="--psm 4"
+            )
+            if len(text2.strip()) > len(text.strip()):
+                text = text2
         return text
     except ImportError:
         logger.warning("pytesseract 미설치. OCR 건너뜀 (pip install pytesseract pillow)")
@@ -40,15 +50,19 @@ def ocr_image(image_path: str) -> str:
 
 
 def ocr_screenshots(screenshots: List[str]) -> str:
-    """스크린샷 목록에서 OCR 텍스트 통합"""
+    """스크린샷 목록에서 OCR 텍스트 통합 (테이블·전체·이지메일 이미지 전부 시도)"""
     if not OCR_CONFIG.get("enabled"):
         return ""
     texts = []
     for path in screenshots:
-        if "table" in path or "final" in path or "fullpage" in path:
-            text = ocr_image(path)
-            if text.strip():
-                texts.append(f"[{Path(path).name}]\n{text}")
+        if not path:
+            continue
+        pl = path.lower()
+        if not pl.endswith((".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".gif", ".bmp")):
+            continue
+        text = ocr_image(path)
+        if text.strip():
+            texts.append(f"[{Path(path).name}]\n{text}")
     return "\n\n".join(texts)
 
 
@@ -88,7 +102,7 @@ def clean_biz_no(text: str) -> Optional[str]:
 
 FIELD_PATTERNS = {
     "invoice_number": [
-        r"(?:승인번호|문서번호|세금계산서번호|Invoice\s*No)[^\d]*(\d[\d\-]{6,})",
+        r"(?:승인번호|문서번호|세금계산서\s*번호|Invoice\s*No)[^\d]*(\d[\d\-]{6,})",
     ],
     "issue_date": [
         r"작성일자[\s:：]*(\d{4}[.\-/]\d{1,2}[.\-/]\d{1,2})",
@@ -96,24 +110,30 @@ FIELD_PATTERNS = {
         r"거래일[\s:：]*(\d{4}[.\-/]\d{1,2}[.\-/]\d{1,2})",
     ],
     "supply_amount": [
-        r"공급가액[\s:：₩]*([\d,]+)",
-        r"공급금액[\s:：₩]*([\d,]+)",
+        r"공급가액[\s:：₩]*([\d,\s]+)",
+        r"공급\s*금\s*액[\s:：₩]*([\d,\s]+)",
+        r"공급금액[\s:：₩]*([\d,\s]+)",
     ],
     "tax_amount": [
-        r"세액[\s:：₩]*([\d,]+)",
+        r"세\s*액[\s:：₩]*([\d,\s]+)",
+        r"(?<!공급)세액[\s:：₩]*([\d,\s]+)",
     ],
     "total_amount": [
-        r"합계금액[\s:：₩]*([\d,]+)",
-        r"합\s*계[\s:：₩]*([\d,]+)",
-        r"Total[\s:：₩]*([\d,]+)",
+        r"합\s*계\s*금\s*액[\s:：₩]*([\d,\s]+)",
+        r"합계금액[\s:：₩]*([\d,\s]+)",
+        r"합\s*계[\s:：₩]*([\d,\s]+)\s*원",
+        r"(?:금\s*액\s*)?합\s*계[\s:：₩]*([\d,\s]+)",
+        r"Total[\s:：₩]*([\d,\s]+)",
     ],
     "supplier_name": [
-        r"공급자\s*(?:상호)?[\s:：]*([가-힣a-zA-Z\(\)（）\s]{2,20}?)(?:\s|$)",
-        r"상\s*호[\s:：]*([가-힣a-zA-Z\(\)（）\s]{2,20}?)(?:\n|\s{2})",
+        r"공급자[^\n]{0,36}?(?:상호|명칭)[\s:：]*([가-힣a-zA-Z0-9\(\)（）&·\.\-\s]{2,60}?)(?:\s*등록|\s*사업자|\s*\d{3}-|\n)",
+        r"공급자\s*(?:상호)?\s*[:：]\s*([가-힣a-zA-Z0-9\(\)（）&·\-\s]{2,60}?)(?:\n|\s{2,}|등록|사업자)",
+        r"(?:^|\n)상\s*호\s*[:：]\s*([가-힣a-zA-Z0-9\(\)（）&·\-\s]{2,60}?)(?:\n|\s{2}|등록)",
+        r"공급자\s*[:：]\s*([가-힣a-zA-Z0-9\(\)（）&·\-\s]{2,60}?)(?:\n|사업자|등록)",
     ],
     "supplier_biz_no": [
-        r"공급자.*?등록번호[\s:：]*(\d{3}[-\s]?\d{2}[-\s]?\d{5})",
-        r"(?<!받는)사업자등록번호[\s:：]*(\d{3}[-\s]?\d{2}[-\s]?\d{5})",
+        r"공급자[^\n]{0,80}?등록(?:번호)?[\s:：]*(\d{3}[-\s]?\d{2}[-\s]?\d{5})",
+        r"(?<!받는)사업자\s*등록\s*번호[\s:：]*(\d{3}[-\s]?\d{2}[-\s]?\d{5})",
     ],
     "buyer_name": [
         r"공급받는\s*자\s*(?:상호)?[\s:：]*([가-힣a-zA-Z\(\)（）\s]{2,20}?)(?:\s|$)",
@@ -197,13 +217,19 @@ def build_invoice_record(dom_data: Dict, ocr_text: str, platform: str, email_inf
     # 병합 (테이블 값이 우선)
     merged = {**from_text, **{k: v for k, v in from_tables.items() if v}}
 
+    supply_amt = clean_amount(merged.get("supply_amount"))
+    tax_amt = clean_amount(merged.get("tax_amount"))
+    total_amt = clean_amount(merged.get("total_amount"))
+    if total_amt is None and supply_amt is not None and tax_amt is not None:
+        total_amt = supply_amt + tax_amt
+
     record = {
         "platform": platform,
         "invoice_number": merged.get("invoice_number"),
         "issue_date": clean_date(merged.get("issue_date")),
-        "supply_amount": clean_amount(merged.get("supply_amount")),
-        "tax_amount": clean_amount(merged.get("tax_amount")),
-        "total_amount": clean_amount(merged.get("total_amount")),
+        "supply_amount": supply_amt,
+        "tax_amount": tax_amt,
+        "total_amount": total_amt,
         "supplier": {
             "name": merged.get("supplier_name"),
             "business_number": clean_biz_no(merged.get("supplier_biz_no")),
