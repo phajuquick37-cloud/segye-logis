@@ -15,7 +15,7 @@ from playwright.async_api import async_playwright, Page, Browser, BrowserContext
 from config import (
     BROWSER_CONFIG, BUSINESS_CONFIG,
     BIZ_NUMBER_INPUT_SELECTORS, CONFIRM_BUTTON_SELECTORS,
-    is_blocked_tax_invoice_url, is_excluded_tax_platform,
+    is_blocked_tax_invoice_url, is_excluded_tax_platform, is_blocked_invoice_email,
 )
 from platform_detector import detect_platform, extract_platform_from_page
 
@@ -451,6 +451,15 @@ class TaxInvoiceBrowser:
             logger.info(f"🚫 이미지형 메일 스킵 (제외 플랫폼): {det_pf}")
             return []
 
+        if is_blocked_invoice_email(
+            email_info.get("from", ""),
+            email_info.get("subject", ""),
+            email_info.get("html_body", ""),
+            email_info.get("text_body", ""),
+        ):
+            logger.info("🚫 이미지형 메일 스킵 (Qoo10 등 차단: 본문/발신)")
+            return []
+
         output_dir.mkdir(parents=True, exist_ok=True)
         plat_label = det_pf if det_pf and det_pf != "기타" else "이미지형 세금계산서"
         result: Dict = {
@@ -471,6 +480,8 @@ class TaxInvoiceBrowser:
             "email_from": email_info.get("from"),
             "email_date": email_info.get("date"),
             "rfc_message_id": (email_info.get("rfc_message_id") or ""),
+            "html_body": email_info.get("html_body", ""),
+            "text_body": email_info.get("text_body", ""),
         }
 
         for idx, img_data in enumerate(images, 1):
@@ -512,6 +523,8 @@ class TaxInvoiceBrowser:
             res["email_from"] = email_info.get("from")
             res["email_date"] = email_info.get("date")
             res["rfc_message_id"] = email_info.get("rfc_message_id") or ""
+            res["html_body"] = email_info.get("html_body", "")
+            res["text_body"] = email_info.get("text_body", "")
             results.append(res)
 
         return results

@@ -19,7 +19,9 @@ import {
 
 import {
   parseFile, ColKey, ParseResult,
-  normalizeCreditClientCell, isBlankCreditClientName,
+  normalizeCreditClientCell,
+  normalizeCreditNameForLink,
+  isBlankCreditClientName,
   normalizePaymentCell, isCreditPaymentForSettlement,
 } from "../utils/sheetParser";
 import {
@@ -41,15 +43,6 @@ type TemplateType = "basic" | "samil" | "jiyoo" | "rapid";
 const TEMPLATE_LABELS: Record<TemplateType, string> = {
   basic: "기본양식", samil: "삼일강업양식", jiyoo: "지유전자양식", rapid: "래피드양식",
 };
-
-/** 신용거래처명 비교용 정규화 (공백·유니코드 통일) */
-function normalizeCreditKey(name: string): string {
-  try {
-    return name.normalize("NFKC").trim().replace(/\s+/g, " ");
-  } catch {
-    return String(name ?? "").trim().replace(/\s+/g, " ");
-  }
-}
 
 interface ClientProfile {
   id?: string;
@@ -400,17 +393,21 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
   const [remapEmptyClientDrop, setRemapEmptyClientDrop] = useState(0);
 
   useEffect(() => {
-    getDocs(query(collection(db, "client_profiles"), orderBy("name")))
-      .then((snap) => {
+    const q = query(collection(db, "client_profiles"), orderBy("name"));
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
         const names = new Set(
           snap.docs
-            .map((d) => normalizeCreditKey((d.data().name as string) ?? ""))
+            .map((d) => normalizeCreditNameForLink((d.data().name as string) ?? ""))
             .filter(Boolean)
         );
         setCreditNames(names);
-      })
-      .catch(() => {})
-      .finally(() => setProfilesLoaded(true));
+        setProfilesLoaded(true);
+      },
+      () => setProfilesLoaded(true)
+    );
+    return () => unsub();
   }, []);
 
   const handleFiles = async (incoming: File[]) => {
@@ -484,7 +481,9 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
     const filtered = split;
     let unregistered = 0;
     if (profilesLoaded && creditNames.size > 0) {
-      unregistered = split.filter((r) => !creditNames.has(normalizeCreditKey(r.clientName))).length;
+      unregistered = split.filter(
+        (r) => !creditNames.has(normalizeCreditNameForLink(r.clientName))
+      ).length;
     }
     setSkipped(unregistered);
     setSplitRows(filtered);
@@ -543,12 +542,12 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
           const deliv    = safeN(aggregated.delivery_fee ?? 0);
           const grandTotal = Math.round((fee + deliv) * 1.1);
 
-          const aggClient = normalizeCreditClientCell(aggregated.client_name);
+          const aggClient = normalizeCreditNameForLink(aggregated.client_name);
           const matching = splitRows.filter((row) => {
             const rowMonth = (row.date ?? "").slice(0, 7) || billingMonth;
             return (
               rowMonth === aggregated.billing_month &&
-              normalizeCreditClientCell(row.clientName) === aggClient
+              normalizeCreditNameForLink(row.clientName) === aggClient
             );
           });
           const rowsToSave = matching.length > 0
@@ -807,7 +806,8 @@ function AddRecordPanel({ onClose }: { onClose: () => void }) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault(); setErr("");
-    if (!form.client_name.trim()) { setErr("거래처명을 입력하세요."); return; }
+    const nameLinked = normalizeCreditNameForLink(form.client_name);
+    if (!nameLinked) { setErr("거래처명을 입력하세요."); return; }
     const total = Number(form.total_amount.replace(/[^0-9.-]/g, "")) || 0;
     const paid  = Number(form.paid_amount.replace(/[^0-9.-]/g, ""))  || 0;
     const unpaid = Math.max(0, total - paid);
@@ -815,7 +815,7 @@ function AddRecordPanel({ onClose }: { onClose: () => void }) {
     if (paid >= total && total > 0) status = "paid";
     else if (paid > 0) status = "partial";
     await addDoc(collection(db, "ar_records"), {
-      billing_month: form.billing_month, client_name: form.client_name.trim(),
+      billing_month: form.billing_month, client_name: nameLinked,
       client_biz_no: form.client_biz_no.trim(), total_amount: total,
       paid_amount: paid, unpaid_amount: unpaid, due_date: form.due_date,
       status, memo: form.memo.trim(), checked: false,
@@ -1789,20 +1789,31 @@ function QuickMailPanel({ record, onClose }: { record: ArRecord; onClose: () => 
       }]);
       setLoading(false);
     });
-    // 프로필 로드 → 거래처 정보에 이메일이 있으면 수신인에 자동 적용 (중복 제외)
-    getDocs(query(collection(db, "client_profiles"), where("name", "==", record.client_name)))
-      .then((snap) => {
-        if (!snap.empty) {
-          const p = { id: snap.docs[0].id, ...snap.docs[0].data() } as ModalClientProfile;
+    // 프로필 로드 (이름 정규화 일치) → 이메일 수신인 자동 적용
+    const key = normalizeCreditNameForLink(record.client_name);
+    const unsubProf = onSnapshot(
+      collection(db, "client_profiles"),
+      (snap) => {
+        const doc = snap.docs.find(
+          (d) => normalizeCreditNameForLink(String((d.data().name as string) ?? "")) === key
+        );
+        if (doc) {
+          const p = { id: doc.id, ...doc.data() } as ModalClientProfile;
           setProfile(p);
           if (p.email?.trim()) {
             const profEmails = p.email.split(",").map((e: string) => e.trim()).filter(Boolean);
-            setRecipients(prev => Array.from(new Set([...prev, ...profEmails])));
+            setRecipients((prev) => Array.from(new Set([...prev, ...profEmails])));
           }
+        } else {
+          setProfile(null);
         }
-      })
-      .catch(() => {});
-    return unsub;
+      },
+      () => setProfile(null)
+    );
+    return () => {
+      unsub();
+      unsubProf();
+    };
   }, [record]);
 
   const addRecipient = () => {
@@ -1969,7 +1980,7 @@ function ClientProfilesPanel() {
   };
 
   const handleSave = async () => {
-    const nameNorm = normalizeCreditKey(form.name);
+    const nameNorm = normalizeCreditNameForLink(form.name);
     if (!nameNorm) { alert("거래처명을 입력하세요."); return; }
     setSaving(true);
     try {
@@ -2140,7 +2151,7 @@ function ClientProfilesPanel() {
       )}
 
       <p className="text-xs text-slate-400 border-t border-slate-100 pt-3">
-        * 거래처명이 거래명세표의 거래처명과 일치해야 공급받는자 정보가 자동으로 채워집니다.
+        * 엑셀에 나온 거래처명과 거래처 정보의 상호가 같으면(띄어쓰기만 다른 경우 포함) 공급받는자란에 등록 정보가 자동 반영됩니다.
       </p>
     </div>
   );

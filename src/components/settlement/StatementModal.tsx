@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from "react";
 import { db } from "../../lib/firebase";
 import {
-  collection, onSnapshot, orderBy, query, updateDoc, doc, getDocs, where,
+  collection, onSnapshot, orderBy, query, updateDoc, doc,
 } from "firebase/firestore";
+import { normalizeCreditNameForLink } from "../../utils/sheetParser";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import { captureStatementToCanvas } from "../../utils/statementCapture";
@@ -247,6 +248,14 @@ const TEMPLATES: Record<TemplateType, { label: string; cols: ColDef[]; renderRow
   },
 };
 
+/** 엑셀 저장용 열 제목(거래명세표 화면과 동일 6/7/8열, 품명·수량·단가 열 사용 안 함) */
+const EXCEL_TABLE_HEADERS: Record<TemplateType, string[]> = {
+  basic: ["날짜", "고객명(상호)", "출발동", "도착동", "차량", "금액"],
+  samil: ["날짜", "고객명(상호)", "출발동", "도착동", "차량", "기사명", "금액", "차량번호"],
+  jiyoo: ["날짜", "고객명", "출발동", "하차지고객", "도착동", "차량", "금액"],
+  rapid: ["날짜", "출발동", "도착동", "비고", "금액", "차량"],
+};
+
 function detectTemplate(clientName: string, profile?: ClientProfile | null): TemplateType {
   // 1. 거래처명 기반 자동 감지 (우선)
   const n = clientName;
@@ -385,7 +394,9 @@ export const DocumentBody = React.forwardRef<
                   </tr>
                   <tr>
                     <td style={labelCell}>상호(법인명)</td>
-                    <td style={cellStyle({ fontWeight: "bold" })}>{record.client_name}</td>
+                    <td style={cellStyle({ fontWeight: "bold" })}>
+                      {(profile?.name || "").trim() || record.client_name}
+                    </td>
                     <td style={{ ...cellStyle({ backgroundColor: "#f0f0f0", fontWeight: "bold", width: "30px" }) }}>성명</td>
                     <td style={cellStyle()}>{profile?.ceo_name || "\u00A0"}</td>
                   </tr>
@@ -500,10 +511,10 @@ export const DocumentBody = React.forwardRef<
         <tfoot>
           <tr style={{ backgroundColor: "#f0f0f0" }}>
             <td colSpan={colCount - 2} style={{ border: "1px solid #555", padding: "5px 12px", textAlign: "right", fontWeight: "bold" }}>
-              합  계
+              합  계 <span style={{ fontWeight: "600", fontSize: "10px", color: "#444" }}>(부가세 10% 포함)</span>
             </td>
             <td style={{ border: "1px solid #555", padding: "5px 8px", textAlign: "right", fontWeight: "900", fontFamily: "monospace", fontSize: "12px" }}>
-              {supplyTotal.toLocaleString()}
+              {grandTotal.toLocaleString()}
             </td>
             <td style={{ border: "1px solid #555" }}>&nbsp;</td>
           </tr>
@@ -547,13 +558,24 @@ export default function StatementModal({
   const [loadingItems, setLoading]  = useState(true);
   const [clientProfile, setClientProfile] = useState<ClientProfile | null>(null);
 
-  // 거래처 프로필 로드
+  // 거래처 프로필: 엑셀 집계명과 거래처 정보 탭 입력명이 공백만 다를 때도 연동
   useEffect(() => {
-    getDocs(query(collection(db, "client_profiles"), where("name", "==", record.client_name)))
-      .then((snap) => {
-        if (!snap.empty) setClientProfile({ id: snap.docs[0].id, ...snap.docs[0].data() } as ClientProfile);
-      })
-      .catch(() => {});
+    const key = normalizeCreditNameForLink(record.client_name);
+    const unsub = onSnapshot(
+      collection(db, "client_profiles"),
+      (snap) => {
+        const doc = snap.docs.find(
+          (d) => normalizeCreditNameForLink(String((d.data().name as string) ?? "")) === key
+        );
+        if (doc) {
+          setClientProfile({ id: doc.id, ...doc.data() } as ClientProfile);
+        } else {
+          setClientProfile(null);
+        }
+      },
+      () => setClientProfile(null)
+    );
+    return () => unsub();
   }, [record.client_name]);
 
   // 이메일: 저장된 주소를 배열로 관리 (여러 담당자 지원)
@@ -653,41 +675,110 @@ export default function StatementModal({
     }
   };
 
-  // ── 엑셀 다운로드 ──
+  // ── 엑셀 다운로드: 상단 요약 + 거래명세표 양식과 동일한 열(날짜·고객명·출발·도착·차량·금액 등, 품명/수량/단가 열 없음) ──
   const handleDownloadExcel = () => {
-    const wb = XLSX.utils.book_new();
-    const [year, month] = record.billing_month.split("-");
+    const tkey = detectTemplate(record.client_name, clientProfile);
+    const tmpl = TEMPLATES[tkey];
+    const nc = tmpl.cols.length;
+    const excelHeaders = EXCEL_TABLE_HEADERS[tkey];
+    if (excelHeaders.length !== nc) {
+      console.error(`EXCEL_TABLE_HEADERS[${tkey}] 길이가 템플릿 열 수와 다릅니다.`);
+    }
     const supplyTotal = record.total_amount;
-    const vatTotal    = Math.round(supplyTotal * VAT_RATE);
+    const vatTotal = Math.round(supplyTotal * VAT_RATE);
+    const grandTotal = supplyTotal + vatTotal;
+    const p = clientProfile;
+    const dateRange = monthDateRange(record.billing_month);
+    const sheetW = Math.max(8, nc);
 
-    const rows: (string | number)[][] = [
-      ["거  래  명  세  표"],
-      [`기간: ${monthDateRange(record.billing_month)}`],
-      [""],
-      ["[공급자]", "", "", "[공급받는자]"],
-      ["등록번호", SUPPLIER.biz_no, "", "등록번호", record.client_biz_no ?? ""],
-      ["상호(법인명)", SUPPLIER.name, "", "상호(법인명)", record.client_name],
-      ["대표자", SUPPLIER.representative, "", "", ""],
-      ["주소", SUPPLIER.address, "", "", ""],
-      [""],
-      [`공급가액: ${supplyTotal.toLocaleString()}원`, "", `VAT: ${vatTotal.toLocaleString()}원`, "", `합계: ${(supplyTotal + vatTotal).toLocaleString()}원`],
-      [""],
-      ["날짜", "거래내역/품명", "수량", "단가", "공급가액", "세액", "비고"],
-      ...items.map((item) => [
-        item.date,
-        item.description,
-        item.quantity,
-        item.unit_price,
-        item.supply_amount,
-        item.tax_amount,
-        item.memo,
-      ]),
-      ["", "페이지 소계", "", "", supplyTotal, vatTotal, ""],
-    ];
+    const pad = (cells: (string | number)[]): (string | number)[] => {
+      const a = cells.map((c) => c);
+      while (a.length < sheetW) a.push("");
+      return a.slice(0, sheetW);
+    };
 
+    const rows: (string | number)[][] = [];
+    rows.push(pad([`거  래  명  세  표  (${tmpl.label})`]));
+    rows.push(pad([`기간: ${dateRange}`]));
+    rows.push(pad([""]));
+    rows.push(pad(["[공급자]", "", "", "", "[공급받는자]", "", "", ""]));
+    rows.push(pad(["등록번호", SUPPLIER.biz_no, "", "", "등록번호", p?.biz_no || record.client_biz_no || "", "", ""]));
+    rows.push(pad(["상호(법인명)", SUPPLIER.name, "", "", "상호(법인명)", (p?.name || "").trim() || record.client_name, "", ""]));
+    rows.push(pad(["성명(대표)", SUPPLIER.representative, "", "", "성명(대표)", p?.ceo_name || "", "", ""]));
+    rows.push(pad(["사업장주소", SUPPLIER.address, "", "", "사업장주소", p?.address || "", "", ""]));
+    rows.push(
+      pad([
+        "업태",
+        SUPPLIER.business_type,
+        "종목",
+        SUPPLIER.business_item,
+        "업태",
+        p?.business_type || "",
+        "종목",
+        p?.business_item || "",
+      ])
+    );
+    rows.push(pad(["전화", SUPPLIER.phone, "", "", "전화", p?.phone || "", "", ""]));
+    rows.push(pad(["E-mail", SUPPLIER.email, "", "", "E-mail", p?.email || "", "", ""]));
+    rows.push(pad([""]));
+    rows.push(
+      pad([
+        "공급가액",
+        `${supplyTotal.toLocaleString()}원`,
+        "VAT",
+        `${vatTotal.toLocaleString()}원`,
+        "합계",
+        `${grandTotal.toLocaleString()}원`,
+        toKoreanAmount(grandTotal),
+        "",
+      ])
+    );
+    rows.push(pad([""]));
+    // ── 본문 표: `pad`·slice(8)로 잘리지 않도록 열 수 = 템플릿(nc)과 동일하게만 사용 ──
+    rows.push([...excelHeaders]);
+    for (const item of items) {
+      const cells = tmpl.renderRow(item);
+      const row: (string | number)[] = [];
+      for (let i = 0; i < nc; i += 1) {
+        const v = cells[i];
+        if (v === undefined || v === null) {
+          row.push("");
+        } else {
+          row.push(typeof v === "number" ? v : String(v));
+        }
+      }
+      rows.push(row);
+    }
+    const sumRowIndex = rows.length;
+    const sumRow: (string | number)[] = Array(nc).fill("");
+    sumRow[0] = "합계 (부가세 10% 포함)";
+    if (nc > 1) {
+      sumRow[nc - 1] = grandTotal.toLocaleString();
+    } else {
+      sumRow[0] = grandTotal.toLocaleString();
+    }
+    rows.push(sumRow);
+
+    const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws["!cols"] = [{ wch: 12 }, { wch: 30 }, { wch: 6 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 18 }];
-    ws["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }];
+    const merges: { s: { r: number; c: number }; e: { r: number; c: number } }[] = [
+      { s: { r: 0, c: 0 }, e: { r: 0, c: sheetW - 1 } },
+    ];
+    if (nc >= 2) {
+      merges.push({
+        s: { r: sumRowIndex, c: 0 },
+        e: { r: sumRowIndex, c: nc - 2 },
+      });
+    }
+    ws["!merges"] = merges;
+    const colWch = (wch?: string): number => {
+      if (!wch) return 12;
+      const n = parseInt(String(wch).replace(/px|\s/g, ""), 10);
+      return Math.min(40, Math.max(8, Math.round((Number.isNaN(n) ? 80 : n) / 6)));
+    };
+    ws["!cols"] = Array.from({ length: sheetW }, (_, i) => ({
+      wch: i < nc ? colWch(tmpl.cols[i]?.width) : 10,
+    }));
     XLSX.utils.book_append_sheet(wb, ws, "거래명세표");
     XLSX.writeFile(wb, `거래명세표_${record.client_name}_${record.billing_month}.xlsx`);
   };
@@ -698,7 +789,7 @@ export default function StatementModal({
     if (!docRef.current) return;
     setSending(true); setSentOk(false); setSentErr("");
     try {
-      const canvas = await captureStatementToCanvas(docRef.current, { scale: 1.5 });
+      const canvas = await captureStatementToCanvas(docRef.current, { scale: 2 });
       const imageBase64 = canvas.toDataURL("image/png", 0.92);
       // 담당자 목록 Firestore 저장
       await updateDoc(doc(db, "ar_records", record.id), { contact_email: recipients.join(", ") });

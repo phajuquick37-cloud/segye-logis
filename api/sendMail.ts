@@ -10,23 +10,12 @@ export const config = {
   },
 };
 
-interface MailItem {
-  description: string;
-  quantity: number;
-  unit_price: number;
-  supply_amount: number;
-  tax_amount: number;
-  memo: string;
-}
-
 interface MailPayload {
   to: string;
   clientName: string;
   billingMonth: string;
-  imageBase64?: string;       // html2canvas 로 캡처한 거래명세서 JPEG base64
-  items?: MailItem[];
-  supplyTotal?: number;
-  taxTotal?: number;
+  imageBase64?: string;       // html2canvas 로 캡처한 거래명세서 이미지(표 본문)
+  /** 하위 호환: 클라이언트는 보낼 수 있으나 메일 본문에는 사용하지 않음(명세는 이미지로만) */
   grandTotal?: number;
   supplierName?: string;
   supplierPhone?: string;
@@ -46,9 +35,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     clientName,
     billingMonth,
     imageBase64,
-    items = [],
-    supplyTotal = 0,
-    taxTotal = 0,
     grandTotal = 0,
     supplierName  = "세계로지스",
     supplierPhone = "031-000-0000",
@@ -69,27 +55,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const [year, month] = billingMonth.split("-");
   const CID = "statement@segye-logis";
+  const fileSafe = String(clientName)
+    .replace(/[\\/:*?"<>|]+/g, "_")
+    .replace(/\s+/g, "_");
+  const pngFilename = `거래명세서_원본_${fileSafe}_${billingMonth}.png`;
+  // 인라인(CID)과 첨부는 동일 바이트 — 첨부로 열면 대부분 메일 앱에서 원본 크기로 볼 수 있음
+  const cidRef = `cid:${CID}`;
 
-  // ── 상세 내역 테이블 행 생성 ──
-  const itemRows = items
-    .map(
-      (item, i) => `
-      <tr style="background:${i % 2 === 0 ? "#ffffff" : "#f8fafc"};">
-        <td style="border:1px solid #e2e8f0;padding:8px 10px;text-align:center;font-size:12px;">${i + 1}</td>
-        <td style="border:1px solid #e2e8f0;padding:8px 10px;font-size:12px;">${item.description ?? ""}</td>
-        <td style="border:1px solid #e2e8f0;padding:8px 10px;text-align:right;font-size:12px;">${(item.quantity ?? 0).toLocaleString()}</td>
-        <td style="border:1px solid #e2e8f0;padding:8px 10px;text-align:right;font-size:12px;font-weight:600;">
-          ${(item.supply_amount ?? 0).toLocaleString()}원
-        </td>
-        <td style="border:1px solid #e2e8f0;padding:8px 10px;text-align:right;font-size:12px;">
-          ${item.tax_amount > 0 ? (item.tax_amount).toLocaleString() + "원" : "-"}
-        </td>
-        <td style="border:1px solid #e2e8f0;padding:8px 10px;font-size:12px;">${item.memo ?? ""}</td>
-      </tr>`
-    )
-    .join("");
-
-  // ── 이메일 HTML 본문 ──
+  // ── 이메일 HTML 본문: 품목별 HTML 테이블(거래 상세)은 넣지 않음, 캡처 이미지 + 합계만 ──
   const html = `<!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -100,8 +73,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 <body style="margin:0;padding:0;background:#eef2f7;font-family:'Malgun Gothic',Arial,sans-serif;">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:#eef2f7;padding:32px 0;">
   <tr><td align="center">
-  <table width="640" cellpadding="0" cellspacing="0"
-    style="max-width:640px;width:100%;background:#fff;border-radius:14px;overflow:hidden;
+  <table width="800" cellpadding="0" cellspacing="0"
+    style="max-width:800px;width:100%;background:#fff;border-radius:14px;overflow:hidden;
            box-shadow:0 6px 32px rgba(0,0,0,0.12);">
 
     <!-- ① 헤더 -->
@@ -127,63 +100,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       </td>
     </tr>
 
-    <!-- ③ 거래명세서 이미지 (CID 첨부) -->
+    <!-- ③ 거래명세서 이미지 (CID 인라인 + 동일 파일 첨부로 원본 보기) -->
     ${
       imageBase64
         ? `<tr>
-        <td style="padding:0 40px 20px;">
-          <div style="border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;text-align:center;">
-            <img src="cid:${CID}" alt="거래명세서"
-              style="max-width:100%;display:block;margin:0 auto;" />
+        <td style="padding:0 32px 12px;">
+          <p style="font-size:12px;color:#64748b;margin:0 0 10px;line-height:1.5;">
+            아래 <strong>이미지를 클릭</strong>하면 원본으로 열릴 수 있습니다(메일 앱에 따라 다를 수 있음).<br>
+            작게만 보이면 이메일 <strong>첨부 PNG</strong>를 열어 원본 크기로 확인하세요.
+          </p>
+          <div style="border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;text-align:center;
+                      background:#f8fafc;">
+            <a href="${cidRef}" style="text-decoration:none;display:block;line-height:0;" title="원본 보기">
+              <img src="${cidRef}" alt="거래명세서 — 클릭하여 원본 보기" width="794"
+                style="max-width:100%;width:100%;height:auto;display:block;margin:0 auto;border:0;outline:0;" />
+            </a>
           </div>
         </td>
       </tr>`
         : ""
     }
 
-    <!-- ④ 상세 내역 테이블 -->
-    <tr>
-      <td style="padding:0 40px 24px;">
-        <p style="font-size:13px;font-weight:700;color:#334155;margin:0 0 10px;">
-          ■ 거래 상세 내역
-        </p>
-        <table width="100%" cellpadding="0" cellspacing="0"
-          style="border-collapse:collapse;font-size:12px;">
-          <thead>
-            <tr style="background:#1e40af;">
-              <th style="border:1px solid #1e3a8a;padding:9px 10px;color:#fff;text-align:center;width:5%;">NO</th>
-              <th style="border:1px solid #1e3a8a;padding:9px 10px;color:#fff;text-align:left;">품명/규격</th>
-              <th style="border:1px solid #1e3a8a;padding:9px 10px;color:#fff;text-align:right;width:8%;">수량</th>
-              <th style="border:1px solid #1e3a8a;padding:9px 10px;color:#fff;text-align:right;width:16%;">공급가액</th>
-              <th style="border:1px solid #1e3a8a;padding:9px 10px;color:#fff;text-align:right;width:12%;">세액</th>
-              <th style="border:1px solid #1e3a8a;padding:9px 10px;color:#fff;text-align:left;width:14%;">비고</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${
-              itemRows ||
-              `<tr><td colspan="6" style="border:1px solid #e2e8f0;padding:16px;text-align:center;color:#94a3b8;">
-                내역 없음
-              </td></tr>`
-            }
-          </tbody>
-          <tfoot>
-            <tr style="background:#f1f5f9;font-weight:700;">
-              <td colspan="3" style="border:1px solid #cbd5e1;padding:10px 10px;text-align:center;">합 계</td>
-              <td style="border:1px solid #cbd5e1;padding:10px 10px;text-align:right;">
-                ${Number(supplyTotal).toLocaleString()}원
-              </td>
-              <td style="border:1px solid #cbd5e1;padding:10px 10px;text-align:right;">
-                ${Number(taxTotal).toLocaleString()}원
-              </td>
-              <td style="border:1px solid #cbd5e1;padding:10px 10px;"></td>
-            </tr>
-          </tfoot>
-        </table>
-      </td>
-    </tr>
-
-    <!-- ⑤ 합계 금액 박스 -->
+    <!-- ④ 합계 금액 박스 (명세는 위 이미지에 포함) -->
     <tr>
       <td style="padding:0 40px 28px;">
         <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
@@ -255,10 +193,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const attachments: Attachment[] = [];
   if (imageBase64) {
     const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
+    const pngBuf = Buffer.from(base64Data, "base64");
     attachments.push({
-      filename: `거래명세서_${clientName}_${billingMonth}.png`,
-      content: Buffer.from(base64Data, "base64"),
+      filename: `거래명세서_${fileSafe}_${billingMonth}.png`,
+      content: pngBuf,
       cid: CID,
+      contentType: "image/png",
+    });
+    attachments.push({
+      filename: pngFilename,
+      content: pngBuf,
       contentType: "image/png",
     });
   }

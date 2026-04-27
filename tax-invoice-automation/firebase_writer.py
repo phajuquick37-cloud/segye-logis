@@ -167,6 +167,8 @@ def save_invoice(result: Dict) -> Optional[str]:
         if is_blocked_invoice_email(
             result.get("email_from") or "",
             result.get("email_subject") or "",
+            result.get("html_body") or "",
+            result.get("text_body") or "",
         ):
             logger.info(
                 "Firestore 저장 생략 (차단 발신/제목): "

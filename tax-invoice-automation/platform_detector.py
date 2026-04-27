@@ -7,7 +7,7 @@
 import re
 import logging
 from typing import Dict, Optional
-from config import PLATFORM_RULES
+from config import PLATFORM_RULES, url_looks_like_blocked_marketplace
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,14 @@ def detect_platform(
     이메일 정보와 URL로 발행 플랫폼 감지
     Returns: 플랫폼명 (예: "화물맨", "원콜(ONEBILL)", "로지노트", "기타")
     """
+    # Qoo10/마켓 URL을 먼저 잡는다(그렇지 않으면 URL·제목에 tax12·onecall 등
+    # 부분 문자열이 끼어 '화물맨'으로 오인 → is_excluded가 안 맞는 경우 발생)
+    if url and url_looks_like_blocked_marketplace(url):
+        domain_match = re.search(r"https?://(?:www\.)?([^/?#]+)", url, re.I)
+        d = (domain_match and domain_match.group(1)) or "blocked"
+        logger.info(f"플랫폼: 마켓/스팸 URL로 기타({d}) (선차단)")
+        return f"기타({d})"
+
     text_to_check = f"{email_subject} {email_from} {url} {page_content}".lower()
 
     for platform_name, rules in PLATFORM_RULES.items():

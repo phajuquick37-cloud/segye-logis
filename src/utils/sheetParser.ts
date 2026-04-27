@@ -151,6 +151,14 @@ export function normalizeCreditClientCell(val: unknown): string {
 }
 
 /**
+ * 엑셀 집계 `ar_records.client_name` ↔ 거래처 정보 `client_profiles.name` ↔ 거래명세표 공급받는자 연동용.
+ * (NFKC·제로폭 제거 + 연속 공백을 한 칸으로)
+ */
+export function normalizeCreditNameForLink(name: string): string {
+  return normalizeCreditClientCell(name).replace(/\s+/g, " ");
+}
+
+/**
  * 정규화된 거래처명이 비어 있거나 공란으로 볼 값이면 true → 일반 고객(신용 집계 제외)
  * (normalizeCreditClientCell 적용 후 문자열을 넣을 것)
  */

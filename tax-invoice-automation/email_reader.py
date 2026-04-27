@@ -398,9 +398,12 @@ class EmailReader:
 
                         # 이미지형 메일 — 인라인/첨부 이미지 추출
                         images = extract_inline_images(msg)
-                        if before_n > 0 and not links and not images:
+                        # 링크는 있었으나 전부 차단(예: Qoo10)인 경우: 이미지가 있어도 동일 메일로 스팸
+                        # (마케팅 이미지 + 쇼핑 링크가 동시에 있는 경우) → 수집하지 않음
+                        if before_n > 0 and not links:
                             logger.info(
-                                f"🚫 차단 URL만 있음 — 제목: [{subject[:40]}]"
+                                f"🚫 수집 가능 링크 없음(전부 차단 URL) — "
+                                f"제목: [{subject[:40]}] · 이미지{len(images)}개 무시"
                             )
                             continue
 

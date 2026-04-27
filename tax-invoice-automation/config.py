@@ -263,6 +263,22 @@ def is_blocked_tax_invoice_url(url: str) -> bool:
     return False
 
 
+def url_looks_like_blocked_marketplace(url: str) -> bool:
+    """
+    Qoo10·쇼핑 URL 등: detect_platform()에서 화물맨/원콜 등 키워드 오인 전에 1차 차단.
+    """
+    if not url or not isinstance(url, str):
+        return False
+    u = url.lower()
+    for pat in EMAIL_FILTER.get("tax_invoice_url_blocklist", []):
+        if pat and pat.lower() in u:
+            return True
+    for pat in EMAIL_FILTER.get("tax_platform_exclude_substrings", []):
+        if pat and pat.lower() in u:
+            return True
+    return False
+
+
 def is_excluded_tax_platform(platform: str) -> bool:
     if not platform or not isinstance(platform, str):
         return False

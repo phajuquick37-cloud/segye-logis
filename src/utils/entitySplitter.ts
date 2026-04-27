@@ -2,6 +2,7 @@ import {
   RawRow,
   isBlankCreditClientName,
   normalizeCreditClientCell,
+  normalizeCreditNameForLink,
   isCreditPaymentForSettlement,
 } from "./sheetParser";
 
@@ -176,7 +177,7 @@ export function aggregateToRecords(
   const map = new Map<string, AggregatedRecord>();
 
   rows.forEach((row) => {
-    const cn = normalizeCreditClientCell(row.clientName);
+    const cn = normalizeCreditNameForLink(String(row.clientName ?? ""));
     if (isBlankCreditClientName(cn)) return;
 
     // billing_month: 파일 날짜에서 추출, 없으면 override 사용
