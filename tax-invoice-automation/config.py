@@ -47,26 +47,35 @@ _TAX_NUMBER_SENDER_RE = _re.compile(r"@tax\d{1,3}\.", _re.IGNORECASE)
 # subject_keywords용 tax10 ~ tax40 (제목에 tax16 등만 있는 알림 대비)
 _SUBJECT_TAX_NUMBERS = [f"tax{n}" for n in range(10, 41)]
 
-# --- Gmail IMAP (앱 비밀번호는 공백 없이 넣어도 됨) ---
+# --- IMAP (Gmail·Daum 한메일 등, 앱 비밀번호는 공백 없이 넣어도 됨) ---
 _imap_pw = _env("TAX_IMAP_APP_PASSWORD") or _env("GMAIL_APP_PASSWORD")
 _imap_pw_norm = _imap_pw.replace(" ", "") if _imap_pw else ""
 
+_IMAP_EMAIL = (_env("TAX_IMAP_EMAIL") or _env("GMAIL_USER") or "").strip().lower()
+_imap_srv_override = _env("TAX_IMAP_SERVER")
+if _imap_srv_override:
+    _IMAP_SERVER = _imap_srv_override
+elif _IMAP_EMAIL.endswith(("@daum.net", "@hanmail.net")):
+    _IMAP_SERVER = "imap.daum.net"
+else:
+    _IMAP_SERVER = "imap.gmail.com"
+
 EMAIL_CONFIG = {
-    "imap_server": _env("TAX_IMAP_SERVER", "imap.gmail.com"),
+    "imap_server": _IMAP_SERVER,
     "imap_port": _env_int("TAX_IMAP_PORT", 993),
     "email_address": _env("TAX_IMAP_EMAIL") or _env("GMAIL_USER"),
     "app_password": _imap_pw_norm,
 }
 
 # --- 이메일 필터 ---
-_EMAIL_DAYS = _env("TAX_EMAIL_DAYS_LIMIT", "365")
+_EMAIL_DAYS = _env("TAX_EMAIL_DAYS_LIMIT", "1825")
 try:
     _EMAIL_DAYS_INT = max(1, min(3650, int(_EMAIL_DAYS)))
 except ValueError:
-    _EMAIL_DAYS_INT = 365
+    _EMAIL_DAYS_INT = 1825
 
-# 메일함 전역 하한 (예: 2026-04-10부터 재스캔). 환경 변수를 빈 값으로 두면 days_limit만 사용.
-_SINCE_MIN_RAW = _env("TAX_EMAIL_SINCE_MIN", "2026-04-10")
+# 메일함 전역 하한. 비우면(기본) IMAP SINCE = 오늘−days_limit 만 사용 → 과거(예: 2024) 메일도 포함.
+_SINCE_MIN_RAW = _env("TAX_EMAIL_SINCE_MIN", "")
 _IMAP_SINCE_MIN_DATE = None
 if _SINCE_MIN_RAW.strip():
     try:
@@ -78,7 +87,13 @@ if _SINCE_MIN_RAW.strip():
     except Exception:
         _IMAP_SINCE_MIN_DATE = None
 
-_imap_folders_raw = _env("TAX_IMAP_FOLDERS", "INBOX,[Gmail]/All Mail")
+# Gmail은 보조함까지 보려면 [Gmail]/All Mail; Daum은 INBOX 위주 (없는 폴더는 스킵)
+_default_imap_folders = (
+    "INBOX"
+    if _IMAP_EMAIL.endswith(("@daum.net", "@hanmail.net"))
+    else "INBOX,[Gmail]/All Mail"
+)
+_imap_folders_raw = _env("TAX_IMAP_FOLDERS", _default_imap_folders)
 _IMAP_FOLDERS = [x.strip() for x in _imap_folders_raw.split(",") if x.strip()]
 
 # 필수 우선 수집: 발신·제목·본문(HTML/텍스트)에 있으면 발신 도메인 제한 없이 2차 검증(수신·차단)만 통과하면 수집
@@ -86,6 +101,8 @@ _PRIORITY_TAX_KEYWORDS = [
     "원콜",
     "24시콜",
     "화물맨",
+    "전자세금계산서",
+    "스마트빌",
     "로지노트",
     "세금계산서",
     "tax",  # \b 단어 경계 (차단 메일은 is_blocked_invoice_email 에서 제거)
@@ -99,7 +116,7 @@ _PRIORITY_TAX_KEYWORDS = [
 EMAIL_FILTER = {
     "priority_keywords": _PRIORITY_TAX_KEYWORDS,
     "subject_keywords": [
-        "세금계산서", "전자세금계산서", "계산서 발행", "계산서발행",
+        "세금계산서", "전자세금계산서", "스마트빌", "계산서 발행", "계산서발행",
         "ONEBILL", "화물맨", "로지노트", "로지노트플러스", "로지노트 플러스",
         "logynote plus", "loginote plus",
         "전국24시", "24시콜",

@@ -326,8 +326,13 @@ class EmailReader:
                         # ── 3순위: 공급받는자 검증 (세계로지스 발행분만) ───────────
                         recipient_kws = EMAIL_FILTER.get("recipient_keywords", [])
                         if recipient_kws:
-                            body_all = (body["html"] + body["text"]).lower()
-                            if not any(rk.lower() in body_all for rk in recipient_kws):
+                            # 제목에만 '(주)세계로지스님에게' 등이 있어도 수신 건으로 인정 (한메일·알림톡 HTML)
+                            recipient_blob = (
+                                subject + body["html"] + body["text"]
+                            ).lower()
+                            if not any(
+                                rk.lower() in recipient_blob for rk in recipient_kws
+                            ):
                                 logger.info(
                                     f"⏭ 수신자 미일치 (세계로지스 미포함) — 제목: [{subject[:40]}]"
                                 )
