@@ -5,9 +5,13 @@
 
 import os as _os
 import re as _re
+from datetime import date as _date
 from datetime import datetime as _dt
+from datetime import timedelta as _timedelta
+from zoneinfo import ZoneInfo
 
 _BASE_DIR = _os.path.dirname(_os.path.abspath(__file__))
+_TZ_SEOUL = ZoneInfo("Asia/Seoul")
 
 
 def _env(key: str, default: str = "") -> str:
@@ -100,12 +104,41 @@ if _SINCE_MIN_RAW.strip():
     except Exception:
         _IMAP_SINCE_MIN_DATE = None
 
-# Cloud Run / 스케줄러: 매 1시간(분 단위, 기본 60)
+# Cloud Run / 스케줄러: 매 1시간(분 단위, 기본 60) — API 서버 시작 시 APScheduler
 SCHEDULE_INTERVAL_MINUTES = _env_int("TAX_SCHEDULE_INTERVAL_MINUTES", 60)
 if SCHEDULE_INTERVAL_MINUTES < 5:
     SCHEDULE_INTERVAL_MINUTES = 5
 if SCHEDULE_INTERVAL_MINUTES > 24 * 60:
     SCHEDULE_INTERVAL_MINUTES = 24 * 60
+
+# IMAP·수신일: 서울 기준 (오늘−N일) ~ … , 단 TAX_EMAIL_SINCE_MIN 이 더 늦은 날이면 그날을 바닥으로
+TAX_MAIL_LOOKBACK_DAYS = _env_int("TAX_MAIL_LOOKBACK_DAYS", 30)
+if TAX_MAIL_LOOKBACK_DAYS < 1:
+    TAX_MAIL_LOOKBACK_DAYS = 1
+if TAX_MAIL_LOOKBACK_DAYS > 120:
+    TAX_MAIL_LOOKBACK_DAYS = 120
+
+# Firestore 저장: 추출한 발행일(YYYY-MM-DD)이 오늘(KST) 이상일 때만 (과거 전표 제외)
+TAX_INVOICE_ISSUE_FROM_TODAY_ONLY = _env_bool(
+    "TAX_INVOICE_ISSUE_FROM_TODAY_ONLY", True
+)
+
+
+def today_kst_date() -> _date:
+    """서울 달력 기준 오늘(저장·발행일 비교용)."""
+    return _dt.now(_TZ_SEOUL).date()
+
+
+def get_effective_mail_window_start_date() -> _date:
+    """
+    IMAP SINCE / 메일 Date 필터의 시작일.
+    매 실행마다 갱신: max(TAX_EMAIL_SINCE_MIN, 오늘_KST − lookback).
+    """
+    today = today_kst_date()
+    w = today - _timedelta(days=TAX_MAIL_LOOKBACK_DAYS)
+    if _IMAP_SINCE_MIN_DATE is not None and w < _IMAP_SINCE_MIN_DATE:
+        w = _IMAP_SINCE_MIN_DATE
+    return w
 
 # Gmail은 보조함까지 보려면 [Gmail]/All Mail; Daum은 INBOX 위주 (없는 폴더는 스킵)
 _default_imap_folders = (
@@ -291,13 +324,12 @@ def tax_priority_keywords_match(
 
 
 def get_imap_since_date_str(days_limit: int) -> str:
-    """IMAP SINCE용 날짜 (DD-Mon-YYYY). TAX_EMAIL_SINCE_MIN이 있으면 그날부터만 검색."""
-    from datetime import datetime, timedelta
-
-    if EMAIL_FILTER.get("imap_since_min_date"):
-        d = EMAIL_FILTER["imap_since_min_date"]
-    else:
-        d = (datetime.now() - timedelta(days=max(1, days_limit))).date()
+    """
+    IMAP SINCE용 날짜 (DD-Mon-YYYY).
+    고정 import값 대신: 매 호출마다 get_effective_mail_window_start_date() 사용.
+    (days_limit 인자는 하위 호환용으로 남김, 무시)
+    """
+    d = get_effective_mail_window_start_date()
     return d.strftime("%d-%b-%Y")
 
 

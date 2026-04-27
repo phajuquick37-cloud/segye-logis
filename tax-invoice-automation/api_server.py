@@ -16,7 +16,14 @@ from datetime import datetime
 from fastapi import FastAPI, BackgroundTasks, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from config import SCHEDULE_INTERVAL_MINUTES, EMAIL_FILTER
+from config import (
+    SCHEDULE_INTERVAL_MINUTES,
+    EMAIL_FILTER,
+    today_kst_date,
+    get_effective_mail_window_start_date,
+    TAX_INVOICE_ISSUE_FROM_TODAY_ONLY,
+    TAX_MAIL_LOOKBACK_DAYS,
+)
 from scheduler import start_scheduler, stop_scheduler, get_next_run
 from pipeline import run_pipeline, is_running
 
@@ -56,8 +63,9 @@ async def startup():
         )
     start_scheduler(interval_minutes=SCHEDULE_INTERVAL_MINUTES)
     logger.info(
-        f"서버 시작 + 스케줄러 가동 (매 {SCHEDULE_INTERVAL_MINUTES}분, "
-        f"수집 시작일≧{EMAIL_FILTER.get('imap_since_min_date') or '제한없음'})"
+        f"서버 시작 + 스케줄러 가동: 매 {SCHEDULE_INTERVAL_MINUTES}분, "
+        f"KST오늘={today_kst_date()}, 메일창={get_effective_mail_window_start_date()}~, "
+        f"저장=발행일≧오늘(KST)={TAX_INVOICE_ISSUE_FROM_TODAY_ONLY}"
     )
 
     # 서버 시작 직후 즉시 1회 수집 (60분 대기 없이 바로 시작)
@@ -96,6 +104,7 @@ async def health():
 @app.get("/api/status")
 async def status():
     m = EMAIL_FILTER.get("imap_since_min_date")
+    wstart = get_effective_mail_window_start_date()
     return {
         "status": "ok",
         "running": is_running(),
@@ -103,6 +112,10 @@ async def status():
         "server_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "schedule_interval_minutes": SCHEDULE_INTERVAL_MINUTES,
         "collection_min_received": str(m) if m else None,
+        "today_kst": str(today_kst_date()),
+        "mail_window_start_kst": str(wstart),
+        "mail_lookback_days": TAX_MAIL_LOOKBACK_DAYS,
+        "save_only_issue_date_gte_today_kst": TAX_INVOICE_ISSUE_FROM_TODAY_ONLY,
     }
 
 

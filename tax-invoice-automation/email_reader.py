@@ -25,6 +25,7 @@ from config import (
     tax_priority_keywords_match,
     matches_worldlogis_invoice_subject,
     get_imap_since_date_str,
+    get_effective_mail_window_start_date,
 )
 
 logger = logging.getLogger(__name__)
@@ -341,7 +342,7 @@ class EmailReader:
                         except Exception:
                             received_date = datetime.now()
 
-                        min_recv = EMAIL_FILTER.get("min_received_date")
+                        min_recv = get_effective_mail_window_start_date()
                         if min_recv and received_date.date() < min_recv:
                             logger.info(
                                 f"⏭ 수신일이 수집 시작 이전 — {received_date.date()} < {min_recv} — {subject[:40]}"

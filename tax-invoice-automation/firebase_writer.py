@@ -9,7 +9,8 @@ import hashlib
 import logging
 import mimetypes
 import os
-from datetime import datetime, timezone
+import re
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -17,6 +18,22 @@ from typing import Dict, List, Optional
 _BASE_DIR = Path(__file__).parent
 
 logger = logging.getLogger(__name__)
+
+_DATE_RE = re.compile(r"(\d{4})-(\d{1,2})-(\d{1,2})")
+
+
+def _parse_issue_date_ymd(raw: str) -> date | None:
+    """OCR/추출 문자열에서 YYYY-MM-DD → date, 실패 시 None."""
+    if not raw or not isinstance(raw, str):
+        return None
+    m = _DATE_RE.search(raw.strip())
+    if not m:
+        return None
+    try:
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        return date(y, mo, d)
+    except ValueError:
+        return None
 
 # Firebase Admin SDK는 import 시점에 초기화
 _firestore_client = None
@@ -141,9 +158,11 @@ def save_invoice(result: Dict) -> Optional[str]:
 
     try:
         from config import (
+            TAX_INVOICE_ISSUE_FROM_TODAY_ONLY,
             is_blocked_tax_invoice_url,
             is_excluded_tax_platform,
             is_blocked_invoice_email,
+            today_kst_date,
         )
 
         if is_blocked_invoice_email(
@@ -164,6 +183,16 @@ def save_invoice(result: Dict) -> Optional[str]:
             logger.info(f"Firestore 저장 생략 (차단 URL 또는 제외 플랫폼): {platform} | {src_url[:60]}")
             return None
         invoice_date = record.get("issue_date") or datetime.now().strftime("%Y-%m-%d")
+
+        if TAX_INVOICE_ISSUE_FROM_TODAY_ONLY:
+            pdate = _parse_issue_date_ymd(invoice_date)
+            tday = today_kst_date()
+            if pdate is not None and pdate < tday:
+                logger.info(
+                    f"Firestore 저장 생략: 발행일 {pdate} < 오늘(KST) {tday} — "
+                    f"{(result.get('email_subject') or '')[:45]}"
+                )
+                return None
 
         ingest_fp = make_ingest_fingerprint(
             result.get("rfc_message_id") or "",

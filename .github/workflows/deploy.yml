@@ -53,4 +53,4 @@ jobs:
             --concurrency=1 \
             --min-instances=1 \
             --max-instances=1 \
-            --update-env-vars="TAX_COLLECT_SECRET=${TAX_COLLECT_SECRET},TAX_EMAIL_SINCE_MIN=2026-04-10,TAX_INVOICE_SUBJECT_STRICT=true"
+            --update-env-vars="TAX_COLLECT_SECRET=${TAX_COLLECT_SECRET},TAX_EMAIL_SINCE_MIN=2026-04-10,TAX_INVOICE_SUBJECT_STRICT=true,TAX_SCHEDULE_INTERVAL_MINUTES=60,TAX_MAIL_LOOKBACK_DAYS=30,TAX_INVOICE_ISSUE_FROM_TODAY_ONLY=true"
