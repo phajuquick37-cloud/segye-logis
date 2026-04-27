@@ -30,9 +30,7 @@ jobs:
           set -e
           IMG=asia-northeast3-docker.pkg.dev/gen-lang-client-0127550748/tax-automation/tax-automation
           gcloud builds submit ./tax-invoice-automation \
-            --region=asia-northeast3 \
             --tag ${IMG}:${{ github.sha }} \
-            --tag ${IMG}:latest \
             --project=gen-lang-client-0127550748 \
             --timeout=1200s
 
