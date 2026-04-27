@@ -21,7 +21,7 @@ from config import (
     EMAIL_FILTER,
     today_kst_date,
     get_effective_mail_window_start_date,
-    TAX_INVOICE_ISSUE_FROM_TODAY_ONLY,
+    get_min_issue_date_for_save,
     TAX_MAIL_LOOKBACK_DAYS,
 )
 from scheduler import start_scheduler, stop_scheduler, get_next_run
@@ -65,7 +65,7 @@ async def startup():
     logger.info(
         f"서버 시작 + 스케줄러 가동: 매 {SCHEDULE_INTERVAL_MINUTES}분, "
         f"KST오늘={today_kst_date()}, 메일창={get_effective_mail_window_start_date()}~, "
-        f"저장=발행일≧오늘(KST)={TAX_INVOICE_ISSUE_FROM_TODAY_ONLY}"
+        f"저장=발행일≧{get_min_issue_date_for_save() or '하한없음'}"
     )
 
     # 서버 시작 직후 즉시 1회 수집 (60분 대기 없이 바로 시작)
@@ -105,6 +105,7 @@ async def health():
 async def status():
     m = EMAIL_FILTER.get("imap_since_min_date")
     wstart = get_effective_mail_window_start_date()
+    floor = get_min_issue_date_for_save()
     return {
         "status": "ok",
         "running": is_running(),
@@ -115,7 +116,7 @@ async def status():
         "today_kst": str(today_kst_date()),
         "mail_window_start_kst": str(wstart),
         "mail_lookback_days": TAX_MAIL_LOOKBACK_DAYS,
-        "save_only_issue_date_gte_today_kst": TAX_INVOICE_ISSUE_FROM_TODAY_ONLY,
+        "min_invoice_issue_date": str(floor) if floor else None,
     }
 
 

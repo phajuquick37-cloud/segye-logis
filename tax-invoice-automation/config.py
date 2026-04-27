@@ -118,15 +118,17 @@ if TAX_MAIL_LOOKBACK_DAYS < 1:
 if TAX_MAIL_LOOKBACK_DAYS > 120:
     TAX_MAIL_LOOKBACK_DAYS = 120
 
-# Firestore 저장: 추출한 발행일(YYYY-MM-DD)이 오늘(KST) 이상일 때만 (과거 전표 제외)
-TAX_INVOICE_ISSUE_FROM_TODAY_ONLY = _env_bool(
-    "TAX_INVOICE_ISSUE_FROM_TODAY_ONLY", True
-)
-
-
 def today_kst_date() -> _date:
-    """서울 달력 기준 오늘(저장·발행일 비교용)."""
+    """서울 달력 기준 오늘(로그·상태 확인용)."""
     return _dt.now(_TZ_SEOUL).date()
+
+
+def get_min_issue_date_for_save() -> _date | None:
+    """
+    Firestore/홈에 쌓을 최소 발행일 = TAX_EMAIL_SINCE_MIN 과 동일(예: 2026-04-10).
+    그 이전 날짜로 추출된 전표는 저장하지 않음. 환경에서 하한이 비면(None) 발행일 필터 없음.
+    """
+    return _IMAP_SINCE_MIN_DATE
 
 
 def get_effective_mail_window_start_date() -> _date:

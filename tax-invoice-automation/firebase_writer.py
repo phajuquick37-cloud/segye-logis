@@ -158,11 +158,10 @@ def save_invoice(result: Dict) -> Optional[str]:
 
     try:
         from config import (
-            TAX_INVOICE_ISSUE_FROM_TODAY_ONLY,
+            get_min_issue_date_for_save,
             is_blocked_tax_invoice_url,
             is_excluded_tax_platform,
             is_blocked_invoice_email,
-            today_kst_date,
         )
 
         if is_blocked_invoice_email(
@@ -184,12 +183,13 @@ def save_invoice(result: Dict) -> Optional[str]:
             return None
         invoice_date = record.get("issue_date") or datetime.now().strftime("%Y-%m-%d")
 
-        if TAX_INVOICE_ISSUE_FROM_TODAY_ONLY:
+        floor = get_min_issue_date_for_save()
+        if floor is not None:
             pdate = _parse_issue_date_ymd(invoice_date)
-            tday = today_kst_date()
-            if pdate is not None and pdate < tday:
+            if pdate is not None and pdate < floor:
                 logger.info(
-                    f"Firestore 저장 생략: 발행일 {pdate} < 오늘(KST) {tday} — "
+                    f"Firestore 저장 생략: 발행일 {pdate} < "
+                    f"TAX_EMAIL_SINCE_MIN(최소발행) {floor} — "
                     f"{(result.get('email_subject') or '')[:45]}"
                 )
                 return None
