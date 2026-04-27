@@ -59,8 +59,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ error: "필수 파라미터 누락 (to, clientName, billingMonth)" });
   }
 
-  const gmailUser = process.env.GMAIL_USER;
-  const gmailPass = process.env.GMAIL_APP_PASSWORD;
+  const gmailUser = (process.env.GMAIL_USER || "").trim();
+  const gmailPass = (process.env.GMAIL_APP_PASSWORD || "").replace(/\s/g, "");
   if (!gmailUser || !gmailPass) {
     return res.status(500).json({
       error: "서버 환경 변수(GMAIL_USER, GMAIL_APP_PASSWORD)가 설정되지 않았습니다.",
@@ -232,14 +232,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 </body>
 </html>`;
 
-  // ── Nodemailer 트랜스포터 ──
-  const transporter = nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-      user: gmailUser,
-      pass: gmailPass,
-    },
-  });
+  // ── Nodemailer 트랜스포터 (Gmail: service / 한메일·다음: smtp.daum.net) ──
+  const lowerUser = gmailUser.toLowerCase();
+  const isDaumFamily =
+    lowerUser.endsWith("@daum.net") || lowerUser.endsWith("@hanmail.net");
+  const transporter = nodemailer.createTransport(
+    isDaumFamily
+      ? {
+          host: "smtp.daum.net",
+          port: 465,
+          secure: true,
+          auth: { user: gmailUser, pass: gmailPass },
+        }
+      : {
+          service: "gmail",
+          auth: { user: gmailUser, pass: gmailPass },
+        }
+  );
 
   // ── 첨부 파일 (CID 인라인 이미지) ──
   type Attachment = Parameters<typeof transporter.sendMail>[0]["attachments"] extends (infer T)[] | undefined ? T : never;
