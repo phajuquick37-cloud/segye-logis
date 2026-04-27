@@ -34,13 +34,36 @@ jobs:
           docker build -t "${IMG}:${{ github.sha }}" ./tax-invoice-automation
           docker push "${IMG}:${{ github.sha }}"
 
-      # --update-env-vars 는 기존 Cloud Run 변수(IMAP 등)를 지우지 않고 병합합니다.
+      # 쉼표/따옴표가 섞인 TAX_COLLECT_SECRET 등은 CLI 한 줄 --update-env-vars에서 깨질 수 있음.
+      # YAML 파일로 병합 업데이트(기존 IMAP·Firebase 등 콘솔 변수 유지).
       - name: Cloud Run 배포
         env:
           TAX_COLLECT_SECRET: ${{ secrets.TAX_COLLECT_SECRET }}
         run: |
           set -e
           IMG=asia-northeast3-docker.pkg.dev/gen-lang-client-0127550748/tax-automation/tax-automation
+          python3 <<'PY'
+          import os
+          def q(v: str) -> str:
+              s = v if v is not None else ""
+              s = str(s)
+              s = s.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "")
+              s = s.replace('"', '\\"')
+              return f'"{s}"'
+          out = {
+              "TAX_COLLECT_SECRET": os.environ.get("TAX_COLLECT_SECRET", "") or "",
+              "TAX_EMAIL_SINCE_MIN": "2026-04-10",
+              "TAX_INVOICE_SUBJECT_STRICT": "true",
+              "TAX_SCHEDULE_INTERVAL_MINUTES": "60",
+              "TAX_MAIL_LOOKBACK_DAYS": "30",
+              "TAX_REQUIRE_ETAX_OR_NTS_SIGNAL": "true",
+          }
+          path = os.environ.get("CR_ENV_FILE", "/tmp/cr-env.yaml")
+          with open(path, "w", encoding="utf-8") as f:
+              for k, v in out.items():
+                  f.write(f"{k}: {q(v)}\n")
+          print("Wrote", path, "for keys:", list(out.keys()))
+          PY
           gcloud run deploy tax-automation \
             --image ${IMG}:${{ github.sha }} \
             --region=asia-northeast3 \
@@ -53,4 +76,4 @@ jobs:
             --concurrency=1 \
             --min-instances=1 \
             --max-instances=1 \
-            --update-env-vars="TAX_COLLECT_SECRET=${TAX_COLLECT_SECRET},TAX_EMAIL_SINCE_MIN=2026-04-10,TAX_INVOICE_SUBJECT_STRICT=true,TAX_SCHEDULE_INTERVAL_MINUTES=60,TAX_MAIL_LOOKBACK_DAYS=30"
+            --update-env-vars-file=/tmp/cr-env.yaml

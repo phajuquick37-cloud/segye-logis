@@ -18,7 +18,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import (
     SCHEDULE_INTERVAL_MINUTES,
+    EMAIL_CONFIG,
     EMAIL_FILTER,
+    FIREBASE_ADMIN_CONFIG,
+    TAX_EMAIL_SINCE_MIN_RAW,
+    TAX_REQUIRE_ETAX_OR_NTS_SIGNAL,
     today_kst_date,
     get_effective_mail_window_start_date,
     get_min_issue_date_for_save,
@@ -106,6 +110,10 @@ async def status():
     m = EMAIL_FILTER.get("imap_since_min_date")
     wstart = get_effective_mail_window_start_date()
     floor = get_min_issue_date_for_save()
+    imap_addr = (EMAIL_CONFIG.get("email_address") or "").strip()
+    imap_pwd = (EMAIL_CONFIG.get("app_password") or "").strip()
+    cred_path = (FIREBASE_ADMIN_CONFIG.get("credentials_file") or "").strip()
+    cred_ok = bool(cred_path) and os.path.isfile(cred_path)
     return {
         "status": "ok",
         "running": is_running(),
@@ -113,10 +121,20 @@ async def status():
         "server_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "schedule_interval_minutes": SCHEDULE_INTERVAL_MINUTES,
         "collection_min_received": str(m) if m else None,
+        "tax_email_since_min": TAX_EMAIL_SINCE_MIN_RAW or None,
         "today_kst": str(today_kst_date()),
         "mail_window_start_kst": str(wstart),
         "mail_lookback_days": TAX_MAIL_LOOKBACK_DAYS,
         "min_invoice_issue_date": str(floor) if floor else None,
+        "invoice_subject_strict": bool(
+            EMAIL_FILTER.get("invoice_subject_strict", True)
+        ),
+        "require_etax_or_nts_signal": TAX_REQUIRE_ETAX_OR_NTS_SIGNAL,
+        "imap_configured": bool(imap_addr and imap_pwd),
+        "imap_server": (EMAIL_CONFIG.get("imap_server") or "").strip() or None,
+        "firebase_project_id": FIREBASE_ADMIN_CONFIG.get("project_id") or None,
+        "firestore_database_id": FIREBASE_ADMIN_CONFIG.get("database_id") or None,
+        "google_credentials_file_present": cred_ok,
     }
 
 

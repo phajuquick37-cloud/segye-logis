@@ -104,6 +104,9 @@ if _SINCE_MIN_RAW.strip():
     except Exception:
         _IMAP_SINCE_MIN_DATE = None
 
+# /api/status 등에서 표시(리포지토리 기본 하한과 동일 의미)
+TAX_EMAIL_SINCE_MIN_RAW = _SINCE_MIN_RAW
+
 # Cloud Run / 스케줄러: 매 1시간(분 단위, 기본 60) — API 서버 시작 시 APScheduler
 SCHEDULE_INTERVAL_MINUTES = _env_int("TAX_SCHEDULE_INTERVAL_MINUTES", 60)
 if SCHEDULE_INTERVAL_MINUTES < 5:
@@ -246,6 +249,9 @@ EMAIL_FILTER = {
     "invoice_subject_strict": _env_bool("TAX_INVOICE_SUBJECT_STRICT", True),
 }
 
+# True(기본): 국세청·전자세금계산서 등 공식 전자고지/홈택스 계열만 수집(스팸 완화). 알려진 운송 플랫폼 발신은 생략.
+TAX_REQUIRE_ETAX_OR_NTS_SIGNAL = _env_bool("TAX_REQUIRE_ETAX_OR_NTS_SIGNAL", True)
+
 
 def is_blocked_tax_invoice_url(url: str) -> bool:
     if not url or not isinstance(url, str):
@@ -365,6 +371,35 @@ def recipient_keyword_required(from_addr: str) -> bool:
     if is_carrier_trusted_from_address(from_addr):
         return False
     return True
+
+
+def passes_etax_or_nts_spam_guard(
+    from_addr: str,
+    subject: str,
+    body_html: str = "",
+    body_text: str = "",
+) -> bool:
+    """
+    본문·제목에 '전자세금계산서' / '국세청' / 홈택스(go.kr) 등이 없으면 제외(알려진 캐리어 발신은 예외).
+    """
+    if not TAX_REQUIRE_ETAX_OR_NTS_SIGNAL:
+        return True
+    if sender_matches_allowed_platforms(from_addr):
+        return True
+    compact = _re.sub(
+        r"[\s\u200b\xa0]+", "", f"{subject}\n{body_html}\n{body_text}"
+    )
+    blob = f"{subject}\n{body_html}\n{body_text}"
+    b = blob.lower()
+    if "전자세금계산서" in compact or "전자세금계산서" in blob:
+        return True
+    if "국세청" in blob or "국세청" in compact:
+        return True
+    if "hometax.go.kr" in b or "teet.hometax" in b:
+        return True
+    if "전자세금" in compact and "계산서" in compact:
+        return True
+    return False
 
 
 def matches_worldlogis_invoice_subject(subject: str) -> bool:

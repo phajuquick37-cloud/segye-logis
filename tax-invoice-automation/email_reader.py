@@ -24,6 +24,7 @@ from config import (
     recipient_keyword_required,
     tax_priority_keywords_match,
     matches_worldlogis_invoice_subject,
+    passes_etax_or_nts_spam_guard,
     get_imap_since_date_str,
     get_effective_mail_window_start_date,
 )
@@ -336,6 +337,15 @@ class EmailReader:
                                     from_addr
                                 ):
                                     continue
+
+                        if not passes_etax_or_nts_spam_guard(
+                            from_addr, subject, body["html"], body["text"]
+                        ):
+                            logger.info(
+                                f"⏭ 전자세금/국세청·홈택스 신호 없음(스팸 강화) — "
+                                f"[{subject[:50]}…]"
+                            )
+                            continue
 
                         try:
                             received_date = parsedate_to_datetime(date_str)
