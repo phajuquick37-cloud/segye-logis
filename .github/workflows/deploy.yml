@@ -1,6 +1,5 @@
 name: Deploy to Cloud Run
 
-# master 브랜치에 push 될 때마다 자동 실행
 on:
   push:
     branches:
@@ -24,15 +23,26 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
-      # GitHub 러너에서 AR로 `docker push`할 때 권한이 꼬이는 경우가 많아,
-      # Google Cloud Build가 소스로 이미지를 빌드·푸시·배포하도록 --source 를 사용한다.
-      # (콘솔: Cloud Build API, Cloud Run API, Artifact Registry API 활성화)
-      - name: Deploy to Cloud Run (Cloud Build, Dockerfile in tax-invoice-automation/)
+      # Cloud Build SA([PROJECT]@cloudbuild.gserviceaccount.com)에
+      # Artifact Registry tax-automation 저장소 Writer 권한이 있어야 푸시됩니다.
+      - name: Cloud Build — Docker 이미지 빌드 및 AR 푸시
+        run: |
+          set -e
+          IMG=asia-northeast3-docker.pkg.dev/gen-lang-client-0127550748/tax-automation/tax-automation
+          gcloud builds submit ./tax-invoice-automation \
+            --tag ${IMG}:${{ github.sha }} \
+            --tag ${IMG}:latest \
+            --project=gen-lang-client-0127550748 \
+            --timeout=1200s
+
+      - name: Cloud Run 배포
         env:
           TAX_COLLECT_SECRET: ${{ secrets.TAX_COLLECT_SECRET }}
         run: |
+          set -e
+          IMG=asia-northeast3-docker.pkg.dev/gen-lang-client-0127550748/tax-automation/tax-automation
           gcloud run deploy tax-automation \
-            --source=./tax-invoice-automation \
+            --image ${IMG}:${{ github.sha }} \
             --region=asia-northeast3 \
             --project=gen-lang-client-0127550748 \
             --platform=managed \
@@ -43,5 +53,4 @@ jobs:
             --concurrency=1 \
             --min-instances=1 \
             --max-instances=1 \
-            --set-env-vars="TAX_COLLECT_SECRET=${TAX_COLLECT_SECRET}" \
-            --quiet
+            --set-env-vars="TAX_COLLECT_SECRET=${TAX_COLLECT_SECRET}"
