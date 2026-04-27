@@ -81,10 +81,19 @@ if _SINCE_MIN_RAW.strip():
 _imap_folders_raw = _env("TAX_IMAP_FOLDERS", "INBOX,[Gmail]/All Mail")
 _IMAP_FOLDERS = [x.strip() for x in _imap_folders_raw.split(",") if x.strip()]
 
-# 필수 우선 수집: 발신자·제목에 있으면 발신 도메인 제한 없이 2차 검증(세계로지스 등)만 통과하면 수집
+# 필수 우선 수집: 발신·제목·본문(HTML/텍스트)에 있으면 발신 도메인 제한 없이 2차 검증(수신·차단)만 통과하면 수집
 _PRIORITY_TAX_KEYWORDS = [
-    "원콜", "24시콜", "화물맨", "로지노트", "세금계산서",
-    "tax",  # 제목·발신에 포함 (차단 메일은 아래 블록에서 걸러짐)
+    "원콜",
+    "24시콜",
+    "화물맨",
+    "로지노트",
+    "세금계산서",
+    "tax",  # \b 단어 경계 (차단 메일은 is_blocked_invoice_email 에서 제거)
+    # 세계로지스 수신·발행 안내 본문(띄어쓰기가 어긋나도 compact 매칭으로 처리)
+    "세계로지스앞으로 발행된 세금계산서",
+    "세계로지스 앞으로 발행된 세금계산서",
+    "세계로지스에게 발행된 세금계산서",
+    "세계로지스 귀하로 발행된",
 ]
 
 EMAIL_FILTER = {
@@ -202,10 +211,18 @@ def is_blocked_invoice_email(
     return False
 
 
-def tax_priority_keywords_match(from_addr: str, subject: str) -> bool:
-    """원콜·화물맨·24시콜·로지노트·세금·tax — 발신 또는 제목."""
-    blob = f"{from_addr}\n{subject}"
+def tax_priority_keywords_match(
+    from_addr: str,
+    subject: str,
+    body_html: str = "",
+    body_text: str = "",
+) -> bool:
+    """원콜·24시콜·화물맨·로지노트·세금·tax·세계로지스 발행 문구 — 발신·제목·본문 전체."""
+    blob = f"{from_addr}\n{subject}\n{body_html}\n{body_text}"
     blob_l = blob.lower()
+    # HTML 랩/본문에서 공백만 다른 동일 문구 매칭
+    compact = _re.sub(r"[\s\u200b\xa0]+", "", blob)
+    compact_l = compact.lower()
     for kw in EMAIL_FILTER.get("priority_keywords", []):
         if not kw:
             continue
@@ -214,6 +231,11 @@ def tax_priority_keywords_match(from_addr: str, subject: str) -> bool:
                 return True
         else:
             if kw in blob or kw.lower() in blob_l:
+                return True
+            kw_compact = _re.sub(r"\s+", "", kw)
+            if len(kw_compact) >= 4 and (
+                kw_compact in compact or kw_compact.lower() in compact_l
+            ):
                 return True
     return False
 

@@ -300,7 +300,12 @@ class EmailReader:
                             )
                             continue
 
-                        priority = tax_priority_keywords_match(from_addr, subject)
+                        priority = tax_priority_keywords_match(
+                            from_addr,
+                            subject,
+                            body["html"],
+                            body["text"],
+                        )
                         allowed_sender = sender_matches_allowed_platforms(from_addr)
                         if not allowed_sender and not priority:
                             logger.info(
@@ -391,7 +396,14 @@ class EmailReader:
         # 우선 키워드(원콜·화물맨 등) 메일을 먼저 처리
         results.sort(
             key=lambda e: (
-                0 if tax_priority_keywords_match(e.get("from", ""), e.get("subject", "")) else 1,
+                0
+                if tax_priority_keywords_match(
+                    e.get("from", ""),
+                    e.get("subject", ""),
+                    e.get("html_body", ""),
+                    e.get("text_body", ""),
+                )
+                else 1,
                 e.get("date") or "",
             )
         )
