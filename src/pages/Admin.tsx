@@ -175,14 +175,24 @@ export default function Admin() {
     setTaxCollectLoading(true);
     setTaxCollectMessage("");
     try {
-      const headers: Record<string, string> = {};
+      const base = taxApiUrl.replace(/\/$/, "");
+      const headers: Record<string, string> = { Accept: "application/json" };
       if (secret) headers["X-Tax-Collect-Secret"] = secret;
-      const r = await fetch(`${taxApiUrl.replace(/\/$/, "")}/api/run`, { method: "POST", headers });
+      const r = await fetch(`${base}/api/run`, {
+        method: "POST",
+        mode: "cors",
+        headers,
+      });
       const j = (await r.json().catch(() => ({}))) as { detail?: string; message?: string };
       if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : `${r.status} ${r.statusText}`);
       setTaxCollectMessage(j.message || "수집을 시작했습니다. 잠시 후 목록이 갱신됩니다.");
     } catch (e) {
-      setTaxCollectMessage(`실패: ${e instanceof Error ? e.message : String(e)}`);
+      const raw = e instanceof Error ? e.message : String(e);
+      const hint =
+        /failed to fetch|networkerror|load failed/i.test(raw)
+          ? "연결 실패(주소·CORS·SSL). (1) Vercel·재배포 후 VITE_TAX_AUTOMATION_URL이 Cloud Run URL과 같은지 (2) tax-automation·Cloud Run을 최신 이미지로 배포했는지( CORS에 이 사이트 도메인 포함 ) (3) 시크릿이 맞는지"
+          : raw;
+      setTaxCollectMessage(`실패: ${hint}`);
     } finally {
       setTaxCollectLoading(false);
     }

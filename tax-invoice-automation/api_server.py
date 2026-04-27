@@ -38,18 +38,26 @@ TAX_COLLECT_SECRET = (os.environ.get("TAX_COLLECT_SECRET") or "").strip()
 app = FastAPI(title="세계로지스 세금계산서 API", version="2.0")
 
 # CORS: 관리자 페이지(커스텀 도메인·Vercel·로컬)에서 POST 허용
+# (Origin이 목록에 없으면 브라우저에서 "Failed to fetch"만 보임)
 _extra = [o.strip() for o in (os.environ.get("CORS_EXTRA_ORIGINS") or "").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://세계로지스.com",
+        "https://www.세계로지스.com",
         "https://xn--989ax3tm6gxob89q.com",
+        "https://www.xn--989ax3tm6gxob89q.com",
+        "https://15887185.co.kr",
+        "https://www.15887185.co.kr",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
         *_extra,
     ],
+    # Vercel(preview·production) 임의 서브도메인
     allow_origin_regex=r"https://.*\.vercel\.app",
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
