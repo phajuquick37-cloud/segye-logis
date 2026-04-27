@@ -27,9 +27,7 @@ jobs:
         uses: google-github-actions/setup-gcloud@v2
 
       # 4. Docker → Artifact Registry (asia-northeast3, gcr.io 대신)
-      - name: Enable Artifact Registry API
-        run: gcloud services enable artifactregistry.googleapis.com --project=gen-lang-client-0127550748
-
+      # Artifact Registry API는 GCP 콘솔에서 1회 활성화 필요 (CI SA에 serviceUsage.enable 권한이 없을 수 있음)
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker asia-northeast3-docker.pkg.dev --quiet
 
