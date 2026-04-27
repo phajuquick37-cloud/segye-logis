@@ -77,3 +77,13 @@ jobs:
             --min-instances=1 \
             --max-instances=1 \
             --update-env-vars-file=/tmp/cr-env.yaml
+
+      - name: Cloud Run public URL (Vercel에 넣을 값)
+        run: |
+          set -e
+          echo "=== 복사: VITE_TAX_AUTOMATION_URL ==="
+          gcloud run services describe tax-automation \
+            --region=asia-northeast3 \
+            --project=gen-lang-client-0127550748 \
+            --format='value(status.url)'
+          echo "==================================="
