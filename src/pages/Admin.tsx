@@ -166,33 +166,25 @@ export default function Admin() {
     : taxInvoices;
 
   const runTaxCollect = async () => {
-    const taxApiUrl = (import.meta.env.VITE_TAX_AUTOMATION_URL || "").trim();
-    const secret = (import.meta.env.VITE_TAX_AUTOMATION_SECRET || "").trim();
-    if (!taxApiUrl) {
-      setTaxCollectMessage("VITE_TAX_AUTOMATION_URL 이 없습니다. Cloud Run 서비스 URL을 빌드 환경에 설정하세요.");
+    if (!user || !isAdmin) {
+      setTaxCollectMessage("관리자만 실행할 수 있습니다.");
       return;
     }
     setTaxCollectLoading(true);
     setTaxCollectMessage("");
     try {
-      const base = taxApiUrl.replace(/\/$/, "");
-      const headers: Record<string, string> = { Accept: "application/json" };
-      if (secret) headers["X-Tax-Collect-Secret"] = secret;
-      const r = await fetch(`${base}/api/run`, {
+      const idToken = await user.getIdToken();
+      const r = await fetch("/api/tax-run", {
         method: "POST",
-        mode: "cors",
-        headers,
+        headers: { Authorization: `Bearer ${idToken}`, Accept: "application/json" },
       });
-      const j = (await r.json().catch(() => ({}))) as { detail?: string; message?: string };
-      if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : `${r.status} ${r.statusText}`);
+      const j = (await r.json().catch(() => ({}))) as { error?: string; message?: string; detail?: string };
+      if (!r.ok) {
+        throw new Error(j.error || (typeof j.detail === "string" ? j.detail : null) || `${r.status} ${r.statusText}`);
+      }
       setTaxCollectMessage(j.message || "수집을 시작했습니다. 잠시 후 목록이 갱신됩니다.");
     } catch (e) {
-      const raw = e instanceof Error ? e.message : String(e);
-      const hint =
-        /failed to fetch|networkerror|load failed/i.test(raw)
-          ? "연결 실패(주소·CORS·SSL). (1) Vercel·재배포 후 VITE_TAX_AUTOMATION_URL이 Cloud Run URL과 같은지 (2) tax-automation·Cloud Run을 최신 이미지로 배포했는지( CORS에 이 사이트 도메인 포함 ) (3) 시크릿이 맞는지"
-          : raw;
-      setTaxCollectMessage(`실패: ${hint}`);
+      setTaxCollectMessage(`실패: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setTaxCollectLoading(false);
     }
