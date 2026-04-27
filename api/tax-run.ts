@@ -1,8 +1,17 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import firebaseConfig from "../firebase-applet-config.json";
 
 /** Admin.tsx 의 ADMIN_EMAILS 와 동기화 */
 const ADMIN_EMAILS = new Set<string>(["phajuquick37@gmail.com", "staff@segyelogis.com"]);
+
+/** 웹 클라이언트 firebase 설정과 동일한 공개 Web API 키(이미 번들에 포함됨). Vercel 번들에서 JSON import 실패를 피하기 위해 상수 사용. */
+const FIREBASE_WEB_API_KEY_FALLBACK = "AIzaSyDHdqrSUeoTlBTL_AgDC1snFxc_LTIc9Hs";
+
+function getFirebaseWebApiKey(): string {
+  return (
+    (process.env.FIREBASE_WEB_API_KEY || process.env.VITE_FIREBASE_API_KEY || "").trim() ||
+    FIREBASE_WEB_API_KEY_FALLBACK
+  );
+}
 
 /** FastAPI detail은 문자열·객체·배열일 수 있음 — 항상 사람이 읽을 문자열로 */
 function formatCloudRunErrorBody(body: { detail?: unknown; message?: unknown }): string {
@@ -32,70 +41,92 @@ function formatCloudRunErrorBody(body: { detail?: unknown; message?: unknown }):
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  if (req.method !== "POST") {
-    if (req.method === "OPTIONS") return res.status(200).end();
-    return res.status(405).json({ error: "Method Not Allowed" });
-  }
-
-  const authz = (req.headers.authorization || "").trim();
-  const m = authz.match(/^Bearer\s+(.+)$/i);
-  const idToken = m ? m[1] : "";
-  if (!idToken) {
-    return res.status(401).json({ error: "로그인이 필요합니다." });
-  }
-
-  const key = (firebaseConfig as { apiKey?: string }).apiKey;
-  if (!key) {
-    return res.status(500).json({ error: "Firebase 설정 오류" });
-  }
-
-  const verify = await fetch(
-    `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${key}`,
-    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idToken }) }
-  );
-  const lookup = (await verify.json()) as { users?: { email?: string }[]; error?: { message: string } };
-  if (!verify.ok) {
-    return res.status(401).json({ error: "세션이 유효하지 않습니다. 다시 로그인하세요." });
-  }
-  const email = (lookup.users?.[0]?.email || "").toLowerCase();
-  if (!email || !ADMIN_EMAILS.has(email)) {
-    return res.status(403).json({ error: "권한이 없습니다." });
-  }
-
-  const base = (process.env.TAX_AUTOMATION_URL || process.env.VITE_TAX_AUTOMATION_URL || "").replace(/\/$/, "");
-  if (!base) {
-    return res.status(500).json({
-      error: "TAX_AUTOMATION_URL(또는 VITE_TAX_AUTOMATION_URL)이 Vercel 서버 환경 변수에 없습니다.",
-    });
-  }
-
-  const secret = (process.env.TAX_AUTOMATION_SECRET || process.env.VITE_TAX_AUTOMATION_SECRET || "").trim();
-  const headers: Record<string, string> = { Accept: "application/json" };
-  if (secret) headers["X-Tax-Collect-Secret"] = secret;
-
-  const ac = new AbortController();
-  const to = setTimeout(() => ac.abort(), 30_000);
-  let r: Response;
   try {
-    r = await fetch(`${base}/api/run`, { method: "POST", headers, signal: ac.signal });
-  } catch (e) {
-    const err = e instanceof Error ? e.message : String(e);
-    return res.status(502).json({ error: `Cloud Run 연결 실패: ${err}` });
-  } finally {
-    clearTimeout(to);
-  }
+    if (req.method !== "POST") {
+      if (req.method === "OPTIONS") return res.status(200).end();
+      return res.status(405).json({ error: "Method Not Allowed" });
+    }
 
-  const text = await r.text();
-  let body: { detail?: unknown; message?: unknown } = {};
-  try {
-    body = text ? (JSON.parse(text) as { detail?: unknown; message?: unknown }) : {};
-  } catch {
-    body = { message: text };
+    const authz = (req.headers.authorization || "").trim();
+    const m = authz.match(/^Bearer\s+(.+)$/i);
+    const idToken = m ? m[1] : "";
+    if (!idToken) {
+      return res.status(401).json({ error: "로그인이 필요합니다." });
+    }
+
+    const key = getFirebaseWebApiKey();
+    if (!key) {
+      return res.status(500).json({ error: "Firebase Web API 키를 찾을 수 없습니다." });
+    }
+
+    const verify = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${key}`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ idToken }) }
+    );
+
+    let lookup: { users?: { email?: string }[]; error?: { message?: string } };
+    try {
+      lookup = (await verify.json()) as { users?: { email?: string }[]; error?: { message?: string } };
+    } catch {
+      return res.status(502).json({ error: "토큰 검증 응답을 읽을 수 없습니다." });
+    }
+
+    if (!verify.ok) {
+      const msg = lookup.error?.message || "세션이 유효하지 않습니다. 다시 로그인하세요.";
+      return res.status(401).json({ error: msg });
+    }
+
+    const email = (lookup.users?.[0]?.email || "").toLowerCase();
+    if (!email || !ADMIN_EMAILS.has(email)) {
+      return res.status(403).json({ error: "권한이 없습니다." });
+    }
+
+    const base = (process.env.TAX_AUTOMATION_URL || process.env.VITE_TAX_AUTOMATION_URL || "").replace(/\/$/, "");
+    if (!base) {
+      return res.status(500).json({
+        error:
+          "TAX_AUTOMATION_URL(또는 VITE_TAX_AUTOMATION_URL)이 Vercel 서버 환경 변수에 없습니다.",
+      });
+    }
+
+    const secret = (process.env.TAX_AUTOMATION_SECRET || process.env.VITE_TAX_AUTOMATION_SECRET || "").trim();
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (secret) headers["X-Tax-Collect-Secret"] = secret;
+
+    const ac = new AbortController();
+    const to = setTimeout(() => ac.abort(), 30_000);
+    let r: Response;
+    try {
+      r = await fetch(`${base}/api/run`, { method: "POST", headers, signal: ac.signal });
+    } catch (e) {
+      const err = e instanceof Error ? e.message : String(e);
+      return res.status(502).json({ error: `Cloud Run 연결 실패: ${err}` });
+    } finally {
+      clearTimeout(to);
+    }
+
+    const text = await r.text();
+    let body: { detail?: unknown; message?: unknown } = {};
+    try {
+      body = text ? (JSON.parse(text) as { detail?: unknown; message?: unknown }) : {};
+    } catch {
+      body = { message: text };
+    }
+    if (!r.ok) {
+      const msg = formatCloudRunErrorBody(body) || r.statusText || "수집 요청 실패";
+      return res.status(r.status).json({ error: msg });
+    }
+    const okMsg =
+      typeof body.message === "string" && body.message
+        ? body.message
+        : "수집을 시작했습니다. 잠시 후 목록이 갱신됩니다.";
+    return res.status(200).json({ message: okMsg });
+  } catch (e: unknown) {
+    console.error("[api/tax-run]", e);
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!res.headersSent) {
+      return res.status(500).json({ error: `서버 오류: ${msg}` });
+    }
+    return undefined;
   }
-  if (!r.ok) {
-    const msg = formatCloudRunErrorBody(body) || r.statusText || "수집 요청 실패";
-    return res.status(r.status).json({ error: msg });
-  }
-  const okMsg = typeof body.message === "string" && body.message ? body.message : "수집을 시작했습니다. 잠시 후 목록이 갱신됩니다.";
-  return res.status(200).json({ message: okMsg });
 }
