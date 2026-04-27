@@ -4,6 +4,33 @@ import firebaseConfig from "../firebase-applet-config.json";
 /** Admin.tsx 의 ADMIN_EMAILS 와 동기화 */
 const ADMIN_EMAILS = new Set<string>(["phajuquick37@gmail.com", "staff@segyelogis.com"]);
 
+/** FastAPI detail은 문자열·객체·배열일 수 있음 — 항상 사람이 읽을 문자열로 */
+function formatCloudRunErrorBody(body: { detail?: unknown; message?: unknown }): string {
+  const d = body.detail;
+  if (typeof d === "string") return d;
+  if (Array.isArray(d)) {
+    return d
+      .map((item) => {
+        if (item && typeof item === "object" && "msg" in item) {
+          return String((item as { msg?: string }).msg ?? item);
+        }
+        return String(item);
+      })
+      .filter(Boolean)
+      .join(" ");
+  }
+  if (d != null && typeof d === "object") {
+    if ("msg" in d && (d as { msg?: unknown }).msg != null) return String((d as { msg: unknown }).msg);
+    try {
+      return JSON.stringify(d);
+    } catch {
+      return String(d);
+    }
+  }
+  if (typeof body.message === "string" && body.message) return body.message;
+  return "";
+}
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method !== "POST") {
     if (req.method === "OPTIONS") return res.status(200).end();
@@ -59,17 +86,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const text = await r.text();
-  let body: { detail?: string; message?: string } = {};
+  let body: { detail?: unknown; message?: unknown } = {};
   try {
-    body = text ? (JSON.parse(text) as { detail?: string; message?: string }) : {};
+    body = text ? (JSON.parse(text) as { detail?: unknown; message?: unknown }) : {};
   } catch {
     body = { message: text };
   }
   if (!r.ok) {
-    const detail = typeof body.detail === "string" ? body.detail : r.statusText;
-    return res.status(r.status).json({ error: detail || "수집 요청 실패" });
+    const msg = formatCloudRunErrorBody(body) || r.statusText || "수집 요청 실패";
+    return res.status(r.status).json({ error: msg });
   }
-  return res.status(200).json({
-    message: body.message || "수집을 시작했습니다. 잠시 후 목록이 갱신됩니다.",
-  });
+  const okMsg = typeof body.message === "string" && body.message ? body.message : "수집을 시작했습니다. 잠시 후 목록이 갱신됩니다.";
+  return res.status(200).json({ message: okMsg });
 }

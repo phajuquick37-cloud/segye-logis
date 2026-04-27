@@ -172,19 +172,43 @@ export default function Admin() {
     }
     setTaxCollectLoading(true);
     setTaxCollectMessage("");
+    const pickErr = (j: { error?: unknown; detail?: unknown; message?: unknown }, status: string) => {
+      if (typeof j.error === "string" && j.error) return j.error;
+      if (typeof j.detail === "string" && j.detail) return j.detail;
+      if (Array.isArray(j.detail) && j.detail.length) {
+        return j.detail
+          .map((x: unknown) =>
+            x && typeof x === "object" && x !== null && "msg" in x
+              ? String((x as { msg?: string }).msg)
+              : JSON.stringify(x)
+          )
+          .join(" ");
+      }
+      if (j.error != null && typeof j.error === "object") {
+        try {
+          return JSON.stringify(j.error);
+        } catch {
+          return status;
+        }
+      }
+      if (typeof j.message === "string" && j.message) return j.message;
+      return status;
+    };
     try {
       const idToken = await user.getIdToken();
       const r = await fetch("/api/tax-run", {
         method: "POST",
         headers: { Authorization: `Bearer ${idToken}`, Accept: "application/json" },
       });
-      const j = (await r.json().catch(() => ({}))) as { error?: string; message?: string; detail?: string };
+      const j = (await r.json().catch(() => ({}))) as { error?: unknown; message?: string; detail?: unknown };
       if (!r.ok) {
-        throw new Error(j.error || (typeof j.detail === "string" ? j.detail : null) || `${r.status} ${r.statusText}`);
+        const line = pickErr(j, `${r.status} ${r.statusText || "요청 실패"}`);
+        throw new Error(line);
       }
       setTaxCollectMessage(j.message || "수집을 시작했습니다. 잠시 후 목록이 갱신됩니다.");
     } catch (e) {
-      setTaxCollectMessage(`실패: ${e instanceof Error ? e.message : String(e)}`);
+      const line = e instanceof Error ? e.message : String(e);
+      setTaxCollectMessage(`실패: ${line === "[object Object]" ? "응답 파싱 오류 — 서버 로그를 확인하세요." : line}`);
     } finally {
       setTaxCollectLoading(false);
     }
