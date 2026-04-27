@@ -1,0 +1,26 @@
+# Cloud Run 서비스 "tax-automation"에 넣을 환경 변수 예시
+# 콘솔: Cloud Run → tax-automation → 수정 → 컨테이너/변수/보안
+# 민감 값은 Secret Manager + Cloud Run "보안 비밀" 연동 권장 (아래는 예시 키 이름)
+
+# GitHub Actions 배포 시 TAX_COLLECT_SECRET은 --set-env-vars로 이미 있을 수 있음
+# TAX_COLLECT_SECRET=
+
+# IMAP: 스크린에 보이는 메일함 (Gmail 또는 Daum 한메일)
+TAX_IMAP_EMAIL=phajuquick@daum.net
+TAX_IMAP_APP_PASSWORD=앱-비밀번호-16자
+# (구 이름 호환) GMAIL_USER=   GMAIL_APP_PASSWORD=
+
+# 수집 시작(기본 앱: 2026-04-10, 비우려면 TAX_EMAIL_SINCE_MIN= 빈 값으로 콘솔에 안 넣음)
+# TAX_EMAIL_SINCE_MIN=2026-04-10
+# TAX_EMAIL_DAYS_LIMIT=1825
+# TAX_SCHEDULE_INTERVAL_MINUTES=60
+
+# Firebase: Secret Manager 권장
+# TAX_GOOGLE_CREDENTIALS_PATH는 컨테이너 내부 경로(시크릿 마운트)
+# TAX_GOOGLE_CREDENTIALS_PATH=/secrets/google_credentials.json
+# TAX_FIREBASE_PROJECT_ID=gen-lang-client-0127550748
+# TAX_FIREBASE_STORAGE_BUCKET=gen-lang-client-0127550748.firebasestorage.app
+# TAX_FIRESTORE_DATABASE_ID=ai-studio-08ae3b29-6eb5-4e08-8bb0-f20ab80e5ffc
+
+# 프론트(관리자)에서 수동 수집 시 사용하는 시크릿이 서버와 같아야 함
+# (Actions의 TAX_COLLECT_SECRET GitHub secret과 동일)
