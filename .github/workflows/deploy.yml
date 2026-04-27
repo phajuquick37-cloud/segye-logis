@@ -31,12 +31,8 @@ jobs:
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker asia-northeast3-docker.pkg.dev --quiet
 
-      # (최초 1회) GCP 콘솔 → Artifact Registry → 리전 asia-northeast3 에 docker 형식 저장소 "tax-automation" 생성
-      - name: Verify Artifact Registry repository exists
-        run: |
-          gcloud artifacts repositories describe tax-automation \
-            --location=asia-northeast3 --project=gen-lang-client-0127550748
-
+      # (최초 1회) Artifact Registry: 리전 asia-northeast3, docker 저장소 ID "tax-automation" 생성
+      #    $ gcloud artifacts repositories create tax-automation --repository-format=docker --location=asia-northeast3 --project=gen-lang-client-0127550748
       # 5. Docker 이미지 빌드
       - name: Build Docker image
         run: |
