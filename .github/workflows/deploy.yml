@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - master
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -30,6 +31,9 @@ jobs:
       # Artifact Registry API는 GCP 콘솔에서 1회 활성화 필요 (CI SA에 serviceUsage.enable 권한이 없을 수 있음)
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker asia-northeast3-docker.pkg.dev --quiet
+
+      - name: List Artifact Registry repos (debug)
+        run: gcloud artifacts repositories list --location=asia-northeast3 --project=gen-lang-client-0127550748 || true
 
       # (최초 1회) Artifact Registry: 리전 asia-northeast3, docker 저장소 ID "tax-automation" 생성
       #    $ gcloud artifacts repositories create tax-automation --repository-format=docker --location=asia-northeast3 --project=gen-lang-client-0127550748
