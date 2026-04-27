@@ -44,6 +44,13 @@ _CREDENTIALS_FILE = _cred_path if _cred_path else _os.path.join(_BASE_DIR, "goog
 # 화물맨 등 tax10.co.kr ~ tax99.co.kr 스타일 발신 메일
 _TAX_NUMBER_SENDER_RE = _re.compile(r"@tax\d{1,3}\.", _re.IGNORECASE)
 
+# 콤마 구분 — 발신 주소 문자열에 포함되면 허용 (실제 메일 헤더 도메인을 모를 때)
+_EXTRA_SENDER_ALLOW_PATTERNS = [
+    x.strip().lower()
+    for x in _env("TAX_EXTRA_SENDER_ALLOWLIST", "").split(",")
+    if x.strip()
+]
+
 # subject_keywords용 tax10 ~ tax40 (제목에 tax16 등만 있는 알림 대비)
 _SUBJECT_TAX_NUMBERS = [f"tax{n}" for n in range(10, 41)]
 
@@ -109,17 +116,30 @@ _default_imap_folders = (
 _imap_folders_raw = _env("TAX_IMAP_FOLDERS", _default_imap_folders)
 _IMAP_FOLDERS = [x.strip() for x in _imap_folders_raw.split(",") if x.strip()]
 
-# 필수 우선 수집: 발신·제목·본문(HTML/텍스트)에 있으면 발신 도메인 제한 없이 2차 검증(수신·차단)만 통과하면 수집
+# 플랫폼·발행사 한정(넓은 '세금계산서'·영문 'tax' 제외 — 스팸·해외쇼핑이 대량 통과하던 원인)
 _PRIORITY_TAX_KEYWORDS = [
     "원콜",
+    "onecall",
+    "onebill",
+    "ONEBILL",
     "24시콜",
+    "전국24시",
+    "15887924",
+    "ysm7924",
+    "call24network",
+    "call24",
     "화물맨",
-    "전자세금계산서",
-    "스마트빌",
+    "hwamulman",
+    "tax12",
+    "tax15",
     "로지노트",
-    "세금계산서",
-    "tax",  # \b 단어 경계 (차단 메일은 is_blocked_invoice_email 에서 제거)
-    # 세계로지스 수신·발행 안내 본문(띄어쓰기가 어긋나도 compact 매칭으로 처리)
+    "로지노트플러스",
+    "logynote",
+    "loginote",
+    "logynote plus",
+    "loginote plus",
+    "lgnoteplus",
+    # 세계로지스 대행·포워드
     "세계로지스앞으로 발행된 세금계산서",
     "세계로지스 앞으로 발행된 세금계산서",
     "세계로지스에게 발행된 세금계산서",
@@ -155,11 +175,11 @@ EMAIL_FILTER = {
     ],
     "sender_domain_allowlist": [
         "tax12.co.kr", "tax15.co.kr", "hwamulman", "cargo12",
-        "onebill", "onecall", "1call",
+        "onebill", "onecall", "1call", "onbill", "1-bill",
         "loginote", "logynote", "logi-note",
         "logynoteplus", "loginoteplus", "lgnoteplus",
         "plus.logynote", "plus.loginote", "logynote-plus",
-        "15887924", "ysm7924", "call24network", "24si.co",
+        "15887924", "ysm7924", "call24network", "24si.co", "24si",
     ],
     "imap_folders": _IMAP_FOLDERS if _IMAP_FOLDERS else ["INBOX"],
     "unread_only": False,
@@ -187,6 +207,8 @@ EMAIL_FILTER = {
     "imap_since_min_date": _IMAP_SINCE_MIN_DATE,
     # 수신일 기준(메일 Date 헤더) — IMAP SINCE 누락 대비
     "min_received_date": _IMAP_SINCE_MIN_DATE,
+    # True(기본): 제목이 「…세계로지스…님께/귀하…발행…세금계산서」 형태일 때만 수집
+    "invoice_subject_strict": _env_bool("TAX_INVOICE_SUBJECT_STRICT", True),
 }
 
 
@@ -258,17 +280,13 @@ def tax_priority_keywords_match(
     for kw in EMAIL_FILTER.get("priority_keywords", []):
         if not kw:
             continue
-        if kw.lower() == "tax":
-            if _re.search(r"\btax\b", blob_l, _re.I):
-                return True
-        else:
-            if kw in blob or kw.lower() in blob_l:
-                return True
-            kw_compact = _re.sub(r"\s+", "", kw)
-            if len(kw_compact) >= 4 and (
-                kw_compact in compact or kw_compact.lower() in compact_l
-            ):
-                return True
+        if kw in blob or kw.lower() in blob_l:
+            return True
+        kw_compact = _re.sub(r"\s+", "", kw)
+        if len(kw_compact) >= 3 and (
+            kw_compact in compact or kw_compact.lower() in compact_l
+        ):
+            return True
     return False
 
 
@@ -291,9 +309,57 @@ def sender_matches_allowed_platforms(from_addr: str) -> bool:
     allow = EMAIL_FILTER.get("sender_domain_allowlist", [])
     if any(a.lower() in fl for a in allow):
         return True
+    if _EXTRA_SENDER_ALLOW_PATTERNS and any(
+        p in fl for p in _EXTRA_SENDER_ALLOW_PATTERNS
+    ):
+        return True
     if _TAX_NUMBER_SENDER_RE.search(fl):
         return True
     return False
+
+
+def is_carrier_trusted_from_address(from_addr: str) -> bool:
+    """발신이 알려진 운송·세금@taxNN 도메인이면 (제목·본문에 '세계로지스' 없이도 수집)."""
+    return sender_matches_allowed_platforms(from_addr)
+
+
+def recipient_keyword_required(from_addr: str) -> bool:
+    """
+    화물맨/원콜 등 공식 발신이 아니면 본문·제목에 '세계로지스' 등이 있어야 수집.
+    (공식 발신은 공급받는자 문구가 메일에 안 올 수 있음 → 기존 로직이 정본을 버림)
+    """
+    if is_carrier_trusted_from_address(from_addr):
+        return False
+    return True
+
+
+def matches_worldlogis_invoice_subject(subject: str) -> bool:
+    """
+    제목만으로 세계로지스 수취 세금계산서인지 판별.
+    예: 'OOO에서 (주)세계로지스 님께 발행한 세금계산서 입니다', '전자세금계산서' 변형 포함.
+    """
+    if not subject or not isinstance(subject, str):
+        return False
+    compact = _re.sub(r"[\s\u200b\xa0]+", "", subject)
+    if "세계로지스" not in compact:
+        return False
+    if "발행" not in compact:
+        return False
+    if "세금계산서" not in compact and "전자세금" not in compact:
+        return False
+    # 수취인 표기(쇼핑몰 '세금계산서' 단독 제목 배제)
+    if not any(
+        p in compact
+        for p in (
+            "님께",
+            "귀하",
+            "귀사",
+            "세계로지스에게",
+            "세계로지스앞으로",
+        )
+    ):
+        return False
+    return True
 
 
 # --- 발행 플랫폼 감지 규칙 ---
@@ -319,9 +385,9 @@ PLATFORM_RULES = {
         "sender_keywords": ["loginote", "logynote", "logi-note"],
     },
     "전국24시콜화물": {
-        "domains": ["15887924", "ysm7924", "call24network", "24si.co"],
-        "subject_keywords": ["전국24시", "24시콜", "15887924"],
-        "sender_keywords": ["15887924", "ysm7924", "call24network"],
+        "domains": ["15887924", "ysm7924", "call24network", "24si.co", "24si"],
+        "subject_keywords": ["전국24시", "24시콜", "15887924", "전국24시콜", "콜화물"],
+        "sender_keywords": ["15887924", "ysm7924", "call24network", "24si"],
     },
 }
 
