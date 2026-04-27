@@ -13,64 +13,35 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. 코드 가져오기
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 2. GCP 인증
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      # 3. gcloud 설정
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
-      # 4. Docker → Artifact Registry (asia-northeast3, gcr.io 대신)
-      # Artifact Registry API는 GCP 콘솔에서 1회 활성화 필요 (CI SA에 serviceUsage.enable 권한이 없을 수 있음)
-      - name: Configure Docker for Artifact Registry
-        run: gcloud auth configure-docker asia-northeast3-docker.pkg.dev --quiet
-
-      - name: List Artifact Registry repos (debug)
-        run: gcloud artifacts repositories list --location=asia-northeast3 --project=gen-lang-client-0127550748 || true
-
-      # (최초 1회) Artifact Registry: 리전 asia-northeast3, docker 저장소 ID "tax-automation" 생성
-      #    $ gcloud artifacts repositories create tax-automation --repository-format=docker --location=asia-northeast3 --project=gen-lang-client-0127550748
-      # 5. Docker 이미지 빌드
-      - name: Build Docker image
-        run: |
-          IMG=asia-northeast3-docker.pkg.dev/gen-lang-client-0127550748/tax-automation/tax-automation
-          docker build \
-            -f tax-invoice-automation/Dockerfile \
-            -t ${IMG}:${{ github.sha }} \
-            -t ${IMG}:latest \
-            ./tax-invoice-automation
-
-      # 6. 이미지 push
-      - name: Push Docker image
-        run: |
-          IMG=asia-northeast3-docker.pkg.dev/gen-lang-client-0127550748/tax-automation/tax-automation
-          docker push ${IMG}:${{ github.sha }}
-          docker push ${IMG}:latest
-
-      # 7. Cloud Run 배포
-      # - min-instances 1: 인스턴스가 꺼지면 프로세스 내 스케줄러가 멈추므로 항상 1유지
-      # - allow-unauthenticated: 브라우저(관리자)에서 POST /api/run 호출 가능. 보호는 TAX_COLLECT_SECRET 헤더로
-      - name: Deploy to Cloud Run
+      # GitHub 러너에서 AR로 `docker push`할 때 권한이 꼬이는 경우가 많아,
+      # Google Cloud Build가 소스로 이미지를 빌드·푸시·배포하도록 --source 를 사용한다.
+      # (콘솔: Cloud Build API, Cloud Run API, Artifact Registry API 활성화)
+      - name: Deploy to Cloud Run (Cloud Build, Dockerfile in tax-invoice-automation/)
         env:
           TAX_COLLECT_SECRET: ${{ secrets.TAX_COLLECT_SECRET }}
         run: |
           gcloud run deploy tax-automation \
-            --image asia-northeast3-docker.pkg.dev/gen-lang-client-0127550748/tax-automation/tax-automation:${{ github.sha }} \
-            --region asia-northeast3 \
-            --platform managed \
+            --source=./tax-invoice-automation \
+            --region=asia-northeast3 \
+            --project=gen-lang-client-0127550748 \
+            --platform=managed \
             --allow-unauthenticated \
-            --memory 2Gi \
-            --cpu 2 \
-            --timeout 3600s \
-            --concurrency 1 \
-            --min-instances 1 \
-            --max-instances 1 \
-            --set-env-vars "TAX_COLLECT_SECRET=${TAX_COLLECT_SECRET}" \
-            --project gen-lang-client-0127550748
+            --memory=2Gi \
+            --cpu=2 \
+            --timeout=3600s \
+            --concurrency=1 \
+            --min-instances=1 \
+            --max-instances=1 \
+            --set-env-vars="TAX_COLLECT_SECRET=${TAX_COLLECT_SECRET}" \
+            --quiet
