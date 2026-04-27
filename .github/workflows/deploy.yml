@@ -27,17 +27,26 @@ jobs:
         uses: google-github-actions/setup-gcloud@v2
 
       # 4. Docker → Artifact Registry (asia-northeast3, gcr.io 대신)
+      - name: Enable Artifact Registry API
+        run: gcloud services enable artifactregistry.googleapis.com --project=gen-lang-client-0127550748
+
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker asia-northeast3-docker.pkg.dev --quiet
 
       - name: Ensure Artifact Registry docker repository
         run: |
-          gcloud artifacts repositories describe tax-automation \
-            --location=asia-northeast3 --project=gen-lang-client-0127550748 \
-            2>/dev/null || gcloud artifacts repositories create tax-automation \
-            --repository-format=docker --location=asia-northeast3 \
-            --project=gen-lang-client-0127550748 \
-            --description="세금계산서 봇"
+          set -e
+          PROJECT=gen-lang-client-0127550748
+          LOC=asia-northeast3
+          REPO=tax-automation
+          if gcloud artifacts repositories describe "$REPO" --location="$LOC" --project="$PROJECT" &>/dev/null; then
+            echo "OK: repository $REPO already exists"
+          else
+            echo "Creating docker repository $REPO in $LOC..."
+            gcloud artifacts repositories create "$REPO" \
+              --repository-format=docker --location="$LOC" --project="$PROJECT" \
+              --description="세금계산서 봇 이미지"
+          fi
 
       # 5. Docker 이미지 빌드
       - name: Build Docker image
