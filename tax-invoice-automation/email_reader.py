@@ -19,12 +19,10 @@ from config import (
     EMAIL_FILTER,
     is_blocked_tax_invoice_url,
     is_blocked_invoice_email,
-    sender_matches_allowed_platforms,
-    is_carrier_trusted_from_address,
     recipient_keyword_required,
     tax_priority_keywords_match,
+    email_allowed_for_collection,
     matches_worldlogis_invoice_subject,
-    passes_etax_or_nts_spam_guard,
     get_imap_since_date_str,
     get_effective_mail_window_start_date,
 )
@@ -265,7 +263,6 @@ class EmailReader:
         criteria = " ".join(criteria_parts) if criteria_parts else "ALL"
 
         folders = EMAIL_FILTER.get("imap_folders") or ["INBOX"]
-        keywords = EMAIL_FILTER.get("subject_keywords", [])
 
         try:
             for folder in folders:
@@ -292,58 +289,19 @@ class EmailReader:
                         subject = decode_str(msg.get("Subject", ""))
                         from_addr = decode_str(msg.get("From", ""))
                         date_str = msg.get("Date", "")
-                        subj_lower = subject.lower()
 
                         body = get_email_body(msg)
 
-                        # 차단(Qoo10·큐텐·마켓플레이스 등): 발신·제목·본문
-                        if is_blocked_invoice_email(
-                            from_addr, subject, body["html"], body["text"]
+                        # 차단 포함(Qoo10·큐텐)·허용 키워드/발신 패턴만 수집
+                        if not email_allowed_for_collection(
+                            from_addr,
+                            subject,
+                            body["html"],
+                            body["text"],
                         ):
                             logger.info(
-                                f"🚫 차단 목록 메일 스킵: [{subject[:40]}] | {from_addr[:40]}"
-                            )
-                            continue
-
-                        # 기본: 제목이 「…세계로지스…님께/귀하…발행…세금계산서」 형태일 때만 (스팸·다른 쇼핑 제거)
-                        if EMAIL_FILTER.get("invoice_subject_strict", True):
-                            if not matches_worldlogis_invoice_subject(subject):
-                                logger.info(
-                                    f"⏭ 제목 패턴 제외(세계로지스·발행·세금계산서·수취호칭): "
-                                    f"[{subject[:55]}]"
-                                )
-                                continue
-                        else:
-                            priority = tax_priority_keywords_match(
-                                from_addr,
-                                subject,
-                                body["html"],
-                                body["text"],
-                            )
-                            allowed_sender = sender_matches_allowed_platforms(
-                                from_addr
-                            )
-                            if not allowed_sender and not priority:
-                                logger.info(
-                                    f"⛔ 수집 대상 발신/키워드 아님: "
-                                    f"[{from_addr[:50]}] / [{subject[:40]}]"
-                                )
-                                continue
-
-                            if keywords and not any(
-                                kw.lower() in subj_lower for kw in keywords
-                            ):
-                                if not priority and not is_carrier_trusted_from_address(
-                                    from_addr
-                                ):
-                                    continue
-
-                        if not passes_etax_or_nts_spam_guard(
-                            from_addr, subject, body["html"], body["text"]
-                        ):
-                            logger.info(
-                                f"⏭ 전자세금/국세청·홈택스 신호 없음(스팸 강화) — "
-                                f"[{subject[:50]}…]"
+                                f"⏭ 수집 대상 아님(허용 키워드·발신 패턴 또는 전자세금 신호) — "
+                                f"[{subject[:50]}]"
                             )
                             continue
 
@@ -359,12 +317,12 @@ class EmailReader:
                             )
                             continue
 
-                        # ── 공급받는자 검증(제목 엄격 모드일 땐 제목에 이미 반영됨)
+                        # 공식 발신이 아니면 공급받는자(세계로지스)가 제목·본문에 있는지 검증
                         recipient_kws = EMAIL_FILTER.get("recipient_keywords", [])
                         if (
-                            not EMAIL_FILTER.get("invoice_subject_strict", True)
-                            and recipient_kws
+                            recipient_kws
                             and recipient_keyword_required(from_addr)
+                            and not matches_worldlogis_invoice_subject(subject)
                         ):
                             recipient_blob = (
                                 subject + body["html"] + body["text"]

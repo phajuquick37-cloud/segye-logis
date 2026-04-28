@@ -182,6 +182,9 @@ _PRIORITY_TAX_KEYWORDS = [
     "세계로지스 앞으로 발행된 세금계산서",
     "세계로지스에게 발행된 세금계산서",
     "세계로지스 귀하로 발행된",
+    "(주)세계로지스님",
+    "세계로지스님께",
+    "(주)세계로지스 님",
 ]
 
 EMAIL_FILTER = {
@@ -245,7 +248,7 @@ EMAIL_FILTER = {
     "imap_since_min_date": _IMAP_SINCE_MIN_DATE,
     # 수신일 기준(메일 Date 헤더) — IMAP SINCE 누락 대비
     "min_received_date": _IMAP_SINCE_MIN_DATE,
-    # True(기본): 제목이 「…세계로지스…님께/귀하…발행…세금계산서」 형태일 때만 수집
+    # 이전 버전 호환용(로그·문서): 실제 필터는 email_allowed_for_collection()
     "invoice_subject_strict": _env_bool("TAX_INVOICE_SUBJECT_STRICT", True),
 }
 
@@ -331,6 +334,10 @@ def tax_priority_keywords_match(
     """원콜·24시콜·화물맨·로지노트·세금·tax·세계로지스 발행 문구 — 발신·제목·본문 전체."""
     blob = f"{from_addr}\n{subject}\n{body_html}\n{body_text}"
     blob_l = blob.lower()
+    # 영문 단독 tax (제목 우선 — 본문 tax refund 등 과매칭 완화)
+    subj_l = (subject or "").lower()
+    if _re.search(r"(?<![a-z0-9\uac00-\ud7af])tax(?![a-z0-9]{3,})", subj_l):
+        return True
     # HTML 랩/본문에서 공백만 다른 동일 문구 매칭
     compact = _re.sub(r"[\s\u200b\xa0]+", "", blob)
     compact_l = compact.lower()
@@ -402,6 +409,8 @@ def passes_etax_or_nts_spam_guard(
         return True
     if sender_matches_allowed_platforms(from_addr):
         return True
+    if matches_worldlogis_invoice_subject(subject):
+        return True
     compact = _re.sub(
         r"[\s\u200b\xa0]+", "", f"{subject}\n{body_html}\n{body_text}"
     )
@@ -439,12 +448,47 @@ def matches_worldlogis_invoice_subject(subject: str) -> bool:
             "님께",
             "귀하",
             "귀사",
-            "세계로지스에게",
             "세계로지스앞으로",
+            "세계로지스에게",
+            "세계로지스님",
+            "(주)세계로지스님",
+            "귀에게",
+            "에게발행",
         )
     ):
         return False
     return True
+
+
+def email_allowed_for_collection(
+    from_addr: str,
+    subject: str,
+    body_html: str = "",
+    body_text: str = "",
+) -> bool:
+    """
+    Qoo10/큐텐 등 차단 후, 아래 신호 중 하나만 수집합니다.
+    - 세계로지스 수취 제목 패턴(matches_worldlogis_invoice_subject)
+    - 원콜·화물맨·24시콜·로지노트·tax 등 priority 키워드(tax_priority_keywords_match)
+    - 허용 발신 도메인(신뢰 캐리어·taxNN 등)
+    이후 전자세금·국세청 신호 또는 위 예외 규칙은 passes_etax_or_nts_spam_guard 에서 처리합니다.
+    """
+    if is_blocked_invoice_email(from_addr, subject, body_html, body_text):
+        return False
+    if matches_worldlogis_invoice_subject(subject):
+        sig = True
+    else:
+        sig = (
+            tax_priority_keywords_match(
+                from_addr, subject, body_html, body_text
+            )
+            or sender_matches_allowed_platforms(from_addr)
+        )
+    if not sig:
+        return False
+    return passes_etax_or_nts_spam_guard(
+        from_addr, subject, body_html, body_text
+    )
 
 
 # --- 발행 플랫폼 감지 규칙 ---
