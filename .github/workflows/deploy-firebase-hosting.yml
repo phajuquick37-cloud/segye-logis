@@ -1,0 +1,33 @@
+# Firebase Hosting 배포 (로컬 firebase login 불필요)
+# GitHub Secret FIREBASE_SERVICE_ACCOUNT 에 GCP 서비스 계정 JSON 전체를 넣으면 됩니다.
+# 콘솔: IAM → 서비스 계정 → 키 생성(JSON) — 역할: Firebase Hosting Admin
+# 도메인 세계로지스.com 은 Firebase Console → Hosting → 사용자 지정 도메인에서 따로 연결합니다(이 워크플로와 무관).
+
+name: Deploy Firebase Hosting
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "firebase.json"
+      - "firebase-hosting-public/**"
+      - ".github/workflows/deploy-firebase-hosting.yml"
+  workflow_dispatch:
+
+jobs:
+  hosting:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy to Firebase Hosting (→ Cloud Run rewrites 포함)
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          projectId: gen-lang-client-0127550748
+          channelId: live
