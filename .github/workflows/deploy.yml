@@ -10,6 +10,8 @@ jobs:
   deploy:
     name: Build & Deploy
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout
@@ -22,6 +24,8 @@ jobs:
 
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: gen-lang-client-0127550748
 
       # GitHub에 넣은 SA 키(gcp_xxx@PROJECT.iam.gserviceaccount.com) 한 주체로
       # docker push + Cloud Run 배포. Cloud Build 기본 SA에 AR Writer를 줄 필요 없음.
@@ -110,8 +114,11 @@ jobs:
           fi
 
       # GitHub에 VERCEL_TOKEN + VERCEL_PROJECT_ID(및 선택 VERCEL_TEAM_ID) 추가 시 동기화
+      # 선택 단계 오류(API 401·403 등)가 전체 job 을 깨면 안 되므로 continue-on-error
       - name: Vercel 환경 변수 동기화 (선택)
+        id: vercel_sync
         if: steps.vercel_gate.outputs.ready == 'true'
+        continue-on-error: true
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
