@@ -1,19 +1,21 @@
-# 공식 이미지: 브라우저 바이너리 + OS 의존성 포함(수동 apt 목록 깨짐 방지).
-# 태그: https://playwright.dev/python/docs/docker
-FROM mcr.microsoft.com/playwright/python:v1.58.0-noble
+# https://playwright.dev/python/docs/docker — `install --with-deps` 가 OS 패키지 + 브라우저를 한 번에 맞춤
+FROM python:3.11-slim-bookworm
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-WORKDIR /app
-
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
     tesseract-ocr tesseract-ocr-kor tesseract-ocr-eng \
     wget curl fonts-nanum \
     && rm -rf /var/lib/apt/lists/*
 
+WORKDIR /app
+
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt \
+    && playwright install --with-deps chromium
 
 COPY . .
 

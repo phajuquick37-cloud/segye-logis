@@ -35,7 +35,8 @@ jobs:
           REG=asia-northeast3-docker.pkg.dev
           IMG=$REG/gen-lang-client-0127550748/tax-automation/tax-automation
           gcloud auth configure-docker "$REG" --quiet
-          docker build -t "${IMG}:${{ github.sha }}" ./tax-invoice-automation
+          docker build --progress=plain -t "${IMG}:${{ github.sha }}" ./tax-invoice-automation
+          echo "--- docker push ---"
           docker push "${IMG}:${{ github.sha }}"
 
       # 쉼표/따옴표가 섞인 TAX_COLLECT_SECRET 등은 CLI 한 줄 --update-env-vars에서 깨질 수 있음.
