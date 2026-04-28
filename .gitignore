@@ -13,6 +13,8 @@ coverage/
 
 # 세금계산서 봇 - 민감 파일
 tax-invoice-automation/google_credentials.json
+# GCP 서비스 계정 키(로컬 다운로드·절대 커밋 금지)
+gen-lang-client-*-*.json
 tax-invoice-automation/output/
 tax-invoice-automation/logs/
 tax-invoice-automation/__pycache__/
