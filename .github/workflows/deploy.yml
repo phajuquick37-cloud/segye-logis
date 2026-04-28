@@ -41,33 +41,25 @@ jobs:
           gcloud services enable artifactregistry.googleapis.com run.googleapis.com \
             --project="$GCP_PROJECT_ID" || echo "::notice::services enable 무시(API 이미 활성 또는 권한 부족·콘솔에서 활성 확인)"
 
-      - name: Artifact Registry Docker 저장소 확인 (없으면 생성)
+      # Artifact Registry Writer 는 이미지 푸시만 가능 — 저장소 *생성*에는 Admin/Editor 등이 필요해
+      # 워크플로에서 무조건 생성 시도하면 권한 부족으로 실패하므로, describe 로만 검증합니다.
+      - name: Artifact Registry Docker 저장소 존재 검증
         run: |
-          set -euo pipefail
+          set -eo pipefail
           AR_HOST="${AR_REGION}-docker.pkg.dev"
-          echo "대상: project=$GCP_PROJECT_ID region=$AR_REGION repository=$AR_REPOSITORY_ID"
-          echo "이미지 URI 베이스: ${AR_HOST}/${GCP_PROJECT_ID}/${AR_REPOSITORY_ID}/${DOCKER_IMAGE_NAME}"
+          echo "예상 이미지 경로: ${AR_HOST}/${GCP_PROJECT_ID}/${AR_REPOSITORY_ID}/${DOCKER_IMAGE_NAME}:${GITHUB_SHA}"
           gcloud config set project "$GCP_PROJECT_ID"
-          echo "활성 계정:" && gcloud auth list --filter=status:ACTIVE --format="value(account)"
+          echo "활성 SA:" && gcloud auth list --filter=status:ACTIVE --format="value(account)"
           if gcloud artifacts repositories describe "$AR_REPOSITORY_ID" \
               --location="$AR_REGION" --project="$GCP_PROJECT_ID" >/dev/null 2>&1; then
-            echo "OK — Artifact Registry 저장소가 이미 있습니다."
+            echo "OK — 저장소 '$AR_REPOSITORY_ID' (리전 $AR_REGION) 확인됨"
             gcloud artifacts repositories describe "$AR_REPOSITORY_ID" \
               --location="$AR_REGION" --project="$GCP_PROJECT_ID" \
               --format="table(name,format,location)"
           else
-            echo "저장소 없음 — docker 저장소 생성 시도…"
-            if gcloud artifacts repositories create "$AR_REPOSITORY_ID" \
-                --repository-format=docker \
-                --location="$AR_REGION" \
-                --project="$GCP_PROJECT_ID" \
-                --description="tax-invoice-automation (GitHub Actions)"; then
-              echo "OK — 저장소 생성 완료"
-            else
-              echo "::error::저장소 생성 실패. 아래 목록에 실제 REPOSITORY 이름이 있는지 확인한 뒤, 워크플로 env 의 AR_REPOSITORY_ID 를 그 이름에 맞추세요."
-              gcloud artifacts repositories list --project="$GCP_PROJECT_ID" --format="table(name,location,format)" || true
-              exit 1
-            fi
+            echo "::error::$AR_REGION 에 '$AR_REPOSITORY_ID' docker 저장소가 없거나 API/권한 문제입니다. 콘솔(Artifact Registry)에서 동일 리전에 docker 저장소를 만든 뒤, 아래 목록의 name 과 워크플로 env AR_REPOSITORY_ID 를 맞추세요."
+            gcloud artifacts repositories list --project="$GCP_PROJECT_ID" --format="table(name,location,format)" || true
+            exit 1
           fi
 
       # GitHub에 넣은 SA 키(gcp_xxx@PROJECT.iam.gserviceaccount.com) 한 주체로
