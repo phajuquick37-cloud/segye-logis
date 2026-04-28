@@ -41,26 +41,7 @@ jobs:
           gcloud services enable artifactregistry.googleapis.com run.googleapis.com \
             --project="$GCP_PROJECT_ID" || echo "::notice::services enable 무시(API 이미 활성 또는 권한 부족·콘솔에서 활성 확인)"
 
-      # Artifact Registry Writer 는 이미지 푸시만 가능 — 저장소 *생성*에는 Admin/Editor 등이 필요해
-      # 워크플로에서 무조건 생성 시도하면 권한 부족으로 실패하므로, describe 로만 검증합니다.
-      - name: Artifact Registry Docker 저장소 존재 검증
-        run: |
-          set -eo pipefail
-          AR_HOST="${AR_REGION}-docker.pkg.dev"
-          echo "예상 이미지 경로: ${AR_HOST}/${GCP_PROJECT_ID}/${AR_REPOSITORY_ID}/${DOCKER_IMAGE_NAME}:${GITHUB_SHA}"
-          gcloud config set project "$GCP_PROJECT_ID"
-          echo "활성 SA:" && gcloud auth list --filter=status:ACTIVE --format="value(account)"
-          if gcloud artifacts repositories describe "$AR_REPOSITORY_ID" \
-              --location="$AR_REGION" --project="$GCP_PROJECT_ID" >/dev/null 2>&1; then
-            echo "OK — 저장소 '$AR_REPOSITORY_ID' (리전 $AR_REGION) 확인됨"
-            gcloud artifacts repositories describe "$AR_REPOSITORY_ID" \
-              --location="$AR_REGION" --project="$GCP_PROJECT_ID" \
-              --format="table(name,format,location)"
-          else
-            echo "::error::$AR_REGION 에 '$AR_REPOSITORY_ID' docker 저장소가 없거나 API/권한 문제입니다. 콘솔(Artifact Registry)에서 동일 리전에 docker 저장소를 만든 뒤, 아래 목록의 name 과 워크플로 env AR_REPOSITORY_ID 를 맞추세요."
-            gcloud artifacts repositories list --project="$GCP_PROJECT_ID" --format="table(name,location,format)" || true
-            exit 1
-          fi
+      # 저장소 존재 여부는 docker push 결과로 검증(describe 단계에서 Reader/API 이슈로 불필요하게 실패하는 경우 방지).
 
       # GitHub에 넣은 SA 키(gcp_xxx@PROJECT.iam.gserviceaccount.com) 한 주체로
       # docker push + Cloud Run 배포.
@@ -79,7 +60,10 @@ jobs:
           AR_HOST="${AR_REGION}-docker.pkg.dev"
           IMAGE_URI="${AR_HOST}/${GCP_PROJECT_ID}/${AR_REPOSITORY_ID}/${DOCKER_IMAGE_NAME}"
           gcloud auth configure-docker "$AR_HOST" --quiet
-          docker push "${IMAGE_URI}:${GITHUB_SHA}"
+          docker push "${IMAGE_URI}:${GITHUB_SHA}" || (
+            echo "::error::docker push 실패 — 경로 확인: Artifact Registry 에 docker 형식 저장소 '$AR_REPOSITORY_ID' 가 리전 $AR_REGION 에 있어야 하며, GitHub GCP_SA_KEY SA 에 artifactregistry.repositories.uploadArtifacts(또는 Writer) 필요."
+            exit 1
+          )
 
       # 쉼표/따옴표가 섞인 TAX_COLLECT_SECRET 등은 CLI 한 줄 --update-env-vars에서 깨질 수 있음.
       # YAML 파일로 병합 업데이트(기존 IMAP·Firebase 등 콘솔 변수 유지).
