@@ -85,10 +85,10 @@ try:
 except ValueError:
     _EMAIL_DAYS_INT = 1825
 
-# 수집 시작일 하한(기본 2024-04-10). TAX_EMAIL_SINCE_MIN 을 "" 로 두면 하한 없음(전체 days_limit 구간).
+# 수집 시작일 하한(기본 2026-04-10). TAX_EMAIL_SINCE_MIN 을 "" 로 두면 하한 없음(전체 days_limit 구간).
 _env_since = _os.environ.get("TAX_EMAIL_SINCE_MIN")
 if _env_since is None:
-    _SINCE_MIN_RAW = "2024-04-10"
+    _SINCE_MIN_RAW = "2026-04-10"
 elif not str(_env_since).strip():
     _SINCE_MIN_RAW = ""
 else:
@@ -128,7 +128,7 @@ def today_kst_date() -> _date:
 
 def get_min_issue_date_for_save() -> _date | None:
     """
-    Firestore/홈에 쌓을 최소 발행일 = TAX_EMAIL_SINCE_MIN 과 동일(예: 2024-04-10).
+    Firestore/홈에 쌓을 최소 발행일 = TAX_EMAIL_SINCE_MIN 과 동일(예: 2026-04-10).
     그 이전 날짜로 추출된 전표는 저장하지 않음. 환경에서 하한이 비면(None) 발행일 필터 없음.
     """
     return _IMAP_SINCE_MIN_DATE

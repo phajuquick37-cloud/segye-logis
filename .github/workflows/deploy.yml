@@ -105,7 +105,7 @@ jobs:
 
           env_updates = {
               "TAX_COLLECT_SECRET": tax_collect.strip(),
-              "TAX_EMAIL_SINCE_MIN": "2024-04-10",
+              "TAX_EMAIL_SINCE_MIN": "2026-04-10",
               "TAX_INVOICE_SUBJECT_STRICT": "true",
               "TAX_SCHEDULE_INTERVAL_MINUTES": "60",
               "TAX_MAIL_LOOKBACK_DAYS": "30",
