@@ -146,11 +146,13 @@ def get_effective_mail_window_start_date() -> _date:
         return w
     return min(w, _IMAP_SINCE_MIN_DATE)
 
-# Gmail은 보조함까지 보려면 [Gmail]/All Mail; Daum은 INBOX 위주 (없는 폴더는 스킵)
+# 없는 폴더는 email_reader에서 건너뜀.
+# 휴지통 포함: 수집 기간 내 메일이 Trash로 옮겨져도 볼 수 있음.
+# Gmail: [Gmail]/Trash — Daum·한메일: Trash / 휴지통 / Deleted Messages 중 서버에 있는 것만 열림.
 _default_imap_folders = (
-    "INBOX"
+    "INBOX,Trash,휴지통,Deleted Messages"
     if _IMAP_EMAIL.endswith(("@daum.net", "@hanmail.net"))
-    else "INBOX,[Gmail]/All Mail"
+    else "INBOX,[Gmail]/All Mail,[Gmail]/Trash"
 )
 _imap_folders_raw = _env("TAX_IMAP_FOLDERS", _default_imap_folders)
 _IMAP_FOLDERS = [x.strip() for x in _imap_folders_raw.split(",") if x.strip()]

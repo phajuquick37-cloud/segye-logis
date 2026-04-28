@@ -6,6 +6,8 @@
 # TAX_COLLECT_SECRET=
 
 # IMAP: 스크린에 보이는 메일함 (Gmail 또는 Daum 한메일)
+# 기본은 INBOX+All Mail+Trash 등 다중 폴더. 덮어쓰려면 TAX_IMAP_FOLDERS 로 쉼표 구분
+# 예(Gmail): TAX_IMAP_FOLDERS=INBOX,[Gmail]/All Mail,[Gmail]/Trash
 TAX_IMAP_EMAIL=phajuquick@daum.net
 TAX_IMAP_APP_PASSWORD=앱-비밀번호-16자
 # (구 이름 호환) GMAIL_USER=   GMAIL_APP_PASSWORD=
