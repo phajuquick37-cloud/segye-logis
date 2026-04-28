@@ -1,5 +1,5 @@
-# 브라우저 자동화
-playwright>=1.40.0
+# 브라우저 자동화 (Dockerfile 의 mcr playwright/python 태그와 동일 버전 유지 권장)
+playwright==1.58.0
 
 # HTML 파싱
 beautifulsoup4>=4.12.0
