@@ -12,6 +12,14 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    # Artifact Registry Docker 경로: LOCATION-docker.pkg.dev/PROJECT_ID/REPOSITORY_ID/IMAGE_NAME
+    # 콘솔의 리전·저장소 ID와 반드시 일치해야 docker push 가 성공합니다.
+    env:
+      GCP_PROJECT_ID: gen-lang-client-0127550748
+      AR_REGION: asia-northeast3
+      AR_REPOSITORY_ID: tax-automation
+      # 저장소 안의 이미지(패키지) 이름 — 서비스명과 맞춤
+      DOCKER_IMAGE_NAME: tax-automation
 
     steps:
       - name: Checkout
@@ -27,26 +35,59 @@ jobs:
         with:
           project_id: gen-lang-client-0127550748
 
-      # GitHub에 넣은 SA 키(gcp_xxx@PROJECT.iam.gserviceaccount.com) 한 주체로
-      # docker push + Cloud Run 배포. Cloud Build 기본 SA에 AR Writer를 줄 필요 없음.
-      - name: Docker — 이미지 빌드
+      - name: GCP API 사용 설정 (Artifact Registry · Cloud Run)
         run: |
           set -e
-          REG=asia-northeast3-docker.pkg.dev
-          IMG=$REG/gen-lang-client-0127550748/tax-automation/tax-automation
-          gcloud auth configure-docker "$REG" --quiet
-          docker build --progress=plain -t "${IMG}:${{ github.sha }}" ./tax-invoice-automation
+          gcloud services enable artifactregistry.googleapis.com run.googleapis.com \
+            --project="$GCP_PROJECT_ID"
+
+      - name: Artifact Registry Docker 저장소 확인 (없으면 생성)
+        run: |
+          set -euo pipefail
+          AR_HOST="${AR_REGION}-docker.pkg.dev"
+          echo "대상: project=$GCP_PROJECT_ID region=$AR_REGION repository=$AR_REPOSITORY_ID"
+          echo "이미지 URI 베이스: ${AR_HOST}/${GCP_PROJECT_ID}/${AR_REPOSITORY_ID}/${DOCKER_IMAGE_NAME}"
+          gcloud config set project "$GCP_PROJECT_ID"
+          echo "활성 계정:" && gcloud auth list --filter=status:ACTIVE --format="value(account)"
+          if gcloud artifacts repositories describe "$AR_REPOSITORY_ID" \
+              --location="$AR_REGION" --project="$GCP_PROJECT_ID" >/dev/null 2>&1; then
+            echo "OK — Artifact Registry 저장소가 이미 있습니다."
+            gcloud artifacts repositories describe "$AR_REPOSITORY_ID" \
+              --location="$AR_REGION" --project="$GCP_PROJECT_ID" \
+              --format="table(name,format,location)"
+          else
+            echo "저장소 없음 — docker 저장소 생성 시도…"
+            if gcloud artifacts repositories create "$AR_REPOSITORY_ID" \
+                --repository-format=docker \
+                --location="$AR_REGION" \
+                --project="$GCP_PROJECT_ID" \
+                --description="tax-invoice-automation (GitHub Actions)"; then
+              echo "OK — 저장소 생성 완료"
+            else
+              echo "::error::저장소 생성 실패. 아래 목록에 실제 REPOSITORY 이름이 있는지 확인한 뒤, 워크플로 env 의 AR_REPOSITORY_ID 를 그 이름에 맞추세요."
+              gcloud artifacts repositories list --project="$GCP_PROJECT_ID" --format="table(name,location,format)" || true
+              exit 1
+            fi
+          fi
+
+      # GitHub에 넣은 SA 키(gcp_xxx@PROJECT.iam.gserviceaccount.com) 한 주체로
+      # docker push + Cloud Run 배포.
+      - name: Docker — 이미지 빌드
+        run: |
+          set -euo pipefail
+          AR_HOST="${AR_REGION}-docker.pkg.dev"
+          IMAGE_URI="${AR_HOST}/${GCP_PROJECT_ID}/${AR_REPOSITORY_ID}/${DOCKER_IMAGE_NAME}"
+          gcloud auth configure-docker "$AR_HOST" --quiet
+          echo "빌드 태그: ${IMAGE_URI}:${GITHUB_SHA}"
+          docker build --progress=plain -t "${IMAGE_URI}:${GITHUB_SHA}" ./tax-invoice-automation
 
       - name: Docker — Artifact Registry 푸시
         run: |
-          set -e
-          REG=asia-northeast3-docker.pkg.dev
-          IMG=$REG/gen-lang-client-0127550748/tax-automation/tax-automation
-          gcloud auth configure-docker "$REG" --quiet
-          if ! docker push "${IMG}:${{ github.sha }}"; then
-            echo "::error::docker push 실패 → GitHub Secrets의 GCP_SA_KEY에 해당하는 서비스 계정에 프로젝트(또는 저장소 tax-automation)에서 roles/artifactregistry.writer 등록 필요. 세부: tax-invoice-automation/DEPLOY_OPERATIONS.md"
-            exit 1
-          fi
+          set -euo pipefail
+          AR_HOST="${AR_REGION}-docker.pkg.dev"
+          IMAGE_URI="${AR_HOST}/${GCP_PROJECT_ID}/${AR_REPOSITORY_ID}/${DOCKER_IMAGE_NAME}"
+          gcloud auth configure-docker "$AR_HOST" --quiet
+          docker push "${IMAGE_URI}:${GITHUB_SHA}"
 
       # 쉼표/따옴표가 섞인 TAX_COLLECT_SECRET 등은 CLI 한 줄 --update-env-vars에서 깨질 수 있음.
       # YAML 파일로 병합 업데이트(기존 IMAP·Firebase 등 콘솔 변수 유지).
@@ -54,8 +95,9 @@ jobs:
         env:
           TAX_COLLECT_SECRET: ${{ secrets.TAX_COLLECT_SECRET }}
         run: |
-          set -e
-          IMG=asia-northeast3-docker.pkg.dev/gen-lang-client-0127550748/tax-automation/tax-automation
+          set -euo pipefail
+          AR_HOST="${AR_REGION}-docker.pkg.dev"
+          IMG="${AR_HOST}/${GCP_PROJECT_ID}/${AR_REPOSITORY_ID}/${DOCKER_IMAGE_NAME}"
           python3 <<'PY'
           import os
           def q(v: str) -> str:
@@ -79,9 +121,9 @@ jobs:
           print("Wrote", path, "for keys:", list(out.keys()))
           PY
           gcloud run deploy tax-automation \
-            --image ${IMG}:${{ github.sha }} \
-            --region=asia-northeast3 \
-            --project=gen-lang-client-0127550748 \
+            --image "${IMG}:${{ github.sha }}" \
+            --region="$AR_REGION" \
+            --project="$GCP_PROJECT_ID" \
             --platform=managed \
             --allow-unauthenticated \
             --memory=2Gi \
@@ -97,8 +139,8 @@ jobs:
         run: |
           set -e
           URL="$(gcloud run services describe tax-automation \
-            --region=asia-northeast3 \
-            --project=gen-lang-client-0127550748 \
+            --region="$AR_REGION" \
+            --project="$GCP_PROJECT_ID" \
             --format='value(status.url)')"
           echo "url=${URL}" >> "$GITHUB_OUTPUT"
           {
