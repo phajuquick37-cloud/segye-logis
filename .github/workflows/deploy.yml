@@ -35,11 +35,11 @@ jobs:
         with:
           project_id: gen-lang-client-0127550748
 
+      # 이미 활성화돼 있으면 종료 코드 0. SA에 Service Usage 권한이 없어도 실패로 전체 워크플로를 막지 않음.
       - name: GCP API 사용 설정 (Artifact Registry · Cloud Run)
         run: |
-          set -e
           gcloud services enable artifactregistry.googleapis.com run.googleapis.com \
-            --project="$GCP_PROJECT_ID"
+            --project="$GCP_PROJECT_ID" || echo "::notice::services enable 무시(API 이미 활성 또는 권한 부족·콘솔에서 활성 확인)"
 
       - name: Artifact Registry Docker 저장소 확인 (없으면 생성)
         run: |
