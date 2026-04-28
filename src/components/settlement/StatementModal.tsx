@@ -3,7 +3,11 @@ import { db } from "../../lib/firebase";
 import {
   collection, onSnapshot, orderBy, query, updateDoc, doc,
 } from "firebase/firestore";
-import { normalizeCreditNameForLink } from "../../utils/sheetParser";
+import {
+  creditNamesLinkedForProfile,
+  normalizeCreditClientCell,
+  normalizeCreditNameForLink,
+} from "../../utils/sheetParser";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import { captureStatementToCanvas } from "../../utils/statementCapture";
@@ -256,12 +260,26 @@ const EXCEL_TABLE_HEADERS: Record<TemplateType, string[]> = {
   rapid: ["날짜", "출발동", "도착동", "비고", "금액", "차량"],
 };
 
+const SAMIL_NAME_HINTS = ["삼일강업", "(주)삼일", "(주）삼일", "㈜삼일"];
+const RAPID_NAME_HINTS   = ["래피드", "래피드어드", "래피드어드벤스", "래피어드", "rapid"];
+
 function detectTemplate(clientName: string, profile?: ClientProfile | null): TemplateType {
-  // 1. 거래처명 기반 자동 감지 (우선)
-  const n = clientName;
-  if (n.includes("삼일강업"))                          return "samil";
-  if (n.includes("지유전자") || n.includes("지유"))    return "jiyoo";
-  if (n.includes("래피드") || n.includes("래피어드") || n.includes("rapid")) return "rapid";
+  const nRaw = clientName;
+  const nCompact = normalizeCreditClientCell(nRaw).replace(/\s+/g, "");
+  // 1. 거래처명 기반 자동 감지 (표기 차이 허용: (주)삼일 ↔ 삼일강업, 래피드어드 ↔ 어드벤스 등)
+  if ((SAMIL_NAME_HINTS.some((h) => creditNamesLinkedForProfile(nRaw, h)) || /삼일강업/.test(nCompact)) ||
+      /^\(주\)\s*삼일\b/u.test(normalizeCreditClientCell(nRaw)) || /^（주）\s*삼일\b/u.test(normalizeCreditClientCell(nRaw)))
+    return "samil";
+  const nLower = normalizeCreditClientCell(nRaw).toLowerCase();
+  const nPlain = normalizeCreditClientCell(nRaw);
+  // 지유 전자 명시 또는 지유 단독(전자 포함 시 위에서 이미 걸림)
+  if (nPlain.includes("지유전자") || nPlain.includes("지유")) return "jiyoo";
+  if (
+    RAPID_NAME_HINTS.some((h) => creditNamesLinkedForProfile(nRaw, h)) ||
+    /\brapid\b/i.test(nLower) ||
+    nCompact.includes("래피드")
+  )
+    return "rapid";
   // 2. 프로필에서 기본양식이 아닌 양식을 명시한 경우 적용
   if (profile?.template && profile.template !== "basic") return profile.template as TemplateType;
   return "basic";
@@ -560,13 +578,12 @@ export default function StatementModal({
 
   // 거래처 프로필: 엑셀 집계명과 거래처 정보 탭 입력명이 공백만 다를 때도 연동
   useEffect(() => {
-    const key = normalizeCreditNameForLink(record.client_name);
+    const aggName = record.client_name;
     const unsub = onSnapshot(
       collection(db, "client_profiles"),
       (snap) => {
-        const doc = snap.docs.find(
-          (d) => normalizeCreditNameForLink(String((d.data().name as string) ?? "")) === key
-        );
+        const doc = snap.docs.find((d) =>
+          creditNamesLinkedForProfile(aggName, String((d.data().name as string) ?? "")));
         if (doc) {
           setClientProfile({ id: doc.id, ...doc.data() } as ClientProfile);
         } else {

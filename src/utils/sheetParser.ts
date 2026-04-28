@@ -158,6 +158,43 @@ export function normalizeCreditNameForLink(name: string): string {
   return normalizeCreditClientCell(name).replace(/\s+/g, " ");
 }
 
+/** 집계·아이템 행 이름 비교에는 그대로 `normalizeCreditNameForLink` 사용 */
+
+/**
+ * `ar_records.client_name`(엑셀 집계)과 `client_profiles.name`(거래처정보)이 같은 업체로 묶어도 되는지.
+ * (공백·(주)·「삼일」vs「삼일강업」·래피드 표기 차이 등)
+ */
+export function creditNamesLinkedForProfile(aggregatedName: string, profileName: string): boolean {
+  const a = normalizeCreditNameForLink(aggregatedName);
+  const b = normalizeCreditNameForLink(profileName);
+  if (!a || !b) return false;
+  if (a === b) return true;
+
+  const stripLeadingCorp = (s: string) =>
+    s
+      .replace(/^\(주\)\s*/i, "")
+      .replace(/^（주）\s*/u, "")
+      .replace(/^주식회사\s+/u, "")
+      .trim();
+
+  const compact = (s: string) => stripLeadingCorp(s).replace(/\s+/g, "");
+  const ca = compact(a);
+  const cb = compact(b);
+  if (ca === cb) return true;
+
+  /** 말미 「강업」만 다른 경우 — 삼일강업 ↔ 삼일 / (주)삼일강업 ↔ 삼일 */
+  const stripGangUp = (s: string) => s.replace(/강업$/u, "");
+  const coreCa = stripGangUp(ca);
+  const coreCb = stripGangUp(cb);
+  if (coreCa.length >= 2 && coreCa === coreCb) return true;
+
+  const shorter = ca.length <= cb.length ? ca : cb;
+  const longer = ca.length > cb.length ? ca : cb;
+  if (shorter.length >= 3 && longer.includes(shorter)) return true;
+
+  return false;
+}
+
 /**
  * 정규화된 거래처명이 비어 있거나 공란으로 볼 값이면 true → 일반 고객(신용 집계 제외)
  * (normalizeCreditClientCell 적용 후 문자열을 넣을 것)

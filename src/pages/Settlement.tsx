@@ -19,6 +19,7 @@ import {
 
 import {
   parseFile, ColKey, ParseResult,
+  creditNamesLinkedForProfile,
   normalizeCreditClientCell,
   normalizeCreditNameForLink,
   isBlankCreditClientName,
@@ -1790,13 +1791,12 @@ function QuickMailPanel({ record, onClose }: { record: ArRecord; onClose: () => 
       setLoading(false);
     });
     // 프로필 로드 (이름 정규화 일치) → 이메일 수신인 자동 적용
-    const key = normalizeCreditNameForLink(record.client_name);
+    const aggName = record.client_name;
     const unsubProf = onSnapshot(
       collection(db, "client_profiles"),
       (snap) => {
-        const doc = snap.docs.find(
-          (d) => normalizeCreditNameForLink(String((d.data().name as string) ?? "")) === key
-        );
+        const doc = snap.docs.find((d) =>
+          creditNamesLinkedForProfile(aggName, String((d.data().name as string) ?? "")));
         if (doc) {
           const p = { id: doc.id, ...doc.data() } as ModalClientProfile;
           setProfile(p);
