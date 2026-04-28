@@ -10,8 +10,8 @@ TAX_IMAP_EMAIL=phajuquick@daum.net
 TAX_IMAP_APP_PASSWORD=앱-비밀번호-16자
 # (구 이름 호환) GMAIL_USER=   GMAIL_APP_PASSWORD=
 
-# 수집 시작(기본 앱: 2026-04-10, 비우려면 TAX_EMAIL_SINCE_MIN= 빈 값으로 콘솔에 안 넣음)
-# TAX_EMAIL_SINCE_MIN=2026-04-10
+# 수집 시작(리포 기본: 2024-04-10, 비우려면 콘솔에서 변수 제거 또는 빈 문자열)
+# TAX_EMAIL_SINCE_MIN=2024-04-10
 # TAX_EMAIL_DAYS_LIMIT=1825
 # TAX_SCHEDULE_INTERVAL_MINUTES=60
 

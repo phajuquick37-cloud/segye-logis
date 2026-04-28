@@ -20,9 +20,8 @@ from config import (
     is_blocked_tax_invoice_url,
     is_blocked_invoice_email,
     recipient_keyword_required,
-    tax_priority_keywords_match,
+    mandatory_tax_invoice_keyword_in_subject_or_sender,
     email_allowed_for_collection,
-    matches_worldlogis_invoice_subject,
     get_imap_since_date_str,
     get_effective_mail_window_start_date,
 )
@@ -322,7 +321,6 @@ class EmailReader:
                         if (
                             recipient_kws
                             and recipient_keyword_required(from_addr)
-                            and not matches_worldlogis_invoice_subject(subject)
                         ):
                             recipient_blob = (
                                 subject + body["html"] + body["text"]
@@ -403,11 +401,9 @@ class EmailReader:
         results.sort(
             key=lambda e: (
                 0
-                if tax_priority_keywords_match(
+                if mandatory_tax_invoice_keyword_in_subject_or_sender(
                     e.get("from", ""),
                     e.get("subject", ""),
-                    e.get("html_body", ""),
-                    e.get("text_body", ""),
                 )
                 else 1,
                 e.get("date") or "",

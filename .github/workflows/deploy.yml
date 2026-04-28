@@ -52,7 +52,7 @@ jobs:
               return f'"{s}"'
           out = {
               "TAX_COLLECT_SECRET": os.environ.get("TAX_COLLECT_SECRET", "") or "",
-              "TAX_EMAIL_SINCE_MIN": "2026-04-10",
+              "TAX_EMAIL_SINCE_MIN": "2024-04-10",
               "TAX_INVOICE_SUBJECT_STRICT": "true",
               "TAX_SCHEDULE_INTERVAL_MINUTES": "60",
               "TAX_MAIL_LOOKBACK_DAYS": "30",

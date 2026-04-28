@@ -85,10 +85,10 @@ try:
 except ValueError:
     _EMAIL_DAYS_INT = 1825
 
-# 수집 시작일 하한(기본 2026-04-10). TAX_EMAIL_SINCE_MIN 을 "" 로 두면 하한 없음(전체 days_limit 구간).
+# 수집 시작일 하한(기본 2024-04-10). TAX_EMAIL_SINCE_MIN 을 "" 로 두면 하한 없음(전체 days_limit 구간).
 _env_since = _os.environ.get("TAX_EMAIL_SINCE_MIN")
 if _env_since is None:
-    _SINCE_MIN_RAW = "2026-04-10"
+    _SINCE_MIN_RAW = "2024-04-10"
 elif not str(_env_since).strip():
     _SINCE_MIN_RAW = ""
 else:
@@ -128,7 +128,7 @@ def today_kst_date() -> _date:
 
 def get_min_issue_date_for_save() -> _date | None:
     """
-    Firestore/홈에 쌓을 최소 발행일 = TAX_EMAIL_SINCE_MIN 과 동일(예: 2026-04-10).
+    Firestore/홈에 쌓을 최소 발행일 = TAX_EMAIL_SINCE_MIN 과 동일(예: 2024-04-10).
     그 이전 날짜로 추출된 전표는 저장하지 않음. 환경에서 하한이 비면(None) 발행일 필터 없음.
     """
     return _IMAP_SINCE_MIN_DATE
@@ -137,13 +137,14 @@ def get_min_issue_date_for_save() -> _date | None:
 def get_effective_mail_window_start_date() -> _date:
     """
     IMAP SINCE / 메일 Date 필터의 시작일.
-    매 실행마다 갱신: max(TAX_EMAIL_SINCE_MIN, 오늘_KST − lookback).
+    오늘−lookback 과 TAX_EMAIL_SINCE_MIN 중 더 이른(과거) 날짜를 쓰면 since_min 이후 전체 기간을 담을 수 있음.
+    (이전 max()는 하한이 과거일 때 최근 30일만 보는 오류를 냄.)
     """
     today = today_kst_date()
     w = today - _timedelta(days=TAX_MAIL_LOOKBACK_DAYS)
-    if _IMAP_SINCE_MIN_DATE is not None and w < _IMAP_SINCE_MIN_DATE:
-        w = _IMAP_SINCE_MIN_DATE
-    return w
+    if _IMAP_SINCE_MIN_DATE is None:
+        return w
+    return min(w, _IMAP_SINCE_MIN_DATE)
 
 # Gmail은 보조함까지 보려면 [Gmail]/All Mail; Daum은 INBOX 위주 (없는 폴더는 스킵)
 _default_imap_folders = (
@@ -354,6 +355,41 @@ def tax_priority_keywords_match(
     return False
 
 
+def mandatory_tax_invoice_keyword_in_subject_or_sender(
+    from_addr: str, subject: str
+) -> bool:
+    """
+    수집 대상 필수 조건 — 제목·발신 주소 문자열만 검사 (본문 제외).
+    '원콜', '전국24시콜화물', '화물맨', '로지노트플러스', 영문 'tax'(단어)·tax숫자·@tax 발신 등.
+    """
+    frm = from_addr or ""
+    sub = subject or ""
+    blob = frm + "\n" + sub
+    compact_blob = _re.sub(r"[\s\u200b\xa0]+", "", blob)
+    frm_l = frm.lower()
+    sub_l = sub.lower()
+    hay = frm_l + "\n" + sub_l
+
+    if "원콜" in blob:
+        return True
+    if "전국24시콜화물" in compact_blob:
+        return True
+    if "화물맨" in blob:
+        return True
+    if "로지노트플러스" in compact_blob:
+        return True
+    # 화물맨·원콜 등 tax12.co.kr 형태
+    if _TAX_NUMBER_SENDER_RE.search(frm):
+        return True
+    # 제목·발신에 tax10 ~ tax99 (예: 전자발행 세금번호 알림)
+    if _re.search(r"\btax\s*\d+", hay, flags=_re.IGNORECASE):
+        return True
+    # 영문 단어 tax (제목 또는 발신)
+    if _re.search(r"\btax\b", hay, flags=_re.IGNORECASE):
+        return True
+    return False
+
+
 def get_imap_since_date_str(days_limit: int) -> str:
     """
     IMAP SINCE용 날짜 (DD-Mon-YYYY).
@@ -403,13 +439,12 @@ def passes_etax_or_nts_spam_guard(
     body_text: str = "",
 ) -> bool:
     """
-    본문·제목에 '전자세금계산서' / '국세청' / 홈택스(go.kr) 등이 없으면 제외(알려진 캐리어 발신은 예외).
+    제목/발신에 필수 키워드가 이미 걸린 경우 통과(mandatory 우선).
+    그 외에는 본문·제목에서 전자세금·국세청·홈택스 신호 필요.
     """
     if not TAX_REQUIRE_ETAX_OR_NTS_SIGNAL:
         return True
-    if sender_matches_allowed_platforms(from_addr):
-        return True
-    if matches_worldlogis_invoice_subject(subject):
+    if mandatory_tax_invoice_keyword_in_subject_or_sender(from_addr, subject):
         return True
     compact = _re.sub(
         r"[\s\u200b\xa0]+", "", f"{subject}\n{body_html}\n{body_text}"
@@ -467,24 +502,13 @@ def email_allowed_for_collection(
     body_text: str = "",
 ) -> bool:
     """
-    Qoo10/큐텐 등 차단 후, 아래 신호 중 하나만 수집합니다.
-    - 세계로지스 수취 제목 패턴(matches_worldlogis_invoice_subject)
-    - 원콜·화물맨·24시콜·로지노트·tax 등 priority 키워드(tax_priority_keywords_match)
-    - 허용 발신 도메인(신뢰 캐리어·taxNN 등)
-    이후 전자세금·국세청 신호 또는 위 예외 규칙은 passes_etax_or_nts_spam_guard 에서 처리합니다.
+    (1) Qoo10·큐텐 등 쇼핑 차단 후
+    (2) 제목 또는 발신에 필수 키워드(원콜·전국24시콜화물·화물맨·로지노트플러스·tax)
+    (3) TAX_REQUIRE_ETAX_OR_NTS_SIGNAL 시 세금 신호 검사(passes_etax — 필수 키워드 있으면 생략)
     """
     if is_blocked_invoice_email(from_addr, subject, body_html, body_text):
         return False
-    if matches_worldlogis_invoice_subject(subject):
-        sig = True
-    else:
-        sig = (
-            tax_priority_keywords_match(
-                from_addr, subject, body_html, body_text
-            )
-            or sender_matches_allowed_platforms(from_addr)
-        )
-    if not sig:
+    if not mandatory_tax_invoice_keyword_in_subject_or_sender(from_addr, subject):
         return False
     return passes_etax_or_nts_spam_guard(
         from_addr, subject, body_html, body_text
