@@ -52,7 +52,7 @@
 [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml)은 GitHub 러너에서 `docker build` → **Artifact Registry** `docker push` → **Cloud Run** `deploy` 를 **모두 이 SA 키로** 수행합니다.  
 따라서 **콘솔에서 `...@cloudbuild.gserviceaccount.com`에 AR 쓰기 권한을 주는 식(구 방식)은 이 워크플로에 필요 없습니다.** 대신 `GCP_SA_KEY`에 해당하는 SA에 아래를 맞춥니다.
 
-- **Artifact Registry 작성자** (`roles/artifactregistry.writer`) — **필수** — GitHub 워크플로가 `docker push` 로 `asia-northeast3-docker.pkg.dev/gen-lang-client-0127550748/tax-automation/...` 이미지를 올립니다. `GCP_SA_KEY`에 들어 있는 **그 서비스 계정**(JSON의 `client_email`)에 최소 다음 중 하나가 있어야 합니다. 없으면 **Actions에서 Docker 빌드는 성공했는데 Artifact Registry 푸시 단계만 실패**합니다.
+- **Artifact Registry 작성자** (`roles/artifactregistry.writer`) — **필수** — GitHub 워크플로가 `docker push` 로 `asia-northeast3-docker.pkg.dev/gen-lang-client-0127550748/tax-automation/tax-automation:태그` 형태로 올립니다. **주의:** 콘솔 IAM에 `…compute@developer.gserviceaccount.com` 만 주면 안 되고, **GitHub Secret `GCP_SA_KEY` JSON 안의 `client_email`과 같은 서비스 계정**에 Writer(또는 저장소 업로드 권한)가 붙어 있어야 합니다. 둘이 다르면 빌드는 성공해도 **푸시만 실패**합니다.
   - 프로젝트 단위 부여 예 (Cloud Shell에서 본인 `client_email`으로 교체):
     ```bash
     gcloud projects add-iam-policy-binding gen-lang-client-0127550748 \
