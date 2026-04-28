@@ -4,6 +4,7 @@ import {
   collection, onSnapshot, orderBy, query, updateDoc, doc,
 } from "firebase/firestore";
 import {
+  matchClientProfileToAggregated,
   creditNamesLinkedForProfile,
   normalizeCreditClientCell,
   normalizeCreditNameForLink,
@@ -14,6 +15,7 @@ import { captureStatementToCanvas } from "../../utils/statementCapture";
 import { X, Download, Mail, FileSpreadsheet, Printer, CheckCircle, AlertTriangle, Loader2, ImageIcon, Send } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import { SUPPLIER, VAT_RATE } from "../../config/companyInfo";
+import { vercelApiUrl } from "../../utils/apiOrigin";
 
 // ─────────────────────────────────────────────────────────────
 // 타입
@@ -291,6 +293,8 @@ function detectTemplate(clientName: string, profile?: ClientProfile | null): Tem
 export interface ClientProfile {
   id?: string;
   name: string;
+  /** 신용내역 거래처명과 자동 연동용(저장 시 자동 채움) */
+  aggregation_link_key?: string;
   biz_no: string;
   ceo_name: string;
   address: string;
@@ -582,10 +586,14 @@ export default function StatementModal({
     const unsub = onSnapshot(
       collection(db, "client_profiles"),
       (snap) => {
-        const doc = snap.docs.find((d) =>
-          creditNamesLinkedForProfile(aggName, String((d.data().name as string) ?? "")));
-        if (doc) {
-          setClientProfile({ id: doc.id, ...doc.data() } as ClientProfile);
+        const rows = snap.docs.map((d) => ({
+          ...(d.data() as Omit<ClientProfile, "id">),
+          id: d.id,
+        }));
+        const matched = matchClientProfileToAggregated(rows, aggName);
+        if (matched?.id) {
+          const { id, ...prof } = matched;
+          setClientProfile({ ...(prof as ClientProfile), id: String(id) });
         } else {
           setClientProfile(null);
         }
@@ -815,7 +823,7 @@ export default function StatementModal({
 
       // 모든 담당자에게 순차 발송
       for (const to of recipients) {
-        const resp = await fetch("/api/sendMail", {
+        const resp = await fetch(vercelApiUrl("/api/sendMail"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

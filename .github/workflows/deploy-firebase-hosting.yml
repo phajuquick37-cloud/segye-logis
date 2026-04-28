@@ -1,7 +1,6 @@
-# Firebase Hosting 배포 (로컬 firebase login 불필요)
-# GitHub Secret FIREBASE_SERVICE_ACCOUNT 에 GCP 서비스 계정 JSON 전체를 넣으면 됩니다.
-# 콘솔: IAM → 서비스 계정 → 키 생성(JSON) — 역할: Firebase Hosting Admin
-# 도메인 세계로지스.com 은 Firebase Console → Hosting → 사용자 지정 도메인에서 따로 연결합니다(이 워크플로와 무관).
+# Vite 빌드(dist) → Firebase Hosting | /api/** 만 Cloud Run(tax-automation)
+# FIREBASE_SERVICE_ACCOUNT (GCP 서비스 계정 JSON) GitHub Secret 필요.
+# 세계로지스.com DNS 는 Firebase Console → Hosting → 사용자 지정 도메인
 
 name: Deploy Firebase Hosting
 
@@ -11,7 +10,12 @@ on:
       - master
     paths:
       - "firebase.json"
-      - "firebase-hosting-public/**"
+      - "src/**"
+      - "index.html"
+      - "vite.config.ts"
+      - "package.json"
+      - "package-lock.json"
+      - "public/**"
       - ".github/workflows/deploy-firebase-hosting.yml"
   workflow_dispatch:
 
@@ -24,7 +28,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Deploy to Firebase Hosting (→ Cloud Run rewrites 포함)
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install & build (Vite → dist)
+        env:
+          # Firebase 호스팅 + Vercel API 병행 시: 예) https://프로젝트.vercel.app (sendMail/tax-run 프록시)
+          VITE_VERCEL_API_ORIGIN: ${{ secrets.VITE_VERCEL_API_ORIGIN }}
+        run: |
+          npm ci
+          npm run build
+
+      - name: Deploy to Firebase Hosting
         uses: FirebaseExtended/action-hosting-deploy@v0
         with:
           repoToken: ${{ secrets.GITHUB_TOKEN }}

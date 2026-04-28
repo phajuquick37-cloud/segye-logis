@@ -19,7 +19,9 @@ import {
 
 import {
   parseFile, ColKey, ParseResult,
-  creditNamesLinkedForProfile,
+  creditAggregationLinkKey,
+  matchClientProfileToAggregated,
+  profileMatchesAggregatedName,
   normalizeCreditClientCell,
   normalizeCreditNameForLink,
   isBlankCreditClientName,
@@ -34,6 +36,7 @@ import MonthlyHistory, { useMonthClosures } from "../components/settlement/Month
 import StatementModal, { DocumentBody, SettlementItem, ClientProfile as ModalClientProfile } from "../components/settlement/StatementModal";
 import { captureStatementToCanvas } from "../utils/statementCapture";
 import { SUPPLIER, VAT_RATE } from "../config/companyInfo";
+import { vercelApiUrl } from "../utils/apiOrigin";
 
 // ─────────────────────────────────────────────────────────────
 // 타입 & 상수
@@ -48,6 +51,7 @@ const TEMPLATE_LABELS: Record<TemplateType, string> = {
 interface ClientProfile {
   id?: string;
   name: string;
+  aggregation_link_key?: string;
   biz_no: string;
   ceo_name: string;
   address: string;
@@ -1795,10 +1799,14 @@ function QuickMailPanel({ record, onClose }: { record: ArRecord; onClose: () => 
     const unsubProf = onSnapshot(
       collection(db, "client_profiles"),
       (snap) => {
-        const doc = snap.docs.find((d) =>
-          creditNamesLinkedForProfile(aggName, String((d.data().name as string) ?? "")));
-        if (doc) {
-          const p = { id: doc.id, ...doc.data() } as ModalClientProfile;
+        const rows = snap.docs.map((d) => ({
+          ...(d.data() as Omit<ModalClientProfile, "id">),
+          id: d.id,
+        }));
+        const matched = matchClientProfileToAggregated(rows, aggName);
+        if (matched?.id) {
+          const { id, ...prof } = matched;
+          const p = { ...(prof as ModalClientProfile), id: String(id) };
           setProfile(p);
           if (p.email?.trim()) {
             const profEmails = p.email.split(",").map((e: string) => e.trim()).filter(Boolean);
@@ -1835,7 +1843,7 @@ function QuickMailPanel({ record, onClose }: { record: ArRecord; onClose: () => 
       const supplyTotal = record.total_amount;
       const vatTotal = Math.round(supplyTotal * VAT_RATE);
       for (const to of recipients) {
-        const resp = await fetch("/api/sendMail", {
+        const resp = await fetch(vercelApiUrl("/api/sendMail"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1984,22 +1992,23 @@ function ClientProfilesPanel() {
     if (!nameNorm) { alert("거래처명을 입력하세요."); return; }
     setSaving(true);
     try {
-      const payload = { ...form, name: nameNorm };
+      const linkKey = creditAggregationLinkKey(nameNorm);
+      const payload = { ...form, name: nameNorm, aggregation_link_key: linkKey };
       if (isNew) {
         await addDoc(collection(db, "client_profiles"), payload);
       } else if (editing?.id) {
         await setDoc(doc(db, "client_profiles", editing.id), payload, { merge: true });
       }
 
-      // 이메일이 있으면 신용내역(ar_records) 중 같은 거래처명인 항목에 contact_email 자동 동기화
+      // 이메일이 있으면 집계명 표기 차이까지 허용해 ar_records 에 contact_email 자동 반영
       if (form.email?.trim()) {
-        const snap = await getDocs(
-          query(collection(db, "ar_records"), where("client_name", "==", nameNorm))
-        );
+        const snap = await getDocs(collection(db, "ar_records"));
         const batch = writeBatch(db);
         snap.docs.forEach((d) => {
-          if (!d.data().contact_email) {   // 이미 직접 입력한 이메일이 있으면 덮어쓰지 않음
-            batch.update(d.ref, { contact_email: form.email.trim() });
+          const arName = String((d.data() as { client_name?: string }).client_name ?? "");
+          if (!profileMatchesAggregatedName(nameNorm, arName)) return;
+          if (!d.data().contact_email) {
+            batch.update(d.ref, { contact_email: form.email!.trim() });
           }
         });
         await batch.commit();

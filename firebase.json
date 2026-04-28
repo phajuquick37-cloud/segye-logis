@@ -10,7 +10,7 @@
     }
   ],
   "hosting": {
-    "public": "firebase-hosting-public",
+    "public": "dist",
     "ignore": [
       "firebase.json",
       "**/.*",
@@ -19,11 +19,29 @@
     "cleanUrls": true,
     "rewrites": [
       {
-        "source": "**",
+        "source": "/api/health",
         "run": {
           "serviceId": "tax-automation",
           "region": "asia-northeast3"
         }
+      },
+      {
+        "source": "/api/status",
+        "run": {
+          "serviceId": "tax-automation",
+          "region": "asia-northeast3"
+        }
+      },
+      {
+        "source": "/api/run",
+        "run": {
+          "serviceId": "tax-automation",
+          "region": "asia-northeast3"
+        }
+      },
+      {
+        "source": "**",
+        "destination": "/index.html"
       }
     ]
   }
