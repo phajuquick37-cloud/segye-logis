@@ -13,7 +13,11 @@ function getFirebaseWebApiKey(): string {
   );
 }
 
-/** Vercel env 오타 방지: (https://…), 따옴표 등 제거 후 Cloud Run 베이스 URL만 사용 */
+/**
+ * Cloud Run 베이스만 남김(스킴+호스트+[선택 경로]).
+ * · (https://…), 따옴표 제거
+ * · 끝에 /api/run 또는 /api 를 실수로 넣은 경우 제거 — 이후 코드에서 /api/run 을 한 번만 붙임
+ */
 function normalizeAutomationBaseUrl(raw: string): string {
   let s = raw.trim();
   if (
@@ -30,11 +34,19 @@ function normalizeAutomationBaseUrl(raw: string): string {
   try {
     const u = new URL(s);
     if (u.protocol !== "http:" && u.protocol !== "https:") return "";
-    const pathOnly = u.pathname && u.pathname !== "/" ? u.pathname.replace(/\/$/, "") : "";
-    return `${u.origin}${pathOnly}`;
+    let pathOnly = u.pathname && u.pathname !== "/" ? u.pathname.replace(/\/$/, "") : "";
+    pathOnly = pathOnly.replace(/\/api\/run$/i, "").replace(/\/api$/i, "");
+    return `${u.origin}${pathOnly}`.replace(/\/$/, "");
   } catch {
     return "";
   }
+}
+
+/** 수동 수집 단일 엔드포인트 — base 에 /api/run 포함 여부와 무관하게 한 번만 조합 */
+function cloudRunManualRunUrl(baseNormalized: string): string {
+  const b = baseNormalized.replace(/\/$/, "");
+  if (/\/api\/run$/i.test(b)) return b;
+  return `${b}/api/run`;
 }
 
 /** FastAPI detail은 문자열·객체·배열일 수 있음 — 항상 사람이 읽을 문자열로 */
@@ -106,20 +118,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const baseRaw =
-      process.env.TAX_AUTOMATION_URL || process.env.VITE_TAX_AUTOMATION_URL || "";
+      process.env.TAX_AUTOMATION_URL ||
+      process.env.VITE_TAX_AUTOMATION_URL ||
+      "";
     const base = normalizeAutomationBaseUrl(baseRaw);
     if (!base) {
       return res.status(500).json({
         error:
-          "TAX_AUTOMATION_URL(또는 VITE_TAX_AUTOMATION_URL)이 없거나 URL 형식이 잘못되었습니다. 예: https://tax-automation-xxxx.a.run.app (괄호·따옴표 없이)",
+          "TAX_AUTOMATION_URL(또는 VITE_TAX_AUTOMATION_URL)이 없거나 URL 형식이 잘못되었습니다. 예: https://tax-automation-....asia-northeast3.run.app (경로 /api/run 없이 베이스만)",
       });
     }
 
-    const secret = (
-      process.env.TAX_AUTOMATION_SECRET ||
-      process.env.VITE_TAX_AUTOMATION_SECRET ||
-      ""
-    ).trim();
+    /** Cloud Run 의 TAX_COLLECT_SECRET 과 동일한 값 — 이름도 맞춰 둠 */
+    const secret = [
+      process.env.TAX_AUTOMATION_SECRET,
+      process.env.VITE_TAX_AUTOMATION_SECRET,
+      process.env.TAX_COLLECT_SECRET,
+      process.env.VITE_TAX_COLLECT_SECRET,
+    ]
+      .map((x) => (x == null ? "" : String(x).trim()))
+      .find((x) => x.length > 0) ?? "";
+
     const headers: Record<string, string> = { Accept: "application/json" };
     if (secret) headers["X-Tax-Collect-Secret"] = secret;
 
@@ -127,7 +146,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const to = setTimeout(() => ac.abort(), 30_000);
     let r: Response;
     try {
-      r = await fetch(`${base}/api/run`, { method: "POST", headers, signal: ac.signal });
+      r = await fetch(cloudRunManualRunUrl(base), {
+        method: "POST",
+        headers,
+        signal: ac.signal,
+      });
     } catch (e) {
       const err = e instanceof Error ? e.message : String(e);
       return res.status(502).json({ error: `Cloud Run 연결 실패: ${err}` });

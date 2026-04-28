@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from ".
 import { LogIn, LogOut, Trash2, CheckCircle, Clock, PlusCircle, FileUp, X, Lock, Eye, Receipt, DollarSign, ChevronLeft, ChevronRight, ZoomIn, BarChart3, RefreshCw } from "lucide-react";
 import { Link } from "react-router-dom";
 import { vercelApiUrl } from "../utils/apiOrigin";
+import { TAX_COLLECTION_PROXY_PATH } from "../api/tax";
 
 type Tab = "inquiries" | "notices" | "taxinvoices";
 
@@ -197,7 +198,7 @@ export default function Admin() {
     };
     try {
       const idToken = await user.getIdToken();
-      const r = await fetch(vercelApiUrl("/api/tax-run"), {
+      const r = await fetch(vercelApiUrl(TAX_COLLECTION_PROXY_PATH), {
         method: "POST",
         headers: { Authorization: `Bearer ${idToken}`, Accept: "application/json" },
       });
