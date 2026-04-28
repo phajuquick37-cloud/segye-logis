@@ -29,14 +29,19 @@ jobs:
 
       # GitHub에 넣은 SA 키(gcp_xxx@PROJECT.iam.gserviceaccount.com) 한 주체로
       # docker push + Cloud Run 배포. Cloud Build 기본 SA에 AR Writer를 줄 필요 없음.
-      - name: Docker — 빌드 후 Artifact Registry에 푸시
+      - name: Docker — 이미지 빌드
         run: |
           set -e
           REG=asia-northeast3-docker.pkg.dev
           IMG=$REG/gen-lang-client-0127550748/tax-automation/tax-automation
           gcloud auth configure-docker "$REG" --quiet
           docker build --progress=plain -t "${IMG}:${{ github.sha }}" ./tax-invoice-automation
-          echo "--- docker push ---"
+
+      - name: Docker — Artifact Registry 푸시
+        run: |
+          set -e
+          REG=asia-northeast3-docker.pkg.dev
+          IMG=$REG/gen-lang-client-0127550748/tax-automation/tax-automation
           docker push "${IMG}:${{ github.sha }}"
 
       # 쉼표/따옴표가 섞인 TAX_COLLECT_SECRET 등은 CLI 한 줄 --update-env-vars에서 깨질 수 있음.
