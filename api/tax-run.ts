@@ -117,24 +117,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(403).json({ error: "권한이 없습니다." });
     }
 
+    // 대시보드에서 자주 바꾸는 VITE_* 를 우선 — 예전 TAX_AUTOMATION_* 만 남아 있으면 구 URL이 먼저 쓰이던 문제 방지
     const baseRaw =
-      process.env.TAX_AUTOMATION_URL ||
       process.env.VITE_TAX_AUTOMATION_URL ||
+      process.env.TAX_AUTOMATION_URL ||
       "";
     const base = normalizeAutomationBaseUrl(baseRaw);
     if (!base) {
       return res.status(500).json({
         error:
-          "TAX_AUTOMATION_URL(또는 VITE_TAX_AUTOMATION_URL)이 없거나 URL 형식이 잘못되었습니다. 예: https://tax-automation-....asia-northeast3.run.app (경로 /api/run 없이 베이스만)",
+          "VITE_TAX_AUTOMATION_URL(또는 TAX_AUTOMATION_URL)이 없거나 URL 형식이 잘못되었습니다. 베이스만. 시크릿은 VITE_TAX_AUTOMATION_SECRET 등 Cloud Run TAX_COLLECT_SECRET 과 동일하게",
       });
     }
 
-    /** Cloud Run 의 TAX_COLLECT_SECRET 과 동일한 값 — 이름도 맞춰 둠 */
+    /** Cloud Run `TAX_COLLECT_SECRET` 과 동일 값 — VITE 로 바꾼 비밀값이 먼저 적용되게 순서 유지 */
     const secret = [
-      process.env.TAX_AUTOMATION_SECRET,
       process.env.VITE_TAX_AUTOMATION_SECRET,
-      process.env.TAX_COLLECT_SECRET,
       process.env.VITE_TAX_COLLECT_SECRET,
+      process.env.TAX_AUTOMATION_SECRET,
+      process.env.TAX_COLLECT_SECRET,
     ]
       .map((x) => (x == null ? "" : String(x).trim()))
       .find((x) => x.length > 0) ?? "";
