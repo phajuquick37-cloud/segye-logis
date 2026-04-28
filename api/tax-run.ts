@@ -13,6 +13,30 @@ function getFirebaseWebApiKey(): string {
   );
 }
 
+/** Vercel env 오타 방지: (https://…), 따옴표 등 제거 후 Cloud Run 베이스 URL만 사용 */
+function normalizeAutomationBaseUrl(raw: string): string {
+  let s = raw.trim();
+  if (
+    (s.startsWith('"') && s.endsWith('"')) ||
+    (s.startsWith("'") && s.endsWith("'"))
+  ) {
+    s = s.slice(1, -1).trim();
+  }
+  while (s.startsWith("(") && s.endsWith(")")) {
+    s = s.slice(1, -1).trim();
+  }
+  s = s.replace(/\/$/, "");
+  if (!s) return "";
+  try {
+    const u = new URL(s);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return "";
+    const pathOnly = u.pathname && u.pathname !== "/" ? u.pathname.replace(/\/$/, "") : "";
+    return `${u.origin}${pathOnly}`;
+  } catch {
+    return "";
+  }
+}
+
 /** FastAPI detail은 문자열·객체·배열일 수 있음 — 항상 사람이 읽을 문자열로 */
 function formatCloudRunErrorBody(body: { detail?: unknown; message?: unknown }): string {
   const d = body.detail;
@@ -81,15 +105,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(403).json({ error: "권한이 없습니다." });
     }
 
-    const base = (process.env.TAX_AUTOMATION_URL || process.env.VITE_TAX_AUTOMATION_URL || "").replace(/\/$/, "");
+    const baseRaw =
+      process.env.TAX_AUTOMATION_URL || process.env.VITE_TAX_AUTOMATION_URL || "";
+    const base = normalizeAutomationBaseUrl(baseRaw);
     if (!base) {
       return res.status(500).json({
         error:
-          "TAX_AUTOMATION_URL(또는 VITE_TAX_AUTOMATION_URL)이 Vercel 서버 환경 변수에 없습니다.",
+          "TAX_AUTOMATION_URL(또는 VITE_TAX_AUTOMATION_URL)이 없거나 URL 형식이 잘못되었습니다. 예: https://tax-automation-xxxx.a.run.app (괄호·따옴표 없이)",
       });
     }
 
-    const secret = (process.env.TAX_AUTOMATION_SECRET || process.env.VITE_TAX_AUTOMATION_SECRET || "").trim();
+    const secret = (
+      process.env.TAX_AUTOMATION_SECRET ||
+      process.env.VITE_TAX_AUTOMATION_SECRET ||
+      ""
+    ).trim();
     const headers: Record<string, string> = { Accept: "application/json" };
     if (secret) headers["X-Tax-Collect-Secret"] = secret;
 
