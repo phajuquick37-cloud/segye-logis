@@ -21,6 +21,8 @@ COPY . .
 
 RUN mkdir -p output logs
 
-EXPOSE 8000
+# Cloud Run은 런타임에 PORT(기본 8080)를 주입 — 이 포트로 리슨해야 헬스체크 통과
+ENV PORT=8080
+EXPOSE 8080
 
-CMD ["uvicorn", "api_server:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"]
+CMD ["sh", "-c", "exec uvicorn api_server:app --host 0.0.0.0 --port ${PORT:-8080} --log-level info"]

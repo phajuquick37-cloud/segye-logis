@@ -67,6 +67,18 @@ jobs:
             exit 1
           )
 
+      # GitHub Secret 이 비어 있으면 Cloud Run 에 빈 TAX_COLLECT_SECRET 이 올라가므로 배포 전에 차단
+      - name: TAX_COLLECT_SECRET 확인
+        env:
+          TAX_COLLECT_SECRET: ${{ secrets.TAX_COLLECT_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TAX_COLLECT_SECRET:-}" ]; then
+            echo "::error::Repository secret TAX_COLLECT_SECRET 이 비어 있거나 없습니다. GitHub → Settings → Secrets and variables → Actions 에 값을 추가하세요."
+            exit 1
+          fi
+          echo "TAX_COLLECT_SECRET 설정됨(길이: ${#TAX_COLLECT_SECRET}자, 값은 출력하지 않음)"
+
       # --update-env-vars 를 키마다 반복(한 번에 하나의 KEY=VALUE) — 특수문자·쉼표가 있는 값도 파일 없이 안전하게 병합.
       - name: Cloud Run 배포
         env:
@@ -76,14 +88,23 @@ jobs:
           python3 <<'PY'
           import os
           import subprocess
+          import sys
 
           repo = os.environ["AR_DOCKER_REPOSITORY"].rstrip("/")
           name = os.environ["DOCKER_IMAGE_NAME"]
           sha = os.environ["GITHUB_SHA"]
           image = f"{repo}/{name}:{sha}"
 
+          tax_collect = os.environ.get("TAX_COLLECT_SECRET") or ""
+          if not tax_collect.strip():
+              print(
+                  "::error::TAX_COLLECT_SECRET 비어 있음 — 이전 단계(TAX_COLLECT_SECRET 확인)를 통과할 수 없습니다.",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+
           env_updates = {
-              "TAX_COLLECT_SECRET": os.environ.get("TAX_COLLECT_SECRET", "") or "",
+              "TAX_COLLECT_SECRET": tax_collect.strip(),
               "TAX_EMAIL_SINCE_MIN": "2024-04-10",
               "TAX_INVOICE_SUBJECT_STRICT": "true",
               "TAX_SCHEDULE_INTERVAL_MINUTES": "60",

@@ -5,7 +5,7 @@ FastAPI 서버
 - GET  /api/health    : 헬스체크 (Docker healthcheck용)
 
 서버 시작:
-  uvicorn api_server:app --host 0.0.0.0 --port 8000
+  Cloud Run: PORT(기본 8080) 리슨 / 로컬: PORT 미설정 시 8000 (main.py --server 참고)
 """
 
 import asyncio

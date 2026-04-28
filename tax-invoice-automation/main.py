@@ -11,6 +11,7 @@
 import asyncio
 import argparse
 import logging
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -100,8 +101,10 @@ async def run_url(url: str):
 
 def run_server():
     import uvicorn
-    print("\nFastAPI 서버 시작 (포트 8000) + 스케줄러 가동")
-    uvicorn.run("api_server:app", host="0.0.0.0", port=8000, reload=False)
+
+    port = int(os.environ.get("PORT", "8000"))
+    print(f"\nFastAPI 서버 시작 (포트 {port}) + 스케줄러 가동")
+    uvicorn.run("api_server:app", host="0.0.0.0", port=port, reload=False)
 
 
 # ─── 1회 즉시 실행 ─────────────────────────────────────────────────────────────
