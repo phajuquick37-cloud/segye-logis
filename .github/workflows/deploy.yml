@@ -96,9 +96,22 @@ jobs:
             echo "- \`VITE_TAX_AUTOMATION_URL\` (클라이언트 참조용, 선택)"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # if: 에서 secrets 를 직접 쓸 수 없어, 출력으로 게이팅 (Unrecognized named-value: 'secrets' 방지)
+      - name: Vercel 동기화 여부 게이트
+        id: vercel_gate
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: |
+          if [ -n "$VERCEL_TOKEN" ] && [ -n "$VERCEL_PROJECT_ID" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
       # GitHub에 VERCEL_TOKEN + VERCEL_PROJECT_ID(및 선택 VERCEL_TEAM_ID) 추가 시 동기화
       - name: Vercel 환경 변수 동기화 (선택)
-        if: ${{ secrets.VERCEL_TOKEN != '' && secrets.VERCEL_PROJECT_ID != '' }}
+        if: steps.vercel_gate.outputs.ready == 'true'
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
@@ -169,7 +182,7 @@ jobs:
           PY
 
       - name: Vercel 수동 설정 안내 (시크릿 없을 때)
-        if: ${{ secrets.VERCEL_TOKEN == '' || secrets.VERCEL_PROJECT_ID == '' }}
+        if: steps.vercel_gate.outputs.ready != 'true'
         env:
           CR_URL: ${{ steps.cloudrun_url.outputs.url }}
         run: |
