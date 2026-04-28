@@ -42,7 +42,11 @@ jobs:
           set -e
           REG=asia-northeast3-docker.pkg.dev
           IMG=$REG/gen-lang-client-0127550748/tax-automation/tax-automation
-          docker push "${IMG}:${{ github.sha }}"
+          gcloud auth configure-docker "$REG" --quiet
+          if ! docker push "${IMG}:${{ github.sha }}"; then
+            echo "::error::docker push 실패 → GitHub Secrets의 GCP_SA_KEY에 해당하는 서비스 계정에 프로젝트(또는 저장소 tax-automation)에서 roles/artifactregistry.writer 등록 필요. 세부: tax-invoice-automation/DEPLOY_OPERATIONS.md"
+            exit 1
+          fi
 
       # 쉼표/따옴표가 섞인 TAX_COLLECT_SECRET 등은 CLI 한 줄 --update-env-vars에서 깨질 수 있음.
       # YAML 파일로 병합 업데이트(기존 IMAP·Firebase 등 콘솔 변수 유지).

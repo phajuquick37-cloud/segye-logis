@@ -52,7 +52,14 @@
 [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml)은 GitHub 러너에서 `docker build` → **Artifact Registry** `docker push` → **Cloud Run** `deploy` 를 **모두 이 SA 키로** 수행합니다.  
 따라서 **콘솔에서 `...@cloudbuild.gserviceaccount.com`에 AR 쓰기 권한을 주는 식(구 방식)은 이 워크플로에 필요 없습니다.** 대신 `GCP_SA_KEY`에 해당하는 SA에 아래를 맞춥니다.
 
-- **Artifact Registry 작성자** (`roles/artifactregistry.writer`) — 프로젝트 수준이면 저장소 `tax-automation` 푸시 가능  
+- **Artifact Registry 작성자** (`roles/artifactregistry.writer`) — **필수** — GitHub 워크플로가 `docker push` 로 `asia-northeast3-docker.pkg.dev/gen-lang-client-0127550748/tax-automation/...` 이미지를 올립니다. `GCP_SA_KEY`에 들어 있는 **그 서비스 계정**(JSON의 `client_email`)에 최소 다음 중 하나가 있어야 합니다. 없으면 **Actions에서 Docker 빌드는 성공했는데 Artifact Registry 푸시 단계만 실패**합니다.
+  - 프로젝트 단위 부여 예 (Cloud Shell에서 본인 `client_email`으로 교체):
+    ```bash
+    gcloud projects add-iam-policy-binding gen-lang-client-0127550748 \
+      --member="serviceAccount:GCP_SA_KEY의_client_email" \
+      --role="roles/artifactregistry.writer"
+    ```
+  - 또는 저장소(`tax-automation`)만 타깃 IAM `artifactregistry.repositories.uploadArtifacts`(맞춤 역할 포함) 가능.
 - **Cloud Run 관리자** (`roles/run.admin`) — 서비스 `tax-automation` 배포·갱신  
 - **서비스 계정 사용자** (`roles/iam.serviceAccountUser`) — **배포 시 Cloud Run이 쓰는 런타임 SA**에 대해 (보통 `PROJECT_NUMBER-compute@developer.gserviceaccount.com` 등; `gcloud run deploy` 오류에 나오는 SA에 맞게 부여)
 
