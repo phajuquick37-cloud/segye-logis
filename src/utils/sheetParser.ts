@@ -135,7 +135,7 @@ export interface ParseResult {
 // 헬퍼: 헤더 정규화 (공백·부호 제거, 소문자)
 // ─────────────────────────────────────────────────────────────
 function norm(s: string): string {
-  return s.toLowerCase().replace(/[\s_\-()（）[]/g, "");
+  return s.toLowerCase().replace(/[\s_\-\(\)\[\]（）]/g, "");
 }
 
 /** 신용 구분용 거래처명 셀 정규화 (공백·유니코드·제로폭 제거) */
@@ -193,6 +193,57 @@ export function creditNamesLinkedForProfile(aggregatedName: string, profileName:
   if (shorter.length >= 3 && longer.includes(shorter)) return true;
 
   return false;
+}
+
+/**
+ * Firestore 저장·직접 조회용: 같은 업체 이름을 한 문자열로 묶음(자동 반영 매칭).
+ * `creditNamesLinkedForProfile`과 동일 근거(corp 접두·말미 강업)지만 짧은 문자열 하나로 귀속.
+ */
+export function creditAggregationLinkKey(raw: string): string {
+  const a = normalizeCreditNameForLink(raw);
+  if (!a) return "";
+  let c = a
+    .replace(/^\(주\)\s*/iu, "")
+    .replace(/^（주）\s*/u, "")
+    .replace(/^주식회사\s+/u, "")
+    .trim()
+    .replace(/\s+/g, "");
+  c = c.replace(/강업$/u, "").toLowerCase();
+  return c;
+}
+
+/** 집계 `client_name`(ar_records) ↔ 거래처 `name` 등이 같은 건으로 볼 때 */
+export function profileMatchesAggregatedName(
+  profileName: string,
+  aggregatedClientName: string
+): boolean {
+  const pk = creditAggregationLinkKey(profileName);
+  const ak = creditAggregationLinkKey(aggregatedClientName);
+  if (pk && ak && pk === ak) return true;
+  return creditNamesLinkedForProfile(aggregatedClientName, profileName);
+}
+
+/**
+ * 신용내역 거래처명에 맞는 `client_profiles` 문서 하나 선택(Firestore 전체 목록 순회용).
+ */
+export function matchClientProfileToAggregated<
+  T extends { id?: string; name?: unknown; aggregation_link_key?: unknown }
+>(
+  profiles: T[],
+  aggregatedClientName: string
+): T | undefined {
+  const want = creditAggregationLinkKey(aggregatedClientName);
+  if (want) {
+    const byKey = profiles.find((p) => {
+      const k =
+        typeof p.aggregation_link_key === "string" ? String(p.aggregation_link_key).trim() : "";
+      const inferred =
+        k || creditAggregationLinkKey(String(p.name ?? ""));
+      return inferred === want;
+    });
+    if (byKey) return byKey;
+  }
+  return profiles.find((p) => creditNamesLinkedForProfile(aggregatedClientName, String(p.name ?? "")));
 }
 
 /**
