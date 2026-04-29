@@ -118,3 +118,23 @@ python main.py --test
    - `config.py`의 `SITE_SELECTORS` 에서 실제 사이트 구조에 맞게 수정
 
 4. **첫 실행 시** `headless: False` 로 설정하여 브라우저 동작 확인 권장
+
+---
+
+## ☁️ Google Cloud Run 배포 (세금계산서 API)
+
+호스팅은 Vercel이어도, **이 봇(API+스케줄러)** 은 Cloud Run 컨테이너로 올리는 구성입니다.
+
+1. **이미지**: `tax-invoice-automation/Dockerfile` 기준 빌드 → Artifact Registry push  
+2. **배포**: GitHub Actions `.github/workflows/deploy.yml` 의 `push`/`workflow_dispatch` 가 `gcloud run deploy` 실행  
+3. **환경 변수**: `cloudrun-env.example` 참고. 특히 다음이 필터 동작을 좌우합니다.
+   - `TAX_EMAIL_SINCE_MIN` — **수신일·IMAP SINCE 하한**(예: `2026-04-10`). 빈 값이면 하한 없음.
+   - `TAX_MAIL_LOOKBACK_DAYS` — 최근 N일과 하한의 **max** 로 실제 창 시작일 계산(옛날 스팸 방지).
+   - `TAX_INVOICE_SUBJECT_STRICT=true` — 원콜·24시콜·화물맨·로지노트·`tax`+숫자·`@taxNN.` 만 허용(영문 단독 `tax` 제외).
+4. **수동 수집**: `POST /api/run` + 헤더 `X-Tax-Collect-Secret: (TAX_COLLECT_SECRET 와 동일)`
+
+로컬에서 이미지만 빌드해 볼 때:
+```bash
+cd tax-invoice-automation
+docker build -t tax-bot:local .
+```

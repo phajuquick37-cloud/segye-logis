@@ -8,23 +8,26 @@ import imaplib
 import email
 import re
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
 from typing import List, Dict
+from zoneinfo import ZoneInfo
 from bs4 import BeautifulSoup
 
 from config import (
     EMAIL_CONFIG,
     EMAIL_FILTER,
     is_blocked_tax_invoice_url,
-    is_blocked_invoice_email,
     recipient_keyword_required,
     mandatory_tax_invoice_keyword_in_subject_or_sender,
     email_allowed_for_collection,
     get_imap_since_date_str,
     get_effective_mail_window_start_date,
+    is_spam_hard_blocked,
 )
+
+_KST = ZoneInfo("Asia/Seoul")
 
 logger = logging.getLogger(__name__)
 
@@ -289,9 +292,35 @@ class EmailReader:
                         from_addr = decode_str(msg.get("From", ""))
                         date_str = msg.get("Date", "")
 
+                        if is_spam_hard_blocked(from_addr, subject):
+                            logger.info(
+                                f"⏭ 스팸 제목·발신 차단 — [{subject[:50]}]"
+                            )
+                            continue
+
+                        try:
+                            received_date = parsedate_to_datetime(date_str)
+                            if received_date.tzinfo is None:
+                                received_date = received_date.replace(
+                                    tzinfo=timezone.utc
+                                )
+                            received_date = received_date.astimezone(_KST)
+                        except Exception:
+                            logger.info(
+                                f"⏭ Date 헤더 없음/파싱 실패 — 제목:[{subject[:45]}]"
+                            )
+                            continue
+
+                        min_recv = get_effective_mail_window_start_date()
+                        recv_day = received_date.date()
+                        if recv_day < min_recv:
+                            logger.info(
+                                f"⏭ 수신일이 창 시작 이전 — {recv_day} < {min_recv}(KST) — [{subject[:40]}]"
+                            )
+                            continue
+
                         body = get_email_body(msg)
 
-                        # 차단 포함(Qoo10·큐텐)·허용 키워드/발신 패턴만 수집
                         if not email_allowed_for_collection(
                             from_addr,
                             subject,
@@ -299,20 +328,7 @@ class EmailReader:
                             body["text"],
                         ):
                             logger.info(
-                                f"⏭ 수집 대상 아님(허용 키워드·발신 패턴 또는 전자세금 신호) — "
-                                f"[{subject[:50]}]"
-                            )
-                            continue
-
-                        try:
-                            received_date = parsedate_to_datetime(date_str)
-                        except Exception:
-                            received_date = datetime.now()
-
-                        min_recv = get_effective_mail_window_start_date()
-                        if min_recv and received_date.date() < min_recv:
-                            logger.info(
-                                f"⏭ 수신일이 수집 시작 이전 — {received_date.date()} < {min_recv} — {subject[:40]}"
+                                f"⏭ 수집 대상 아님(키워드·전자세금·쇼핑차단) — [{subject[:50]}]"
                             )
                             continue
 

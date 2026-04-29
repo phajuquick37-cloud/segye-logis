@@ -136,15 +136,18 @@ def get_min_issue_date_for_save() -> _date | None:
 
 def get_effective_mail_window_start_date() -> _date:
     """
-    IMAP SINCE / 메일 Date 필터의 시작일.
-    오늘−lookback 과 TAX_EMAIL_SINCE_MIN 중 더 이른(과거) 날짜를 쓰면 since_min 이후 전체 기간을 담을 수 있음.
-    (이전 max()는 하한이 과거일 때 최근 30일만 보는 오류를 냄.)
+    IMAP SINCE / 메일 Date 필터의 **포함 시작일**(이날 0시 이후 수신분만).
+
+    - ``TAX_EMAIL_SINCE_MIN`` 이 있으면 사용자 하한(예: 2026-04-10) **이후만** 봐야 하므로
+      ``오늘−lookback`` 과 **더 늦은(캘린더상 나중) 날 = max** 를 쓴다.
+      (이전 ``min()`` 는 lookback이 과거로 더 열려 since_min **이전** 스팸까지 긁는 버그였음.)
+    - 하한 미설정 시: 최근 ``TAX_MAIL_LOOKBACK_DAYS`` 일만.
     """
     today = today_kst_date()
     w = today - _timedelta(days=TAX_MAIL_LOOKBACK_DAYS)
     if _IMAP_SINCE_MIN_DATE is None:
         return w
-    return min(w, _IMAP_SINCE_MIN_DATE)
+    return max(w, _IMAP_SINCE_MIN_DATE)
 
 # 없는 폴더는 email_reader에서 건너뜀.
 # 휴지통 포함: 수집 기간 내 메일이 Trash로 옮겨져도 볼 수 있음.
@@ -244,6 +247,7 @@ EMAIL_FILTER = {
         "마켓플레이스",
     ],
     "email_body_block_substrings": [
+        "q10",
         "qoo10",
         "큐텐",
         "마켓플레이스",
@@ -251,7 +255,7 @@ EMAIL_FILTER = {
     "imap_since_min_date": _IMAP_SINCE_MIN_DATE,
     # 수신일 기준(메일 Date 헤더) — IMAP SINCE 누락 대비
     "min_received_date": _IMAP_SINCE_MIN_DATE,
-    # 이전 버전 호환용(로그·문서): 실제 필터는 email_allowed_for_collection()
+    # TAX_INVOICE_SUBJECT_STRICT: mandatory_tax_invoice_keyword_in_subject_or_sender() 에서 사용
     "invoice_subject_strict": _env_bool("TAX_INVOICE_SUBJECT_STRICT", True),
 }
 
@@ -295,6 +299,29 @@ def is_excluded_tax_platform(platform: str) -> bool:
     return False
 
 
+def is_spam_hard_blocked(from_addr: str, subject: str) -> bool:
+    """
+    제목·발신만 보고 즉시 제외 (Q10·광고·쇼핑 등). IMAP 본문 펼치기 전에도 호출 가능.
+    """
+    frm = (from_addr or "").strip()
+    sub = subject or ""
+    comb = f"{frm}\n{sub}"
+    comb_l = comb.lower()
+    if "q10" in comb_l or "q 10" in comb_l:
+        return True
+    if "큐텐" in comb or "qoo10" in comb_l or "coupang" in comb_l:
+        return True
+    if "광고" in comb:
+        return True
+    if _re.search(r"\[[^\]]*광고[^\]]*\]", sub):
+        return True
+    if "쇼핑" in comb or "shopping" in comb_l:
+        return True
+    if "특가" in comb and ("세일" in comb or "할인" in comb):
+        return True
+    return False
+
+
 def is_blocked_invoice_email(
     from_addr: str,
     subject: str,
@@ -304,6 +331,8 @@ def is_blocked_invoice_email(
     """
     Qoo10·큐텐·마켓플레이스 등은 발신·제목·본문 어디에든 있으면 수집 제외.
     """
+    if is_spam_hard_blocked(from_addr, subject):
+        return True
     if not from_addr:
         from_addr = ""
     fl = from_addr.lower()
@@ -317,8 +346,8 @@ def is_blocked_invoice_email(
         if not pat:
             continue
         pl = pat.lower()
-        if pl in ("qoo10",):
-            if "qoo10" in blob_l or "qoo 10" in blob_l:
+        if pl in ("qoo10", "q10"):
+            if "qoo10" in blob_l or "qoo 10" in blob_l or "q10" in blob_l or "q 10" in blob_l:
                 return True
         elif pat in blob or pat.lower() in blob_l:
             return True
@@ -334,12 +363,11 @@ def tax_priority_keywords_match(
     body_html: str = "",
     body_text: str = "",
 ) -> bool:
-    """원콜·24시콜·화물맨·로지노트·세금·tax·세계로지스 발행 문구 — 발신·제목·본문 전체."""
+    """원콜·24시콜·화물맨·로지노트·tax숫자·세계로지스 발행 문구 — 발신·제목·본문 전체 (보조용)."""
     blob = f"{from_addr}\n{subject}\n{body_html}\n{body_text}"
     blob_l = blob.lower()
-    # 영문 단독 tax (제목 우선 — 본문 tax refund 등 과매칭 완화)
     subj_l = (subject or "").lower()
-    if _re.search(r"(?<![a-z0-9\uac00-\ud7af])tax(?![a-z0-9]{3,})", subj_l):
+    if _re.search(r"\btax\s*\d{1,3}\b", subj_l, flags=_re.IGNORECASE):
         return True
     # HTML 랩/본문에서 공백만 다른 동일 문구 매칭
     compact = _re.sub(r"[\s\u200b\xa0]+", "", blob)
@@ -358,12 +386,18 @@ def tax_priority_keywords_match(
 
 
 def mandatory_tax_invoice_keyword_in_subject_or_sender(
-    from_addr: str, subject: str
+    from_addr: str, subject: str,
 ) -> bool:
     """
-    수집 대상 필수 조건 — 제목·발신 주소 문자열만 검사 (본문 제외).
-    '원콜', '전국24시콜화물', '화물맨', '로지노트플러스', 영문 'tax'(단어)·tax숫자·@tax 발신 등.
+    수집 대상 필수 조건 — 제목·발신만 (본문 제외).
+
+    허용 키워드: 원콜·24시콜(화물)·화물맨·로지노트(영문 변형 포함)·``tax``+숫자(tax12 등)·@taxNN. 발신
+    및 세계로지스 수취 세금계산서 제목.
+
+    ``TAX_INVOICE_SUBJECT_STRICT=true``(기본)일 때 **영문 단독 ``tax``** 는 허용하지 않음
+    (Q10·해외 스팸 ``Tax Invoice`` 등 차단). ``false`` 일 때만 ``\\btax\\b`` 완화.
     """
+    strict = EMAIL_FILTER.get("invoice_subject_strict", True)
     frm = from_addr or ""
     sub = subject or ""
     blob = frm + "\n" + sub
@@ -372,23 +406,48 @@ def mandatory_tax_invoice_keyword_in_subject_or_sender(
     sub_l = sub.lower()
     hay = frm_l + "\n" + sub_l
 
+    if matches_worldlogis_invoice_subject(sub):
+        return True
+
     if "원콜" in blob:
         return True
-    if "전국24시콜화물" in compact_blob:
+    if any(x in hay for x in ("onecall", "onebill", "onbill", "1-bill", "1call")):
         return True
-    if "화물맨" in blob:
+
+    if "24시콜" in blob or "24시콜화물" in compact_blob or "전국24시콜화물" in compact_blob:
         return True
-    if "로지노트플러스" in compact_blob:
+    if "전국24시" in blob and "콜" in blob:
         return True
-    # 화물맨·원콜 등 tax12.co.kr 형태
+    if any(x in hay for x in ("15887924", "ysm7924", "call24network", "call24")):
+        return True
+
+    if "화물맨" in blob or "hwamulman" in hay:
+        return True
+
+    if "로지노트" in blob or "로지노트플러스" in compact_blob:
+        return True
+    if any(x in hay for x in ("logynote", "loginote", "lgnoteplus", "logi-note")):
+        return True
+
     if _TAX_NUMBER_SENDER_RE.search(frm):
         return True
-    # 제목·발신에 tax10 ~ tax99 (예: 전자발행 세금번호 알림)
-    if _re.search(r"\btax\s*\d+", hay, flags=_re.IGNORECASE):
+
+    if _re.search(r"\btax\s*\d{1,3}\b", hay, flags=_re.IGNORECASE):
         return True
-    # 영문 단어 tax (제목 또는 발신)
-    if _re.search(r"\btax\b", hay, flags=_re.IGNORECASE):
-        return True
+
+    if not strict:
+        if _re.search(r"\btax\b", hay, flags=_re.IGNORECASE):
+            return True
+
+    for frag in (
+        "세계로지스앞으로", "세계로지스앞으로발행", "세계로지스 앞으로",
+        "세계로지스에게발행", "세계로지스에게", "세계로지스님께",
+        "(주)세계로지스님", "세계로지스귀하", "세계로지스 귀하",
+    ):
+        c = _re.sub(r"[\s\u200b\xa0]+", "", frag)
+        if c in compact_blob or frag.lower() in hay:
+            return True
+
     return False
 
 
@@ -504,9 +563,9 @@ def email_allowed_for_collection(
     body_text: str = "",
 ) -> bool:
     """
-    (1) Qoo10·큐텐 등 쇼핑 차단 후
-    (2) 제목 또는 발신에 필수 키워드(원콜·전국24시콜화물·화물맨·로지노트플러스·tax)
-    (3) TAX_REQUIRE_ETAX_OR_NTS_SIGNAL 시 세금 신호 검사(passes_etax — 필수 키워드 있으면 생략)
+    (0) Q10·광고·쇼핑 등 — ``is_blocked_invoice_email`` 내부에서 제목·발신·본문 처리
+    (1) ``TAX_INVOICE_SUBJECT_STRICT`` 반영 필수 키워드
+    (2) TAX_REQUIRE_ETAX_OR_NTS_SIGNAL 시 세금 신호
     """
     if is_blocked_invoice_email(from_addr, subject, body_html, body_text):
         return False
