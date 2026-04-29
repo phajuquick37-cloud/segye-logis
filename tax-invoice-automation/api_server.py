@@ -12,6 +12,7 @@ import asyncio
 import logging
 import os
 from datetime import datetime
+from typing import Optional
 
 from fastapi import FastAPI, BackgroundTasks, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -34,6 +35,16 @@ from pipeline import run_pipeline, is_running
 logger = logging.getLogger(__name__)
 
 TAX_COLLECT_SECRET = (os.environ.get("TAX_COLLECT_SECRET") or "").strip()
+
+
+def _mask_imap_login(addr: str) -> Optional[str]:
+    a = (addr or "").strip()
+    if "@" not in a:
+        return None
+    local, _, domain = a.partition("@")
+    if not local:
+        return f"***@{domain}"
+    return f"{local[0]}***@{domain}"
 
 app = FastAPI(title="세계로지스 세금계산서 API", version="2.0")
 
@@ -140,6 +151,7 @@ async def status():
         "require_etax_or_nts_signal": TAX_REQUIRE_ETAX_OR_NTS_SIGNAL,
         "imap_configured": bool(imap_addr and imap_pwd),
         "imap_server": (EMAIL_CONFIG.get("imap_server") or "").strip() or None,
+        "imap_login_masked": _mask_imap_login(imap_addr),
         "firebase_project_id": FIREBASE_ADMIN_CONFIG.get("project_id") or None,
         "firestore_database_id": FIREBASE_ADMIN_CONFIG.get("database_id") or None,
         "google_credentials_file_present": cred_ok,

@@ -68,7 +68,7 @@ def extract_platform_from_page(page_title: str = "", page_text: str = "") -> str
 
     platform_keywords = {
         "화물맨": ["화물맨", "hwamulman", "tax12", "tax15"],
-        "원콜(ONEBILL)": ["원콜", "onebill", "onecall", "ONEBILL"],
+        "원콜(ONEBILL)": ["원콜", "onebill", "onecall", "ONEBILL", "원빌"],
         "전국24시콜화물": ["전국24시", "24시콜", "15887924", "콜화물"],
         "로지노트플러스": ["로지노트플러스", "로지노트 플러스", "logynote plus", "loginote plus"],
         "로지노트": ["로지노트", "loginote", "logynote"],

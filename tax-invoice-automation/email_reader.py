@@ -221,10 +221,11 @@ class EmailReader:
                 EMAIL_CONFIG["imap_port"]
             )
             self.mail.login(addr, pwd)
-            logger.info("✅ Gmail IMAP 연결 성공")
+            srv = EMAIL_CONFIG.get("imap_server", "")
+            logger.info("✅ IMAP 연결 성공 (%s, %s)", srv, addr.split("@")[-1] if "@" in addr else "")
             return True
         except Exception as e:
-            logger.error(f"❌ Gmail 연결 실패: {e}")
+            logger.error(f"❌ IMAP 연결 실패 ({EMAIL_CONFIG.get('imap_server')}): {e}")
             return False
 
     def disconnect(self):

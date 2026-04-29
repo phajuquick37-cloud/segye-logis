@@ -5,10 +5,12 @@
 # GitHub Actions 배포 시 TAX_COLLECT_SECRET은 --set-env-vars로 이미 있을 수 있음
 # TAX_COLLECT_SECRET=
 
-# IMAP: 스크린에 보이는 메일함 (Gmail 또는 Daum 한메일)
-# 기본은 INBOX+All Mail+Trash 등 다중 폴더. 덮어쓰려면 TAX_IMAP_FOLDERS 로 쉼표 구분
+# IMAP: 스크린에 보이는 메일함
+# · @hanmail.net / @daum.net → 서버가 자동으로 imap.daum.net (993 SSL) 사용
+# · 그 외(예: Gmail) → imap.gmail.com. 덮어쓰려면 TAX_IMAP_SERVER=
+# 기본은 INBOX+휴지통 등 다중 폴더. 덮어쓰려면 TAX_IMAP_FOLDERS 로 쉼표 구분
 # 예(Gmail): TAX_IMAP_FOLDERS=INBOX,[Gmail]/All Mail,[Gmail]/Trash
-TAX_IMAP_EMAIL=phajuquick@daum.net
+TAX_IMAP_EMAIL=phajuquick@hanmail.net
 TAX_IMAP_APP_PASSWORD=앱-비밀번호-16자
 # (구 이름 호환) GMAIL_USER=   GMAIL_APP_PASSWORD=
 

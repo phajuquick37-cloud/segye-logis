@@ -161,8 +161,10 @@ _imap_folders_raw = _env("TAX_IMAP_FOLDERS", _default_imap_folders)
 _IMAP_FOLDERS = [x.strip() for x in _imap_folders_raw.split(",") if x.strip()]
 
 # 플랫폼·발행사 한정(넓은 '세금계산서'·영문 'tax' 제외 — 스팸·해외쇼핑이 대량 통과하던 원인)
+# 한메일·다음에서 쓰는 ONEBILL 표기: [원빌] (영문 onebill 과 별개 문자열)
 _PRIORITY_TAX_KEYWORDS = [
     "원콜",
+    "원빌",
     "onecall",
     "onebill",
     "ONEBILL",
@@ -197,7 +199,7 @@ EMAIL_FILTER = {
     "priority_keywords": _PRIORITY_TAX_KEYWORDS,
     "subject_keywords": [
         "세금계산서", "전자세금계산서", "스마트빌", "계산서 발행", "계산서발행",
-        "ONEBILL", "화물맨", "로지노트", "로지노트플러스", "로지노트 플러스",
+        "ONEBILL", "원빌", "화물맨", "로지노트", "로지노트플러스", "로지노트 플러스",
         "logynote plus", "loginote plus",
         "전국24시", "24시콜",
         "tax12", "tax15",
@@ -299,6 +301,16 @@ def is_excluded_tax_platform(platform: str) -> bool:
     return False
 
 
+def _text_has_shopping_q10_token(s: str) -> bool:
+    """큐텐/Qoo10 표기. 'q10' 단독 부분문자열은 ONEBILL·트래킹 URL 오탐이 있어 경계 사용."""
+    if not s:
+        return False
+    sl = s.lower()
+    if "qoo10" in sl or "qoo 10" in sl or "큐텐" in s:
+        return True
+    return bool(_re.search(r"\bq10\b", sl))
+
+
 def is_spam_hard_blocked(from_addr: str, subject: str) -> bool:
     """
     제목·발신만 보고 즉시 제외 (Q10·광고·쇼핑 등). IMAP 본문 펼치기 전에도 호출 가능.
@@ -307,7 +319,7 @@ def is_spam_hard_blocked(from_addr: str, subject: str) -> bool:
     sub = subject or ""
     comb = f"{frm}\n{sub}"
     comb_l = comb.lower()
-    if "q10" in comb_l or "q 10" in comb_l:
+    if _text_has_shopping_q10_token(comb):
         return True
     if "큐텐" in comb or "qoo10" in comb_l or "coupang" in comb_l:
         return True
@@ -347,7 +359,7 @@ def is_blocked_invoice_email(
             continue
         pl = pat.lower()
         if pl in ("qoo10", "q10"):
-            if "qoo10" in blob_l or "qoo 10" in blob_l or "q10" in blob_l or "q 10" in blob_l:
+            if _text_has_shopping_q10_token(blob):
                 return True
         elif pat in blob or pat.lower() in blob_l:
             return True
@@ -410,6 +422,8 @@ def mandatory_tax_invoice_keyword_in_subject_or_sender(
         return True
 
     if "원콜" in blob:
+        return True
+    if "원빌" in blob:
         return True
     if any(x in hay for x in ("onecall", "onebill", "onbill", "1-bill", "1call")):
         return True
@@ -585,7 +599,7 @@ PLATFORM_RULES = {
     },
     "원콜(ONEBILL)": {
         "domains": ["onecall", "onebill", "1call"],
-        "subject_keywords": ["ONEBILL", "원콜", "onebill"],
+        "subject_keywords": ["ONEBILL", "원콜", "원빌", "onebill"],
         "sender_keywords": ["onecall", "onebill", "1call"],
     },
     "로지노트플러스": {

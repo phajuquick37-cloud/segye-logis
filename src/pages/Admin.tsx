@@ -805,6 +805,22 @@ export default function Admin() {
             ))}
           </div>
 
+          <div className="rounded-xl border border-blue-100 bg-blue-50/80 px-4 py-3 text-sm text-slate-700 space-y-1.5">
+            <p className="font-semibold text-blue-950">수집이 어디서 되나요?</p>
+            <p>
+              메일 수집은 <strong className="font-medium text-slate-900">Cloud Run</strong>의 세금계산서 봇이{" "}
+              <strong className="font-medium text-slate-900">IMAP에 연결된 메일함</strong>만 읽습니다. 한메일을 쓰시면
+              서비스 환경 변수에 <code className="text-xs bg-white/90 px-1 rounded border">TAX_IMAP_EMAIL</code>를{" "}
+              <strong>한메일 주소</strong>(예: <code className="text-xs">...@hanmail.net</code>)로 두어야 하며, 이때 서버는{" "}
+              <code className="text-xs">imap.daum.net</code>을 씁니다. Gmail 주소로만 연결해 두면 한메일 보관함의 원빌·전자세금 메일은
+              수집되지 않습니다.
+            </p>
+            <p className="text-xs text-slate-600">
+              아래 검색창은 이미 Firestore에 쌓인 목록을 걸러 보는 용도이며, 메일함 키워드 설정과는 별개입니다. 배포가 실패하면 오래된 봇이
+              돌아 잘못된 출처가 쌓일 수 있으니 GitHub Actions·Cloud Run 로그를 확인하세요.
+            </p>
+          </div>
+
           {/* 목록 */}
           <Card>
             <CardHeader>
@@ -848,7 +864,7 @@ export default function Admin() {
                       type="text"
                       value={invoiceSearch}
                       onChange={(e) => setInvoiceSearch(e.target.value)}
-                      placeholder="상호명·입금자·비고 검색"
+                      placeholder="수집 목록만 검색 (상호·입금자·비고)"
                       className="pl-9 pr-4 py-2 border border-slate-200 rounded-lg text-sm w-full sm:w-56 focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                     {invoiceSearch && (
