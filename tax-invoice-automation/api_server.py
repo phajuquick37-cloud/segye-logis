@@ -166,8 +166,12 @@ async def trigger_run(
     """수동 즉시 실행 (백그라운드). TAX_COLLECT_SECRET 설정 시 동일 값을 헤더로 전달해야 함."""
     if TAX_COLLECT_SECRET and (x_tax_collect_secret or "").strip() != TAX_COLLECT_SECRET:
         raise HTTPException(status_code=401, detail="인증이 필요합니다.")
+    # 서버 기동 직후 초기 수집·정각 스케줄과 겹치면 흔함 — 409는 Vercel/Admin에서 '실패'로만 보이므로 200으로 안내
     if is_running():
-        raise HTTPException(status_code=409, detail="현재 실행 중입니다. 잠시 후 다시 시도하세요.")
+        return {
+            "status": "busy",
+            "message": "이미 세금계산서 수집이 진행 중입니다. 잠시 후 목록을 확인해 주세요.",
+        }
 
     async def _run():
         result = await run_pipeline(manual=True)
