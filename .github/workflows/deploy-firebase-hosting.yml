@@ -1,6 +1,6 @@
-# Vite 빌드(dist) → Firebase Hosting | /api/** 만 Cloud Run(tax-automation)
-# FIREBASE_SERVICE_ACCOUNT (GCP 서비스 계정 JSON) GitHub Secret 필요.
-# 세계로지스.com DNS 는 Firebase Console → Hosting → 사용자 지정 도메인
+# Vite 빌드(dist) → Firebase Hosting | /api/** 는 firebase.json 에서 Cloud Run(tax-automation) 으로 리라이트
+# GitHub Secret: FIREBASE_SERVICE_ACCOUNT = GCP 서비스 계정 JSON 전체 (Hosting 배포·Run 연동 권한 필요)
+# (구) FirebaseExtended/action-hosting-deploy 는 동일 시크릿에서 실패하는 경우가 있어 auth + firebase CLI 로 통일
 
 name: Deploy Firebase Hosting
 
@@ -28,24 +28,34 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # firebase deploy 가 사용할 Application Default Credentials
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK (firebase-tools 호환)
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: gen-lang-client-0127550748
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
 
       - name: Install & build (Vite → dist)
         env:
-          # Firebase 호스팅 + Vercel API 병행 시: 예) https://프로젝트.vercel.app (sendMail/tax-run 프록시)
           VITE_VERCEL_API_ORIGIN: ${{ secrets.VITE_VERCEL_API_ORIGIN }}
         run: |
           npm ci
           npm run build
 
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools@13
+
       - name: Deploy to Firebase Hosting
-        uses: FirebaseExtended/action-hosting-deploy@v0
-        with:
-          repoToken: ${{ secrets.GITHUB_TOKEN }}
-          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
-          projectId: gen-lang-client-0127550748
-          channelId: live
+        run: |
+          set -euo pipefail
+          firebase deploy --only hosting --project gen-lang-client-0127550748 --non-interactive
