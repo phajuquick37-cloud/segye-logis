@@ -5,8 +5,6 @@ import {
 } from "firebase/firestore";
 import {
   matchClientProfileToAggregated,
-  creditNamesLinkedForProfile,
-  normalizeCreditClientCell,
   normalizeCreditNameForLink,
 } from "../../utils/sheetParser";
 import * as XLSX from "xlsx";
@@ -16,48 +14,15 @@ import { X, Download, Mail, FileSpreadsheet, Printer, CheckCircle, AlertTriangle
 import { Button } from "../../../components/ui/button";
 import { SUPPLIER, VAT_RATE } from "../../config/companyInfo";
 import { vercelApiUrl } from "../../utils/apiOrigin";
+import type { SettlementItem, StatementArRecord, StatementClientProfile } from "../../types/statement";
+import {
+  excelStatementGreeting,
+  resolveStatementTemplate,
+} from "../../utils/statementTemplates";
 
-// ─────────────────────────────────────────────────────────────
-// 타입
-// ─────────────────────────────────────────────────────────────
-export interface SettlementItem {
-  id?: string;
-  date: string;
-  description: string;  // 행별 고객명(상호) — row_client 또는 메모
-  quantity: number;
-  unit_price: number;
-  supply_amount: number;
-  tax_amount: number;
-  total_amount: number;
-  memo: string;
-  // 거래명세표 세부 항목 (엑셀에서 자동 감지)
-  departure?: string;     // 출발지
-  destination?: string;   // 도착지
-  vehicle_type?: string;  // 톤수(차종)
-  driver?: string;        // 기사명
-  vehicle_no?: string;    // 차량번호
-  unload_client?: string; // 하차지고객
-  row_client?: string;    // 행별 고객명
-  /** 적요 (래피드 양식 비고) */
-  jeeyo?: string;
-}
-
-export interface ArRecord {
-  id: string;
-  billing_month: string;
-  client_name: string;
-  client_biz_no?: string;
-  total_amount: number;
-  delivery_fee?: number;
-  paid_amount: number;
-  unpaid_amount: number;
-  due_date?: string;
-  status: string;
-  memo?: string;
-  checked?: boolean;
-  contact_email?: string;
-  item_count?: number;
-}
+export type { SettlementItem };
+export type ArRecord = StatementArRecord;
+export type ClientProfile = StatementClientProfile;
 
 // ─────────────────────────────────────────────────────────────
 // 숫자 → 한글 금액
@@ -136,189 +101,20 @@ function VerticalLabel({ text }: { text: string }) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// 출발동·도착동 표시용 (고객명 열이 출발지로 오인된 경우 숨김)
-// ─────────────────────────────────────────────────────────────
-function normStmtCell(s: string): string {
-  try {
-    return s.normalize("NFKC").trim().replace(/\s+/g, "");
-  } catch {
-    return String(s ?? "").trim().replace(/\s+/g, "");
-  }
-}
-
-function displayDeparture(item: SettlementItem): string {
-  const d = (item.departure ?? "").trim();
-  if (!d) return "";
-  const ref = normStmtCell(item.row_client || item.description || "");
-  if (ref && normStmtCell(d) === ref) return "";
-  return d;
-}
-
-function displayDestination(item: SettlementItem): string {
-  const d = (item.destination ?? "").trim();
-  if (!d) return "";
-  const ref = normStmtCell(item.row_client || item.description || "");
-  if (ref && normStmtCell(d) === ref) return "";
-  return d;
-}
-
-// ─────────────────────────────────────────────────────────────
-// 거래처별 양식 템플릿
-// ─────────────────────────────────────────────────────────────
-export type TemplateType = "basic" | "samil" | "jiyoo" | "rapid";
-
-interface ColDef { header: string; width?: string; align?: "left"|"center"|"right"; }
-
-const TEMPLATES: Record<TemplateType, { label: string; cols: ColDef[]; renderRow: (item: SettlementItem) => (string|number)[]; }> = {
-  basic: {
-    label: "기본양식",
-    cols: [
-      { header: "날  짜",          width: "80px",  align: "center" },
-      { header: "고객명 (상호)",                   align: "left"   },
-      { header: "출 발 동",                        align: "center" },
-      { header: "도 착 동",                        align: "center" },
-      { header: "차  량",          width: "72px",  align: "center" },
-      { header: "금  액",          width: "100px", align: "right"  },
-    ],
-    renderRow: (item) => [
-      item.date,
-      item.row_client || item.description || "",
-      displayDeparture(item),
-      displayDestination(item),
-      (item.vehicle_type ?? "").trim(),
-      item.supply_amount.toLocaleString(),
-    ],
-  },
-  samil: {
-    label: "삼일강업양식",
-    cols: [
-      { header: "날  짜",    width: "72px",  align: "center" },
-      { header: "고객명(상호)",              align: "left"   },
-      { header: "출 발 동",                  align: "center" },
-      { header: "도 착 동",                  align: "center" },
-      { header: "차  량",    width: "52px",  align: "center" },
-      { header: "기 사 명",  width: "60px",  align: "center" },
-      { header: "금  액",    width: "90px",  align: "right"  },
-      { header: "차량번호",  width: "72px",  align: "center" },
-    ],
-    renderRow: (item) => [
-      item.date,
-      item.row_client || item.description || "",
-      displayDeparture(item),
-      displayDestination(item),
-      (item.vehicle_type ?? "").trim(),
-      item.driver      || "",
-      item.supply_amount.toLocaleString(),
-      item.vehicle_no  || "",
-    ],
-  },
-  jiyoo: {
-    label: "지유전자양식",
-    cols: [
-      { header: "날  짜",      width: "72px",  align: "center" },
-      { header: "고 객 명",                    align: "left"   },
-      { header: "출 발 동",                    align: "center" },
-      { header: "하차지고객",                  align: "center" },
-      { header: "도 착 동",                    align: "center" },
-      { header: "차  량",      width: "52px",  align: "center" },
-      { header: "금  액",      width: "90px",  align: "right"  },
-    ],
-    renderRow: (item) => [
-      item.date,
-      item.row_client    || item.description || "",
-      displayDeparture(item),
-      item.unload_client || "",
-      displayDestination(item),
-      (item.vehicle_type ?? "").trim(),
-      item.supply_amount.toLocaleString(),
-    ],
-  },
-  rapid: {
-    label: "래피드양식",
-    cols: [
-      { header: "날  짜",    width: "72px",  align: "center" },
-      { header: "출 발 동",                  align: "center" },
-      { header: "도 착 동",                  align: "center" },
-      { header: "비  고",                    align: "left"   },
-      { header: "금  액",    width: "90px",  align: "right"  },
-      { header: "차  량",    width: "52px",  align: "center" },
-    ],
-    renderRow: (item) => [
-      item.date,
-      displayDeparture(item),
-      displayDestination(item),
-      item.jeeyo       || "",
-      item.supply_amount.toLocaleString(),
-      (item.vehicle_type ?? "").trim(),
-    ],
-  },
-};
-
-/** 엑셀 저장용 열 제목(거래명세표 화면과 동일 6/7/8열, 품명·수량·단가 열 사용 안 함) */
-const EXCEL_TABLE_HEADERS: Record<TemplateType, string[]> = {
-  basic: ["날짜", "고객명(상호)", "출발동", "도착동", "차량", "금액"],
-  samil: ["날짜", "고객명(상호)", "출발동", "도착동", "차량", "기사명", "금액", "차량번호"],
-  jiyoo: ["날짜", "고객명", "출발동", "하차지고객", "도착동", "차량", "금액"],
-  rapid: ["날짜", "출발동", "도착동", "비고", "금액", "차량"],
-};
-
-const SAMIL_NAME_HINTS = ["삼일강업", "(주)삼일", "(주）삼일", "㈜삼일"];
-const RAPID_NAME_HINTS   = ["래피드", "래피드어드", "래피드어드벤스", "래피어드", "rapid"];
-
-function detectTemplate(clientName: string, profile?: ClientProfile | null): TemplateType {
-  const nRaw = clientName;
-  const nCompact = normalizeCreditClientCell(nRaw).replace(/\s+/g, "");
-  // 1. 거래처명 기반 자동 감지 (표기 차이 허용: (주)삼일 ↔ 삼일강업, 래피드어드 ↔ 어드벤스 등)
-  if ((SAMIL_NAME_HINTS.some((h) => creditNamesLinkedForProfile(nRaw, h)) || /삼일강업/.test(nCompact)) ||
-      /^\(주\)\s*삼일\b/u.test(normalizeCreditClientCell(nRaw)) || /^（주）\s*삼일\b/u.test(normalizeCreditClientCell(nRaw)))
-    return "samil";
-  const nLower = normalizeCreditClientCell(nRaw).toLowerCase();
-  const nPlain = normalizeCreditClientCell(nRaw);
-  // 지유 전자 명시 또는 지유 단독(전자 포함 시 위에서 이미 걸림)
-  if (nPlain.includes("지유전자") || nPlain.includes("지유")) return "jiyoo";
-  if (
-    RAPID_NAME_HINTS.some((h) => creditNamesLinkedForProfile(nRaw, h)) ||
-    /\brapid\b/i.test(nLower) ||
-    nCompact.includes("래피드")
-  )
-    return "rapid";
-  // 2. 프로필에서 기본양식이 아닌 양식을 명시한 경우 적용
-  if (profile?.template && profile.template !== "basic") return profile.template as TemplateType;
-  return "basic";
-}
-
-// ─────────────────────────────────────────────────────────────
-// 거래처 프로필 타입
-// ─────────────────────────────────────────────────────────────
-export interface ClientProfile {
-  id?: string;
-  name: string;
-  /** 신용내역 거래처명과 자동 연동용(저장 시 자동 채움) */
-  aggregation_link_key?: string;
-  biz_no: string;
-  ceo_name: string;
-  address: string;
-  phone: string;
-  email: string;
-  business_type: string;
-  business_item: string;
-  template: TemplateType;
-}
-
-// ─────────────────────────────────────────────────────────────
 // 거래명세표 본문 (인쇄/캡처 대상)
 // ─────────────────────────────────────────────────────────────
 export const DocumentBody = React.forwardRef<
   HTMLDivElement,
   { record: ArRecord; items: SettlementItem[]; profile?: ClientProfile | null }
 >(({ record, items, profile }, ref) => {
-  const [year, month] = record.billing_month.split("-");
   const supplyTotal = record.total_amount;
   const vatTotal    = Math.round(supplyTotal * VAT_RATE);
   const grandTotal  = supplyTotal + vatTotal;
   const dateRange   = monthDateRange(record.billing_month);
-  const tmpl = TEMPLATES[detectTemplate(record.client_name, profile)];
+  const tmpl = resolveStatementTemplate(record.client_name, profile ?? null);
   const colCount = tmpl.cols.length;
+  const ti = tmpl.totalColumnIndex;
+  const headerBg = tmpl.headerTone === "gray" ? "#6b7280" : "#2c3e50";
 
   const cellStyle = (extra?: React.CSSProperties): React.CSSProperties => ({
     border: "1px solid #555",
@@ -488,9 +284,9 @@ export const DocumentBody = React.forwardRef<
       {/* ── 품목 테이블 (양식별 헤더) ── */}
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "11px", marginTop: "0" }}>
         <thead>
-          <tr style={{ backgroundColor: "#2c3e50", color: "#fff" }}>
+          <tr style={{ backgroundColor: headerBg, color: "#fff" }}>
             {tmpl.cols.map((col) => (
-              <th key={col.header} style={{
+              <th key={`${col.key}-${col.header}`} style={{
                 border: "1px solid #444",
                 padding: "5px 4px",
                 fontWeight: "700",
@@ -532,13 +328,15 @@ export const DocumentBody = React.forwardRef<
         </tbody>
         <tfoot>
           <tr style={{ backgroundColor: "#f0f0f0" }}>
-            <td colSpan={colCount - 2} style={{ border: "1px solid #555", padding: "5px 12px", textAlign: "right", fontWeight: "bold" }}>
+            <td colSpan={Math.max(1, ti)} style={{ border: "1px solid #555", padding: "5px 12px", textAlign: "right", fontWeight: "bold" }}>
               합  계 <span style={{ fontWeight: "600", fontSize: "10px", color: "#444" }}>(부가세 10% 포함)</span>
             </td>
             <td style={{ border: "1px solid #555", padding: "5px 8px", textAlign: "right", fontWeight: "900", fontFamily: "monospace", fontSize: "12px" }}>
               {grandTotal.toLocaleString()}
             </td>
-            <td style={{ border: "1px solid #555" }}>&nbsp;</td>
+            {colCount - ti - 1 > 0 ? (
+              <td colSpan={colCount - ti - 1} style={{ border: "1px solid #555" }}>&nbsp;</td>
+            ) : null}
           </tr>
         </tfoot>
       </table>
@@ -700,20 +498,14 @@ export default function StatementModal({
     }
   };
 
-  // ── 엑셀 다운로드: 상단 요약 + 거래명세표 양식과 동일한 열(날짜·고객명·출발·도착·차량·금액 등, 품명/수량/단가 열 없음) ──
+  // ── 엑셀: 인사말 + 양식 헤더·본문만 (공급자/공급받는자·요약 표 제외) ──
   const handleDownloadExcel = () => {
-    const tkey = detectTemplate(record.client_name, clientProfile);
-    const tmpl = TEMPLATES[tkey];
+    const tmpl = resolveStatementTemplate(record.client_name, clientProfile);
     const nc = tmpl.cols.length;
-    const excelHeaders = EXCEL_TABLE_HEADERS[tkey];
-    if (excelHeaders.length !== nc) {
-      console.error(`EXCEL_TABLE_HEADERS[${tkey}] 길이가 템플릿 열 수와 다릅니다.`);
-    }
     const supplyTotal = record.total_amount;
     const vatTotal = Math.round(supplyTotal * VAT_RATE);
     const grandTotal = supplyTotal + vatTotal;
-    const p = clientProfile;
-    const dateRange = monthDateRange(record.billing_month);
+    const displayName = (clientProfile?.name || "").trim() || record.client_name;
     const sheetW = Math.max(8, nc);
 
     const pad = (cells: (string | number)[]): (string | number)[] => {
@@ -723,62 +515,25 @@ export default function StatementModal({
     };
 
     const rows: (string | number)[][] = [];
-    rows.push(pad([`거  래  명  세  표  (${tmpl.label})`]));
-    rows.push(pad([`기간: ${dateRange}`]));
+    rows.push(pad([excelStatementGreeting(displayName, record.billing_month)]));
     rows.push(pad([""]));
-    rows.push(pad(["[공급자]", "", "", "", "[공급받는자]", "", "", ""]));
-    rows.push(pad(["등록번호", SUPPLIER.biz_no, "", "", "등록번호", p?.biz_no || record.client_biz_no || "", "", ""]));
-    rows.push(pad(["상호(법인명)", SUPPLIER.name, "", "", "상호(법인명)", (p?.name || "").trim() || record.client_name, "", ""]));
-    rows.push(pad(["성명(대표)", SUPPLIER.representative, "", "", "성명(대표)", p?.ceo_name || "", "", ""]));
-    rows.push(pad(["사업장주소", SUPPLIER.address, "", "", "사업장주소", p?.address || "", "", ""]));
-    rows.push(
-      pad([
-        "업태",
-        SUPPLIER.business_type,
-        "종목",
-        SUPPLIER.business_item,
-        "업태",
-        p?.business_type || "",
-        "종목",
-        p?.business_item || "",
-      ])
-    );
-    rows.push(pad(["전화", SUPPLIER.phone, "", "", "전화", p?.phone || "", "", ""]));
-    rows.push(pad(["E-mail", SUPPLIER.email, "", "", "E-mail", p?.email || "", "", ""]));
-    rows.push(pad([""]));
-    rows.push(
-      pad([
-        "공급가액",
-        `${supplyTotal.toLocaleString()}원`,
-        "VAT",
-        `${vatTotal.toLocaleString()}원`,
-        "합계",
-        `${grandTotal.toLocaleString()}원`,
-        toKoreanAmount(grandTotal),
-        "",
-      ])
-    );
-    rows.push(pad([""]));
-    // ── 본문 표: `pad`·slice(8)로 잘리지 않도록 열 수 = 템플릿(nc)과 동일하게만 사용 ──
+    const excelHeaders = tmpl.cols.map((c) => c.header);
     rows.push([...excelHeaders]);
     for (const item of items) {
       const cells = tmpl.renderRow(item);
       const row: (string | number)[] = [];
       for (let i = 0; i < nc; i += 1) {
         const v = cells[i];
-        if (v === undefined || v === null) {
-          row.push("");
-        } else {
-          row.push(typeof v === "number" ? v : String(v));
-        }
+        row.push(v === undefined || v === null ? "" : typeof v === "number" ? v : String(v));
       }
       rows.push(row);
     }
     const sumRowIndex = rows.length;
+    const ti = tmpl.totalColumnIndex;
     const sumRow: (string | number)[] = Array(nc).fill("");
-    sumRow[0] = "합계 (부가세 10% 포함)";
-    if (nc > 1) {
-      sumRow[nc - 1] = grandTotal.toLocaleString();
+    if (ti > 0) {
+      sumRow[0] = "합계 (부가세 10% 포함)";
+      sumRow[ti] = grandTotal.toLocaleString();
     } else {
       sumRow[0] = grandTotal.toLocaleString();
     }
@@ -789,10 +544,10 @@ export default function StatementModal({
     const merges: { s: { r: number; c: number }; e: { r: number; c: number } }[] = [
       { s: { r: 0, c: 0 }, e: { r: 0, c: sheetW - 1 } },
     ];
-    if (nc >= 2) {
+    if (ti > 0) {
       merges.push({
         s: { r: sumRowIndex, c: 0 },
-        e: { r: sumRowIndex, c: nc - 2 },
+        e: { r: sumRowIndex, c: ti - 1 },
       });
     }
     ws["!merges"] = merges;

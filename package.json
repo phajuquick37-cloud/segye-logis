@@ -10,6 +10,8 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
+    "deploy:vercel": "vercel --prod",
+    "deploy:vercel:preview": "vercel",
     "deploy:firebase-hosting": "firebase deploy --only hosting",
     "deploy:firebase": "firebase deploy"
   },

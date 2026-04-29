@@ -9,6 +9,9 @@ coverage/
 *.msi
 *.zip
 
+# 로컬 설치 프로그램
+GoogleCloudSDKInstaller.exe
+
 .vercel
 
 # 세금계산서 봇 - 민감 파일

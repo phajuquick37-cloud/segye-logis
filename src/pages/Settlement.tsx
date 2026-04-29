@@ -37,16 +37,19 @@ import StatementModal, { DocumentBody, SettlementItem, ClientProfile as ModalCli
 import { captureStatementToCanvas } from "../utils/statementCapture";
 import { SUPPLIER, VAT_RATE } from "../config/companyInfo";
 import { vercelApiUrl } from "../utils/apiOrigin";
+import {
+  TEMPLATE_LABELS,
+  STATEMENT_COLUMN_CATALOG,
+  type StatementColumnKey,
+} from "../utils/statementTemplates";
+import { captureStatementPngDataUrl } from "../utils/renderStatementCapture";
+import type { StatementTemplateKey } from "../types/statement";
 
 // ─────────────────────────────────────────────────────────────
 // 타입 & 상수
 // ─────────────────────────────────────────────────────────────
 type RecordStatus = "unpaid" | "partial" | "paid";
 type PageView = "credits" | "history" | "clients";
-type TemplateType = "basic" | "samil" | "jiyoo" | "rapid";
-const TEMPLATE_LABELS: Record<TemplateType, string> = {
-  basic: "기본양식", samil: "삼일강업양식", jiyoo: "지유전자양식", rapid: "래피드양식",
-};
 
 interface ClientProfile {
   id?: string;
@@ -59,7 +62,8 @@ interface ClientProfile {
   email: string;
   business_type: string;
   business_item: string;
-  template: TemplateType;
+  template: StatementTemplateKey;
+  custom_statement_columns?: string[] | null;
 }
 
 interface ArRecord {
@@ -106,6 +110,28 @@ function calcGrandTotal(r: { total_amount: number; delivery_fee?: number }): num
 }
 
 const FIRESTORE_BATCH_LIMIT = 450;
+
+/** 거래명세 메일 캡처용 — `ar_records` 세부 items 로드 */
+async function loadItemsForArRecord(record: ArRecord): Promise<SettlementItem[]> {
+  const itemSnap = await getDocs(
+    query(collection(db, "ar_records", record.id, "items"), orderBy("date", "asc"))
+  );
+  const rows: SettlementItem[] = itemSnap.docs.map((d) => ({
+    id: d.id,
+    ...(d.data() as Omit<SettlementItem, "id">),
+  }));
+  if (rows.length > 0) return rows;
+  return [{
+    date: `${record.billing_month}-01`,
+    description: `${record.billing_month} 화물 운송비`,
+    quantity: 1,
+    unit_price: record.total_amount,
+    supply_amount: record.total_amount,
+    tax_amount: 0,
+    total_amount: record.total_amount,
+    memo: record.memo ?? "",
+  }];
+}
 
 /** `ar_records` 문서와 `items` 서브컬렉션을 함께 삭제 (배치 한도 이하 청크) */
 async function deleteArRecordCascade(parentId: string) {
@@ -885,6 +911,8 @@ export default function Settlement() {
   const [showAdd, setAdd]         = useState(false);
   const [selectedRecord, setSelectedRecord] = useState<ArRecord | null>(null);
   const [quickMailRecord, setQuickMailRecord] = useState<ArRecord | null>(null);
+  const [bulkMailBusy, setBulkMailBusy] = useState(false);
+  const [bulkMailBanner, setBulkMailBanner] = useState<{ ok?: string; err?: string } | null>(null);
   const [confirmCheckRecord, setConfirmCheck] = useState<ArRecord | null>(null);
 
   // ── 엑셀 내보내기 ──
@@ -1181,6 +1209,113 @@ export default function Settlement() {
     }
   };
 
+  const handleBulkMail = async () => {
+    const targets = sorted.filter((r) => selectedArIds.has(r.id));
+    if (targets.length === 0) return;
+    if (
+      !window.confirm(
+        `선택한 ${targets.length}개 거래처에 거래명세표 PNG를 일괄 발송할까요?\n연락처 이메일이 없는 행은 건너뜁니다. (거래처 정보·신용내역 메일칸 모두 확인)`
+      )
+    )
+      return;
+    let ok = 0;
+    let skip = 0;
+    const errs: string[] = [];
+    setBulkMailBusy(true);
+    setBulkMailBanner(null);
+    try {
+      const profSnap = await getDocs(query(collection(db, "client_profiles"), orderBy("name")));
+      const profRows = profSnap.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as Omit<ModalClientProfile, "id">),
+      })) as ModalClientProfile[];
+
+      for (const rec of targets) {
+        const emailSet = new Set<string>();
+        (rec.contact_email || "").split(/[,;\s]+/).map((e) => e.trim()).filter(Boolean).forEach((e) => emailSet.add(e));
+        const matched = matchClientProfileToAggregated(profRows, rec.client_name);
+        if (matched?.email) {
+          String(matched.email)
+            .split(/[,;\s]+/)
+            .map((e) => e.trim())
+            .filter(Boolean)
+            .forEach((e) => emailSet.add(e));
+        }
+        if (emailSet.size === 0) {
+          skip++;
+          continue;
+        }
+
+        try {
+          const items = await loadItemsForArRecord(rec);
+          const profForCapture = matched?.id
+            ? ({ ...matched, id: String(matched.id) } as ModalClientProfile)
+            : null;
+          const png = await captureStatementPngDataUrl(
+            {
+              id: rec.id,
+              billing_month: rec.billing_month,
+              client_name: rec.client_name,
+              client_biz_no: rec.client_biz_no,
+              total_amount: rec.total_amount,
+              delivery_fee: rec.delivery_fee,
+              paid_amount: rec.paid_amount,
+              unpaid_amount: rec.unpaid_amount,
+              due_date: rec.due_date,
+              status: rec.status,
+              memo: rec.memo,
+              checked: rec.checked,
+              contact_email: rec.contact_email,
+              item_count: rec.item_count,
+            },
+            items,
+            profForCapture
+          );
+          const supplyTotal = rec.total_amount;
+          const vatTotal = Math.round(supplyTotal * VAT_RATE);
+          const grandTotal = supplyTotal + vatTotal;
+          for (const to of emailSet) {
+            const resp = await fetch(vercelApiUrl("/api/sendMail"), {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                to,
+                clientName: rec.client_name,
+                billingMonth: rec.billing_month,
+                imageBase64: png,
+                items,
+                supplyTotal,
+                taxTotal: vatTotal,
+                grandTotal,
+                supplierName: SUPPLIER.name,
+                supplierPhone: SUPPLIER.phone,
+                supplierEmail: SUPPLIER.email,
+              }),
+            });
+            const data = await resp.json();
+            if (!resp.ok) throw new Error(`${rec.client_name} → ${to}: ${data.error ?? "발송 오류"}`);
+          }
+          await updateDoc(doc(db, "ar_records", rec.id), {
+            contact_email: Array.from(emailSet).join(", "),
+          });
+          ok++;
+        } catch (e) {
+          errs.push(`${rec.client_name}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+      setBulkMailBanner({
+        ok: `일괄 발송: 성공 ${ok}건 · 이메일 없음 ${skip}건 건너뜀${errs.length ? ` · 실패 ${errs.length}건` : ""}`,
+        err: errs.length ? errs.slice(0, 6).join(" / ") : undefined,
+      });
+    } catch (e) {
+      setBulkMailBanner({
+        err: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setBulkMailBusy(false);
+    }
+  };
+
   // 월별이력 탭에서 "이 달 보기" 클릭 시
   const handleSelectMonth = (month: string) => {
     setMonth(month);
@@ -1247,12 +1382,6 @@ export default function Settlement() {
                   </Badge>
                 )}
               </div>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
-                <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="업체명 검색..."
-                  className="pl-8 pr-8 py-1.5 border border-slate-200 rounded-lg text-sm w-44 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                {search && <button onClick={() => setSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"><X className="h-3.5 w-3.5" /></button>}
-              </div>
               <div className="ml-auto flex gap-2 flex-wrap">
                 {sorted.length > 0 && (
                   <Button
@@ -1301,12 +1430,42 @@ export default function Settlement() {
 
             {/* 신용내역 테이블 */}
             <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-              <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-3">
+              <div className="px-5 py-4 border-b border-slate-100 flex flex-wrap items-center gap-3">
                 <h2 className="font-bold text-slate-800 text-base">
                   {filterMonth.split("-")[0]}년 {filterMonth.split("-")[1]}월 신용내역
                   {search && <span className="ml-2 text-sm text-blue-600 font-normal">"{search}" 검색 중</span>}
                 </h2>
                 <span className="text-sm text-slate-400">{filtered.length}개 거래처</span>
+                <div className="relative flex-1 min-w-[140px] max-w-[220px]">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-400" />
+                  <input
+                    type="text"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="업체명 검색…"
+                    className="pl-8 pr-8 py-1.5 border border-slate-200 rounded-lg text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  {search && (
+                    <button type="button" onClick={() => setSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 border-blue-300 text-blue-700 hover:bg-blue-50 shrink-0"
+                  disabled={currentMonthClosed || selectedInViewCount === 0 || bulkMailBusy}
+                  onClick={() => void handleBulkMail()}
+                  title="목록에서 체크한 거래처에 거래명세표 PNG 메일 일괄 발송"
+                >
+                  {bulkMailBusy ? (
+                    <><Loader2 className="h-4 w-4 animate-spin" />발송 중…</>
+                  ) : (
+                    <><Send className="h-4 w-4" />메일 일괄발송</>
+                  )}
+                </Button>
                 {selectedInViewCount > 0 && !currentMonthClosed && (
                   <Button
                     variant="outline"
@@ -1337,6 +1496,19 @@ export default function Settlement() {
                   </span>
                 )}
               </div>
+
+              {bulkMailBanner && (
+                <div
+                  className={`mx-5 mb-3 rounded-lg px-3 py-2 text-sm border ${
+                    bulkMailBanner.err
+                      ? "bg-amber-50 text-amber-900 border-amber-200"
+                      : "bg-emerald-50 text-emerald-800 border-emerald-200"
+                  }`}
+                >
+                  {bulkMailBanner.ok && <p className="font-semibold">{bulkMailBanner.ok}</p>}
+                  {bulkMailBanner.err && <p className="mt-1 text-red-600 text-xs whitespace-pre-wrap">{bulkMailBanner.err}</p>}
+                </div>
+              )}
 
               <div className="overflow-x-auto">
                 {/* 컬럼 너비 드래그 조절: 헤더 오른쪽 경계를 드래그하세요 */}
@@ -1951,9 +2123,15 @@ function QuickMailPanel({ record, onClose }: { record: ArRecord; onClose: () => 
 // ══════════════════════════════════════════════════════════════
 // 거래처 정보 관리 패널
 // ══════════════════════════════════════════════════════════════
-const EMPTY_PROFILE: Omit<ClientProfile, "id"> = {
+
+type ProfileForm = Omit<ClientProfile, "id" | "custom_statement_columns"> & {
+  custom_statement_columns: StatementColumnKey[];
+};
+
+const EMPTY_PROFILE: ProfileForm = {
   name: "", biz_no: "", ceo_name: "", address: "",
   phone: "", email: "", business_type: "", business_item: "", template: "basic",
+  custom_statement_columns: [],
 };
 
 function ClientProfilesPanel() {
@@ -1962,7 +2140,7 @@ function ClientProfilesPanel() {
   const [editing, setEditing] = useState<ClientProfile | null>(null);
   const [isNew, setIsNew] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState<Omit<ClientProfile, "id">>(EMPTY_PROFILE);
+  const [form, setForm] = useState<ProfileForm>(EMPTY_PROFILE);
 
   useEffect(() => {
     const q = query(collection(db, "client_profiles"), orderBy("name"));
@@ -1980,9 +2158,15 @@ function ClientProfilesPanel() {
   };
 
   const openEdit = (p: ClientProfile) => {
-    setForm({ name: p.name, biz_no: p.biz_no, ceo_name: p.ceo_name, address: p.address,
-               phone: p.phone, email: p.email, business_type: p.business_type,
-               business_item: p.business_item, template: p.template });
+    const raw = (p.custom_statement_columns || []) as string[];
+    const ordered = STATEMENT_COLUMN_CATALOG.filter((c) => raw.includes(c.key)).map((c) => c.key);
+    setForm({
+      name: p.name, biz_no: p.biz_no, ceo_name: p.ceo_name, address: p.address,
+      phone: p.phone, email: p.email, business_type: p.business_type,
+      business_item: p.business_item,
+      template: (p.template as StatementTemplateKey) || "basic",
+      custom_statement_columns: ordered,
+    });
     setIsNew(false);
     setEditing(p);
   };
@@ -1990,10 +2174,22 @@ function ClientProfilesPanel() {
   const handleSave = async () => {
     const nameNorm = normalizeCreditNameForLink(form.name);
     if (!nameNorm) { alert("거래처명을 입력하세요."); return; }
+    if (form.template === "custom" && form.custom_statement_columns.length === 0) {
+      alert("커스텀 양식은 헤더를 1개 이상 선택하세요.");
+      return;
+    }
     setSaving(true);
     try {
       const linkKey = creditAggregationLinkKey(nameNorm);
-      const payload = { ...form, name: nameNorm, aggregation_link_key: linkKey };
+      const payload: Omit<ClientProfile, "id"> = {
+        ...form,
+        name: nameNorm,
+        aggregation_link_key: linkKey,
+        custom_statement_columns:
+          form.template === "custom" && form.custom_statement_columns.length > 0
+            ? [...form.custom_statement_columns]
+            : null,
+      };
       if (isNew) {
         await addDoc(collection(db, "client_profiles"), payload);
       } else if (editing?.id) {
@@ -2026,7 +2222,7 @@ function ClientProfilesPanel() {
     if (p.id) await deleteDoc(doc(db, "client_profiles", p.id));
   };
 
-  const field = (label: string, key: keyof Omit<ClientProfile, "id" | "template">) => (
+  const field = (label: string, key: keyof Omit<ClientProfile, "id" | "template" | "custom_statement_columns">) => (
     <div className="flex flex-col gap-1">
       <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{label}</label>
       <input
@@ -2059,18 +2255,71 @@ function ClientProfilesPanel() {
           {field("이메일", "email")}
           {field("업태", "business_type")}
           {field("종목", "business_item")}
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1 md:col-span-2">
             <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">거래명세표 양식</label>
-            <select
-              className="px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-              value={form.template}
-              onChange={(e) => setForm((f) => ({ ...f, template: e.target.value as TemplateType }))}
-            >
-              {(Object.entries(TEMPLATE_LABELS) as [TemplateType, string][]).map(([k, v]) => (
-                <option key={k} value={k}>{v}</option>
-              ))}
-            </select>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                className="flex-1 min-w-[200px] px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+                value={form.template}
+                onChange={(e) => {
+                  const t = e.target.value as StatementTemplateKey;
+                  setForm((f) => ({
+                    ...f,
+                    template: t,
+                    custom_statement_columns: t === "custom" ? f.custom_statement_columns : [],
+                  }));
+                }}
+              >
+                {(Object.entries(TEMPLATE_LABELS) as [StatementTemplateKey, string][]).map(([k, v]) => (
+                  <option key={k} value={k}>{v}</option>
+                ))}
+              </select>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0 border-blue-300 text-blue-700"
+                onClick={() => setForm((f) => ({ ...f, template: "custom" }))}
+              >
+                거래처 양식 추가 (헤더 선택)
+              </Button>
+            </div>
           </div>
+          {form.template === "custom" && (
+            <div className="md:col-span-2 rounded-xl border border-dashed border-blue-200 bg-blue-50/60 p-4 space-y-3">
+              <p className="text-xs font-bold text-blue-900">
+                포함할 헤더를 선택하세요. 체크한 순서는 아래 목록 정 순서대로 열이 배치됩니다.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {STATEMENT_COLUMN_CATALOG.map(({ key, label }) => {
+                  const on = form.custom_statement_columns.includes(key);
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => {
+                        setForm((f) => {
+                          const s = new Set(f.custom_statement_columns);
+                          if (s.has(key)) s.delete(key);
+                          else s.add(key);
+                          const ordered = STATEMENT_COLUMN_CATALOG.filter((c) => s.has(c.key)).map((c) => c.key);
+                          return { ...f, custom_statement_columns: ordered };
+                        });
+                      }}
+                      className={`text-xs px-2.5 py-1.5 rounded-lg border font-medium transition-colors ${
+                        on ? "bg-blue-600 text-white border-blue-600 shadow-sm" : "bg-white border-slate-200 text-slate-600 hover:border-blue-300"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              {form.custom_statement_columns.length === 0 && (
+                <p className="text-xs text-amber-700">최소 1개 이상 선택해야 저장 시 커스텀 양식이 적용됩니다.</p>
+              )}
+            </div>
+          )}
         </div>
         <div className="flex justify-end gap-3">
           <Button variant="outline" onClick={() => setEditing(null)}>취소</Button>
@@ -2139,7 +2388,7 @@ function ClientProfilesPanel() {
                   </td>
                   <td className="px-3 py-2 text-center">
                     <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
-                      {TEMPLATE_LABELS[p.template] || "기본양식"}
+                      {TEMPLATE_LABELS[(p.template in TEMPLATE_LABELS ? p.template : "basic") as StatementTemplateKey] ?? "기본양식"}
                     </span>
                   </td>
                   <td className="px-3 py-2 text-center">
