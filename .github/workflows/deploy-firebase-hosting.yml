@@ -1,6 +1,9 @@
 # Vite 빌드(dist) → Firebase Hosting | /api/** 는 firebase.json 에서 Cloud Run(tax-automation) 으로 리라이트
-# GitHub Secret: FIREBASE_SERVICE_ACCOUNT = GCP 서비스 계정 JSON 전체 (Hosting 배포·Run 연동 권한 필요)
-# (구) FirebaseExtended/action-hosting-deploy 는 동일 시크릿에서 실패하는 경우가 있어 auth + firebase CLI 로 통일
+#
+# 인증: GitHub Secret `GCP_SA_KEY` (Cloud Run 워크플로와 동일 JSON).
+# · `google-github-actions/auth` 는 유효한 서비스 계정 JSON 이어야 함.
+# · `FIREBASE_SERVICE_ACCOUNT` 만 있고 비정형이면 auth 단계에서 실패할 수 있어, 검증된 GCP_SA_KEY 를 사용.
+# · 해당 SA 에 Firebase Hosting Admin(또는 역할에 firebasehosting.admin) 이 있어야 deploy 가 성공합니다.
 
 name: Deploy Firebase Hosting
 
@@ -28,11 +31,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # firebase deploy 가 사용할 Application Default Credentials
+      # Cloud Run 배포와 동일 SA — FIREBASE_SERVICE_ACCOUNT 단독이 깨진 저장소에서도 동작
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
 
       - name: Set up Cloud SDK (firebase-tools 호환)
         uses: google-github-actions/setup-gcloud@v2
