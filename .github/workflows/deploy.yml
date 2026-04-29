@@ -164,6 +164,30 @@ jobs:
             echo "- \`VITE_TAX_AUTOMATION_URL\` (클라이언트 참조용, 선택)"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Cloud Run 헬스 체크 (/api/health)
+        env:
+          CR_URL: ${{ steps.cloudrun_url.outputs.url }}
+        run: |
+          set -euo pipefail
+          U="${CR_URL}/api/health"
+          echo "GET $U"
+          code="$(curl -sS -o /tmp/h.json -w '%{http_code}' --max-time 60 "$U" || true)"
+          echo "HTTP $code"
+          cat /tmp/h.json
+          echo ""
+          if [ "$code" != "200" ]; then
+            echo "::error::헬스 체크 실패 (HTTP $code)"
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json, sys
+          with open("/tmp/h.json", encoding="utf-8") as f:
+              d = json.load(f)
+          if d.get("status") != "ok":
+              print("::error::JSON status is not ok:", d, file=sys.stderr)
+              sys.exit(1)
+          PY
+
       # if: 에서 secrets 를 직접 쓸 수 없어, 출력으로 게이팅 (Unrecognized named-value: 'secrets' 방지)
       - name: Vercel 동기화 여부 게이트
         id: vercel_gate
