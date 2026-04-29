@@ -14,7 +14,7 @@ import {
   ArrowLeft, Upload, Plus, Trash2, CheckCircle, AlertCircle, Clock,
   User, X, FileText, AlertTriangle, Scissors, RotateCcw, Save,
   Search, Lock, History, CreditCard, Cloud, CloudOff, Loader2,
-  FileSpreadsheet, Building2, Pencil, Trash2 as Trash2Icon, Mail, Send,
+  FileSpreadsheet, Building2, Pencil, Trash2 as Trash2Icon, Mail, Send, LayoutGrid,
 } from "lucide-react";
 
 import {
@@ -40,6 +40,7 @@ import { vercelApiUrl } from "../utils/apiOrigin";
 import {
   TEMPLATE_LABELS,
   STATEMENT_COLUMN_CATALOG,
+  labelForColumnKey,
   type StatementColumnKey,
 } from "../utils/statementTemplates";
 import { captureStatementPngDataUrl } from "../utils/renderStatementCapture";
@@ -49,7 +50,7 @@ import type { StatementTemplateKey } from "../types/statement";
 // 타입 & 상수
 // ─────────────────────────────────────────────────────────────
 type RecordStatus = "unpaid" | "partial" | "paid";
-type PageView = "credits" | "history" | "clients";
+type PageView = "credits" | "history" | "clients" | "formats";
 
 interface ClientProfile {
   id?: string;
@@ -828,74 +829,6 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
 }
 
 // ─────────────────────────────────────────────────────────────
-// 수동 등록 패널
-// ─────────────────────────────────────────────────────────────
-function AddRecordPanel({ onClose }: { onClose: () => void }) {
-  const [form, setForm] = useState({ billing_month: currentMonth(), client_name: "", client_biz_no: "", total_amount: "", paid_amount: "0", due_date: "", memo: "" });
-  const [err, setErr] = useState("");
-  const f = (k: keyof typeof form, v: string) => setForm((p) => ({ ...p, [k]: v }));
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault(); setErr("");
-    const nameLinked = normalizeCreditNameForLink(form.client_name);
-    if (!nameLinked) { setErr("거래처명을 입력하세요."); return; }
-    const total = Number(form.total_amount.replace(/[^0-9.-]/g, "")) || 0;
-    const paid  = Number(form.paid_amount.replace(/[^0-9.-]/g, ""))  || 0;
-    const unpaid = Math.max(0, total - paid);
-    let status: RecordStatus = "unpaid";
-    if (paid >= total && total > 0) status = "paid";
-    else if (paid > 0) status = "partial";
-    await addDoc(collection(db, "ar_records"), {
-      billing_month: form.billing_month, client_name: nameLinked,
-      client_biz_no: form.client_biz_no.trim(), total_amount: total,
-      paid_amount: paid, unpaid_amount: unpaid, due_date: form.due_date,
-      status, memo: form.memo.trim(), checked: false,
-      created_at: serverTimestamp(), updated_at: serverTimestamp(),
-    });
-    onClose();
-  };
-
-  return (
-    <Card className="border-green-200 bg-green-50">
-      <CardHeader className="pb-3">
-        <CardTitle className="flex items-center justify-between text-base">
-          <span className="flex items-center gap-2"><Plus className="h-4 w-4 text-green-600" />직접 등록</span>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="h-4 w-4" /></button>
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={handleSubmit} className="grid grid-cols-2 md:grid-cols-3 gap-3">
-          {[
-            { label: "마감 월*",   key: "billing_month", type: "month" },
-            { label: "거래처명*",  key: "client_name",   type: "text",  placeholder: "(주)홍길동물류" },
-            { label: "사업자번호", key: "client_biz_no", type: "text",  placeholder: "000-00-00000" },
-            { label: "청구금액",   key: "total_amount",  type: "text",  placeholder: "1,000,000" },
-            { label: "입금금액",   key: "paid_amount",   type: "text",  placeholder: "0" },
-            { label: "지급기한",   key: "due_date",      type: "date" },
-          ].map(({ label, key, type, placeholder }) => (
-            <div key={key}>
-              <label className="block text-xs font-medium text-slate-600 mb-1">{label}</label>
-              <input type={type} value={form[key as keyof typeof form]} onChange={(e) => f(key as keyof typeof form, e.target.value)} placeholder={placeholder}
-                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-500" />
-            </div>
-          ))}
-          <div className="col-span-2 md:col-span-3">
-            <label className="block text-xs font-medium text-slate-600 mb-1">비고</label>
-            <input type="text" value={form.memo} onChange={(e) => f("memo", e.target.value)} placeholder="특이사항"
-              className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-green-500" />
-          </div>
-          {err && <p className="col-span-full text-sm text-red-500">{err}</p>}
-          <div className="col-span-full flex gap-2">
-            <Button type="submit" className="bg-green-600 hover:bg-green-700 font-bold">등록</Button>
-            <Button type="button" variant="outline" onClick={onClose}>취소</Button>
-          </div>
-        </form>
-      </CardContent>
-    </Card>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────
 // 메인 페이지
 // ─────────────────────────────────────────────────────────────
 export default function Settlement() {
@@ -908,7 +841,6 @@ export default function Settlement() {
   const [search, setSearch]       = useState("");
   const [activeView, setActiveView] = useState<PageView>("credits");
   const [showUpload, setUpload]   = useState(false);
-  const [showAdd, setAdd]         = useState(false);
   const [selectedRecord, setSelectedRecord] = useState<ArRecord | null>(null);
   const [quickMailRecord, setQuickMailRecord] = useState<ArRecord | null>(null);
   const [bulkMailBusy, setBulkMailBusy] = useState(false);
@@ -1354,6 +1286,7 @@ export default function Settlement() {
             { key: "credits", label: "신용내역", icon: CreditCard },
             { key: "history", label: "월별 이력", icon: History },
             { key: "clients", label: "거래처 정보", icon: Building2 },
+            { key: "formats", label: "거래처양식추가", icon: LayoutGrid },
           ] as { key: PageView; label: string; icon: any }[]).map(({ key, label, icon: Icon }) => (
             <button key={key} onClick={() => setActiveView(key)}
               className={`flex items-center gap-2 px-5 py-2 text-sm font-semibold rounded-lg transition-colors ${
@@ -1407,11 +1340,8 @@ export default function Settlement() {
                 )}
                 {!currentMonthClosed && (
                   <>
-                    <Button variant="outline" size="sm" className="gap-1.5" onClick={() => { setUpload((v) => !v); setAdd(false); }}>
+                    <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setUpload((v) => !v)}>
                       <Upload className="h-4 w-4" />{showUpload ? "닫기" : "파일 업로드"}
-                    </Button>
-                    <Button size="sm" className="gap-1.5 bg-blue-600 hover:bg-blue-700" onClick={() => { setAdd((v) => !v); setUpload(false); }}>
-                      <Plus className="h-4 w-4" />직접 등록
                     </Button>
                   </>
                 )}
@@ -1424,8 +1354,6 @@ export default function Settlement() {
                 onSaved={(month) => { setMonth(month); setUpload(false); }}
               />
             )}
-            {showAdd    && <AddRecordPanel onClose={() => setAdd(false)} />}
-
             <ScoreBoard records={filtered} month={filterMonth} isClosed={currentMonthClosed} />
 
             {/* 신용내역 테이블 */}
@@ -1761,7 +1689,7 @@ export default function Settlement() {
                         <td colSpan={10} className="text-center py-16 text-slate-400">
                           <Upload className="h-8 w-8 mx-auto mb-3 text-slate-300" />
                           {search ? `"${search}"에 해당하는 거래처가 없습니다.` : "등록된 신용내역이 없습니다."}
-                          <br /><span className="text-xs mt-1 block">파일 업로드 또는 직접 등록 버튼을 사용하세요.</span>
+                          <br /><span className="text-xs mt-1 block">파일 업로드로 엑셀·시트를 불러오세요.</span>
                         </td>
                       </tr>
                     )}
@@ -1820,6 +1748,9 @@ export default function Settlement() {
 
         {/* ══ 거래처 정보 뷰 ══ */}
         {activeView === "clients" && <ClientProfilesPanel />}
+
+        {/* ══ 거래처 양식 (명세표 헤더) ══ */}
+        {activeView === "formats" && <ClientFormatsPanel />}
       </div>
 
       {/* ── 거래명세서 모달 ── */}
@@ -2121,17 +2052,281 @@ function QuickMailPanel({ record, onClose }: { record: ArRecord; onClose: () => 
 }
 
 // ══════════════════════════════════════════════════════════════
+// 거래처별 명세표 헤더(양식) — 프리셋·커스텀 선택
+// ══════════════════════════════════════════════════════════════
+
+function statementFormatSummary(p: ClientProfile): string {
+  if (p.template === "custom" && p.custom_statement_columns?.length) {
+    return p.custom_statement_columns.map((k) => labelForColumnKey(k)).join(" → ");
+  }
+  const k = (p.template in TEMPLATE_LABELS ? p.template : "basic") as StatementTemplateKey;
+  return TEMPLATE_LABELS[k] ?? String(p.template);
+}
+
+function ClientFormatsPanel() {
+  const [profiles, setProfiles] = useState<ClientProfile[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [draftTemplate, setDraftTemplate] = useState<StatementTemplateKey>("basic");
+  const [draftCols, setDraftCols] = useState<StatementColumnKey[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [quickName, setQuickName] = useState("");
+  const [quickCols, setQuickCols] = useState<StatementColumnKey[]>([]);
+  const [quickBusy, setQuickBusy] = useState(false);
+
+  useEffect(() => {
+    const q = query(collection(db, "client_profiles"), orderBy("name"));
+    const unsub = onSnapshot(q, (snap) => {
+      setProfiles(snap.docs.map((d) => ({ id: d.id, ...d.data() } as ClientProfile)));
+      setLoading(false);
+    });
+    return unsub;
+  }, []);
+
+  const startEdit = (p: ClientProfile) => {
+    if (!p.id) return;
+    setEditId(p.id);
+    const t = (p.template as StatementTemplateKey) || "basic";
+    setDraftTemplate(t);
+    const raw = (p.custom_statement_columns || []) as string[];
+    setDraftCols(STATEMENT_COLUMN_CATALOG.filter((c) => raw.includes(c.key)).map((c) => c.key));
+  };
+
+  const toggleCol = (key: StatementColumnKey, draft: boolean) => {
+    const set = draft ? setDraftCols : setQuickCols;
+    set((prev) => {
+      const s = new Set(prev);
+      if (s.has(key)) s.delete(key);
+      else s.add(key);
+      return STATEMENT_COLUMN_CATALOG.filter((c) => s.has(c.key)).map((c) => c.key);
+    });
+  };
+
+  const saveEdit = async (p: ClientProfile) => {
+    if (!p.id) return;
+    const t = draftTemplate;
+    if (t === "custom" && draftCols.length === 0) {
+      alert("커스텀 양식은 헤더를 1개 이상 선택하세요.");
+      return;
+    }
+    setSaving(true);
+    try {
+      await setDoc(
+        doc(db, "client_profiles", p.id),
+        {
+          template: t,
+          custom_statement_columns: t === "custom" ? draftCols : null,
+        },
+        { merge: true }
+      );
+      setEditId(null);
+    } catch (e) {
+      alert("저장 실패: " + (e as Error).message);
+    }
+    setSaving(false);
+  };
+
+  const quickAdd = async () => {
+    const nameNorm = normalizeCreditNameForLink(quickName);
+    if (!nameNorm) {
+      alert("거래처명을 입력하세요.");
+      return;
+    }
+    if (quickCols.length === 0) {
+      alert("포함할 헤더를 1개 이상 선택하세요.");
+      return;
+    }
+    const dup = profiles.find((x) => profileMatchesAggregatedName(nameNorm, x.name));
+    if (dup) {
+      alert(`이미 등록된 거래처와 이름이 겹칩니다: ${dup.name}`);
+      return;
+    }
+    setQuickBusy(true);
+    try {
+      await addDoc(collection(db, "client_profiles"), {
+        name: nameNorm,
+        aggregation_link_key: creditAggregationLinkKey(nameNorm),
+        biz_no: "", ceo_name: "", address: "", phone: "", email: "",
+        business_type: "", business_item: "",
+        template: "custom",
+        custom_statement_columns: quickCols,
+      });
+      setQuickName("");
+      setQuickCols([]);
+    } catch (e) {
+      alert("추가 실패: " + (e as Error).message);
+    }
+    setQuickBusy(false);
+  };
+
+  const chipGrid = (selected: StatementColumnKey[], draft: boolean) => (
+    <div className="flex flex-wrap gap-2">
+      {STATEMENT_COLUMN_CATALOG.map(({ key, label }) => {
+        const on = selected.includes(key);
+        return (
+          <button
+            key={key}
+            type="button"
+            onClick={() => toggleCol(key, draft)}
+            className={`text-xs px-2.5 py-1.5 rounded-lg border font-medium transition-colors ${
+              on ? "bg-blue-600 text-white border-blue-600 shadow-sm" : "bg-white border-slate-200 text-slate-600 hover:border-blue-300"
+            }`}
+          >
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  return (
+    <div className="space-y-6">
+      <Card className="border border-indigo-100 bg-indigo-50/40 shadow-sm">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2 text-indigo-950">
+            <Plus className="h-4 w-4 text-indigo-600" />
+            빠른 추가 — 거래처명 + 커스텀 헤더만
+          </CardTitle>
+          <p className="text-xs text-slate-600 mt-1">
+            상세 연락처·사업자정보는 「거래처 정보」 탭에서 나중에 입력하면 됩니다. 아래에서 명세표에 넣을 열 순서를 고릅니다.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 mb-1">거래처명</label>
+            <input
+              value={quickName}
+              onChange={(e) => setQuickName(e.target.value)}
+              placeholder="(주)OO물류"
+              className="w-full max-w-md px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+            />
+          </div>
+          <div>
+            <p className="text-xs font-bold text-indigo-900 mb-2">포함할 헤더 선택 (열 순서는 아래 카탈로그 순서와 같습니다)</p>
+            {chipGrid(quickCols, false)}
+          </div>
+          <Button
+            className="bg-indigo-600 hover:bg-indigo-700 text-white"
+            onClick={() => void quickAdd()}
+            disabled={quickBusy}
+          >
+            {quickBusy ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Plus className="h-4 w-4 mr-1" />}
+            거래처 추가 (커스텀 양식)
+          </Button>
+        </CardContent>
+      </Card>
+
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 space-y-4">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+            <LayoutGrid className="h-5 w-5 text-indigo-600" />
+            거래처별 양식 연동
+            <span className="text-sm font-normal text-slate-400">({profiles.length}개)</span>
+          </h2>
+        </div>
+        <p className="text-xs text-slate-500">
+          각 거래처에 저장된 양식이 거래명세표·PNG·메일 발송 시 자동으로 연결됩니다. 프리셋(녹원·다빛 등) 또는 헤더만 골라 커스텀할 수 있습니다.
+        </p>
+
+        {loading ? (
+          <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-indigo-500" /></div>
+        ) : profiles.length === 0 ? (
+          <div className="text-center py-14 text-slate-400">
+            <LayoutGrid className="h-11 w-11 mx-auto mb-3 opacity-35" />
+            <p className="text-sm">등록된 거래처가 없습니다.</p>
+            <p className="text-xs mt-1">위에서 빠른 추가하거나 「거래처 정보」에서 먼저 등록하세요.</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto border border-slate-100 rounded-xl">
+            <table className="w-full text-sm border-collapse">
+              <thead>
+                <tr className="bg-slate-50 text-slate-600 text-xs font-semibold uppercase tracking-wide">
+                  <th className="px-3 py-2 text-left border border-slate-100">거래처명</th>
+                  <th className="px-3 py-2 text-left border border-slate-100">현재 양식</th>
+                  <th className="px-3 py-2 text-center border border-slate-100 w-[120px]">편집</th>
+                </tr>
+              </thead>
+              <tbody>
+                {profiles.map((p) => (
+                  <React.Fragment key={p.id}>
+                    <tr className="hover:bg-indigo-50/40 border-b border-slate-100 align-top">
+                      <td className="px-3 py-2 font-semibold text-slate-800">{p.name}</td>
+                      <td className="px-3 py-2 text-slate-600 text-xs max-w-[520px]">
+                        <span title={statementFormatSummary(p)} className="line-clamp-2">{statementFormatSummary(p)}</span>
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        {editId === p.id ? (
+                          <Button variant="outline" size="sm" onClick={() => setEditId(null)}>닫기</Button>
+                        ) : (
+                          <Button variant="outline" size="sm" className="border-indigo-200 text-indigo-700" onClick={() => startEdit(p)}>
+                            <Pencil className="h-3.5 w-3.5 mr-1" />양식
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                    {editId === p.id && (
+                      <tr className="bg-indigo-50/50">
+                        <td colSpan={3} className="px-4 py-4 space-y-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <label className="text-xs font-semibold text-slate-600">양식 종류</label>
+                            <select
+                              className="px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 min-w-[200px]"
+                              value={draftTemplate}
+                              onChange={(e) => {
+                                const t = e.target.value as StatementTemplateKey;
+                                setDraftTemplate(t);
+                                if (t !== "custom") setDraftCols([]);
+                              }}
+                            >
+                              {(Object.entries(TEMPLATE_LABELS) as [StatementTemplateKey, string][]).map(([k, v]) => (
+                                <option key={k} value={k}>{v}</option>
+                              ))}
+                            </select>
+                          </div>
+                          {draftTemplate === "custom" && (
+                            <div className="rounded-xl border border-dashed border-indigo-200 bg-white/80 p-3 space-y-2">
+                              <p className="text-xs font-bold text-indigo-900">표시할 헤더 선택 (순서 유지)</p>
+                              {chipGrid(draftCols, true)}
+                              {draftCols.length === 0 && (
+                                <p className="text-xs text-amber-700">저장하려면 헤더를 1개 이상 선택하세요.</p>
+                              )}
+                            </div>
+                          )}
+                          <div className="flex justify-end gap-2">
+                            <Button variant="outline" size="sm" onClick={() => setEditId(null)}>취소</Button>
+                            <Button
+                              size="sm"
+                              className="bg-indigo-600 hover:bg-indigo-700 text-white"
+                              onClick={() => void saveEdit(p)}
+                              disabled={saving}
+                            >
+                              {saving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Save className="h-4 w-4 mr-1" />}
+                              저장
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════
 // 거래처 정보 관리 패널
 // ══════════════════════════════════════════════════════════════
 
-type ProfileForm = Omit<ClientProfile, "id" | "custom_statement_columns"> & {
-  custom_statement_columns: StatementColumnKey[];
-};
+type ProfileForm = Omit<ClientProfile, "id" | "custom_statement_columns">;
 
 const EMPTY_PROFILE: ProfileForm = {
   name: "", biz_no: "", ceo_name: "", address: "",
   phone: "", email: "", business_type: "", business_item: "", template: "basic",
-  custom_statement_columns: [],
 };
 
 function ClientProfilesPanel() {
@@ -2158,14 +2353,11 @@ function ClientProfilesPanel() {
   };
 
   const openEdit = (p: ClientProfile) => {
-    const raw = (p.custom_statement_columns || []) as string[];
-    const ordered = STATEMENT_COLUMN_CATALOG.filter((c) => raw.includes(c.key)).map((c) => c.key);
     setForm({
       name: p.name, biz_no: p.biz_no, ceo_name: p.ceo_name, address: p.address,
       phone: p.phone, email: p.email, business_type: p.business_type,
       business_item: p.business_item,
       template: (p.template as StatementTemplateKey) || "basic",
-      custom_statement_columns: ordered,
     });
     setIsNew(false);
     setEditing(p);
@@ -2174,20 +2366,23 @@ function ClientProfilesPanel() {
   const handleSave = async () => {
     const nameNorm = normalizeCreditNameForLink(form.name);
     if (!nameNorm) { alert("거래처명을 입력하세요."); return; }
-    if (form.template === "custom" && form.custom_statement_columns.length === 0) {
-      alert("커스텀 양식은 헤더를 1개 이상 선택하세요.");
-      return;
-    }
     setSaving(true);
     try {
       const linkKey = creditAggregationLinkKey(nameNorm);
       const payload: Omit<ClientProfile, "id"> = {
-        ...form,
         name: nameNorm,
         aggregation_link_key: linkKey,
+        biz_no: form.biz_no,
+        ceo_name: form.ceo_name,
+        address: form.address,
+        phone: form.phone,
+        email: form.email,
+        business_type: form.business_type,
+        business_item: form.business_item,
+        template: form.template,
         custom_statement_columns:
-          form.template === "custom" && form.custom_statement_columns.length > 0
-            ? [...form.custom_statement_columns]
+          form.template === "custom"
+            ? (isNew ? null : (editing?.custom_statement_columns ?? null))
             : null,
       };
       if (isNew) {
@@ -2257,69 +2452,21 @@ function ClientProfilesPanel() {
           {field("종목", "business_item")}
           <div className="flex flex-col gap-1 md:col-span-2">
             <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">거래명세표 양식</label>
-            <div className="flex flex-wrap items-center gap-2">
-              <select
-                className="flex-1 min-w-[200px] px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-                value={form.template}
-                onChange={(e) => {
-                  const t = e.target.value as StatementTemplateKey;
-                  setForm((f) => ({
-                    ...f,
-                    template: t,
-                    custom_statement_columns: t === "custom" ? f.custom_statement_columns : [],
-                  }));
-                }}
-              >
-                {(Object.entries(TEMPLATE_LABELS) as [StatementTemplateKey, string][]).map(([k, v]) => (
-                  <option key={k} value={k}>{v}</option>
-                ))}
-              </select>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="shrink-0 border-blue-300 text-blue-700"
-                onClick={() => setForm((f) => ({ ...f, template: "custom" }))}
-              >
-                거래처 양식 추가 (헤더 선택)
-              </Button>
-            </div>
-          </div>
-          {form.template === "custom" && (
-            <div className="md:col-span-2 rounded-xl border border-dashed border-blue-200 bg-blue-50/60 p-4 space-y-3">
-              <p className="text-xs font-bold text-blue-900">
-                포함할 헤더를 선택하세요. 체크한 순서는 아래 목록 정 순서대로 열이 배치됩니다.
+            <select
+              className="w-full max-w-xl px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+              value={form.template}
+              onChange={(e) => setForm((f) => ({ ...f, template: e.target.value as StatementTemplateKey }))}
+            >
+              {(Object.entries(TEMPLATE_LABELS) as [StatementTemplateKey, string][]).map(([k, v]) => (
+                <option key={k} value={k}>{v}</option>
+              ))}
+            </select>
+            {form.template === "custom" && (
+              <p className="text-xs text-blue-900 bg-blue-50 border border-blue-100 rounded-lg px-3 py-2">
+                표에 넣을 <strong>헤더(열) 순서</strong>는 상단 탭 <strong>거래처양식추가</strong>에서 이 거래처를 골라 지정합니다.
               </p>
-              <div className="flex flex-wrap gap-2">
-                {STATEMENT_COLUMN_CATALOG.map(({ key, label }) => {
-                  const on = form.custom_statement_columns.includes(key);
-                  return (
-                    <button
-                      key={key}
-                      type="button"
-                      onClick={() => {
-                        setForm((f) => {
-                          const s = new Set(f.custom_statement_columns);
-                          if (s.has(key)) s.delete(key);
-                          else s.add(key);
-                          const ordered = STATEMENT_COLUMN_CATALOG.filter((c) => s.has(c.key)).map((c) => c.key);
-                          return { ...f, custom_statement_columns: ordered };
-                        });
-                      }}
-                      className={`text-xs px-2.5 py-1.5 rounded-lg border font-medium transition-colors ${
-                        on ? "bg-blue-600 text-white border-blue-600 shadow-sm" : "bg-white border-slate-200 text-slate-600 hover:border-blue-300"
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
-              </div>
-              {form.custom_statement_columns.length === 0 && (
-                <p className="text-xs text-amber-700">최소 1개 이상 선택해야 저장 시 커스텀 양식이 적용됩니다.</p>
-              )}
-            </div>
-          )}
+            )}
+          </div>
         </div>
         <div className="flex justify-end gap-3">
           <Button variant="outline" onClick={() => setEditing(null)}>취소</Button>
@@ -2386,9 +2533,12 @@ function ClientProfilesPanel() {
                       <span className="text-slate-300">-</span>
                     )}
                   </td>
-                  <td className="px-3 py-2 text-center">
-                    <span className="inline-block px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
-                      {TEMPLATE_LABELS[(p.template in TEMPLATE_LABELS ? p.template : "basic") as StatementTemplateKey] ?? "기본양식"}
+                  <td className="px-3 py-2 text-center max-w-[220px]">
+                    <span
+                      title={statementFormatSummary(p)}
+                      className="inline-block px-2 py-0.5 rounded-lg text-xs font-medium bg-blue-100 text-blue-700 line-clamp-2 text-left"
+                    >
+                      {statementFormatSummary(p)}
                     </span>
                   </td>
                   <td className="px-3 py-2 text-center">
@@ -2408,8 +2558,9 @@ function ClientProfilesPanel() {
         </div>
       )}
 
-      <p className="text-xs text-slate-400 border-t border-slate-100 pt-3">
-        * 엑셀에 나온 거래처명과 거래처 정보의 상호가 같으면(띄어쓰기만 다른 경우 포함) 공급받는자란에 등록 정보가 자동 반영됩니다.
+      <p className="text-xs text-slate-400 border-t border-slate-100 pt-3 space-y-1">
+        <span className="block">* 엑셀에 나온 거래처명과 거래처 정보의 상호가 같으면(띄어쓰기만 다른 경우 포함) 공급받는자란에 등록 정보가 자동 반영됩니다.</span>
+        <span className="block">* 명세표 <strong className="font-medium text-slate-500">커스텀 헤더</strong> 구성은 「거래처양식추가」 탭에서 거래처별로 편집합니다.</span>
       </p>
     </div>
   );
