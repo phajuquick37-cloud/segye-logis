@@ -92,7 +92,9 @@ export default function Admin() {
   const [formSuccess, setFormSuccess] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const isAdmin = user && ADMIN_EMAILS.includes(user.email);
+  const isAdmin =
+    user != null &&
+    ADMIN_EMAILS.some((e) => e.toLowerCase() === (user.email || "").toLowerCase());
 
   useEffect(() => {
     getRedirectResult(auth).catch(() => {});

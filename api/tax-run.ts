@@ -13,21 +13,41 @@ function getFirebaseWebApiKey(): string {
   );
 }
 
+/** BOM·CR 제거 후 trim — Vercel/메모에서 복사 시 흔한 불일치 방지 */
+function normalizeEnvSecret(raw: string): string {
+  return raw.replace(/^\uFEFF/, "").replace(/\r/g, "").trim();
+}
+
+/** 스킴 없이 호스트만 넣은 값(예: xxx.a.run.app)도 파싱되게 */
+function prependHttpsIfMissing(raw: string): string {
+  let s = raw.trim().replace(/^\uFEFF/, "");
+  if (!s) return "";
+  if (/^https?:\/\//i.test(s)) return s;
+  if (s.startsWith("//")) return `https:${s}`;
+  // 호스트 형태로 보일 때만 — 그 외는 그대로 두어 URL() 실패 경로 유지
+  if (/^[a-z0-9[\]]/i.test(s) && (s.includes(".") || s.includes("localhost"))) {
+    return `https://${s.replace(/^\/+/, "")}`;
+  }
+  return s;
+}
+
 /**
  * Cloud Run 베이스만 남김(스킴+호스트+[선택 경로]).
  * · (https://…), 따옴표 제거
  * · 끝에 /api/run 또는 /api 를 실수로 넣은 경우 제거 — 이후 코드에서 /api/run 을 한 번만 붙임
  */
 function normalizeAutomationBaseUrl(raw: string): string {
-  let s = raw.trim();
+  let s = prependHttpsIfMissing(raw);
   if (
     (s.startsWith('"') && s.endsWith('"')) ||
     (s.startsWith("'") && s.endsWith("'"))
   ) {
     s = s.slice(1, -1).trim();
+    s = prependHttpsIfMissing(s);
   }
   while (s.startsWith("(") && s.endsWith(")")) {
     s = s.slice(1, -1).trim();
+    s = prependHttpsIfMissing(s);
   }
   s = s.replace(/\/$/, "");
   if (!s) return "";
@@ -137,14 +157,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       process.env.TAX_AUTOMATION_SECRET,
       process.env.TAX_COLLECT_SECRET,
     ]
-      .map((x) => (x == null ? "" : String(x).trim()))
+      .map((x) => (x == null ? "" : normalizeEnvSecret(String(x))))
       .find((x) => x.length > 0) ?? "";
 
     const headers: Record<string, string> = { Accept: "application/json" };
     if (secret) headers["X-Tax-Collect-Secret"] = secret;
 
     const ac = new AbortController();
-    const to = setTimeout(() => ac.abort(), 30_000);
+    const to = setTimeout(() => ac.abort(), 60_000);
     let r: Response;
     try {
       r = await fetch(cloudRunManualRunUrl(base), {
@@ -167,7 +187,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       body = { message: text };
     }
     if (!r.ok) {
-      const msg = formatCloudRunErrorBody(body) || r.statusText || "수집 요청 실패";
+      let msg = formatCloudRunErrorBody(body) || r.statusText || "수집 요청 실패";
+      if (r.status === 401 && /인증/i.test(msg)) {
+        msg += " — Vercel의 TAX_COLLECT_SECRET(또는 VITE_TAX_AUTOMATION_SECRET 등)이 Cloud Run TAX_COLLECT_SECRET·GitHub Actions 시크릿과 동일한지 확인하세요.";
+      }
       return res.status(r.status).json({ error: msg });
     }
     const okMsg =

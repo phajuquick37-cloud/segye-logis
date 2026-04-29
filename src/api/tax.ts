@@ -9,9 +9,21 @@
 /** Vercel 관리자 → Cloud Run 수동 수집 프록시 (항상 상대 경로만 사용) */
 export const TAX_COLLECTION_PROXY_PATH = "/api/tax-run" as const;
 
+/** 호스트만 넣은 경우(스킴 없음) 표시·파싱과 서버 normalize 와 맞춤 */
+function prependHttpsIfMissing(raw: string): string {
+  const s = raw.trim().replace(/^\uFEFF/, "");
+  if (!s) return "";
+  if (/^https?:\/\//i.test(s)) return s;
+  if (s.startsWith("//")) return `https:${s}`;
+  if (/^[a-z0-9[\]]/i.test(s) && (s.includes(".") || s.includes("localhost"))) {
+    return `https://${s.replace(/^\/+/, "")}`;
+  }
+  return s;
+}
+
 /** URL 문자열에서 공백·슬래시·잘못 붙은 `/api/run` 접미사 제거 (표시용) */
 function stripAutomationBaseDisplay(raw: string): string {
-  let s = raw.trim().replace(/\/$/, "");
+  let s = prependHttpsIfMissing(raw).replace(/\/$/, "");
   if (!s) return "";
   try {
     const u = new URL(s);
