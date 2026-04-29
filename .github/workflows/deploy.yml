@@ -188,6 +188,20 @@ jobs:
               sys.exit(1)
           PY
 
+      # VERCEL_TOKEN 없이도 Hook 만으로 Production 재빌드 (홈은 Vercel 단일)
+      - name: Vercel Deploy Hook (선택·토큰 불필요)
+        continue-on-error: true
+        env:
+          VERCEL_DEPLOY_HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
+        run: |
+          if [ -z "${VERCEL_DEPLOY_HOOK:-}" ]; then
+            echo "::notice::VERCEL_DEPLOY_HOOK 없음 — deploy-vercel.yml 또는 Vercel Git 연동으로 배포하세요."
+            exit 0
+          fi
+          curl -fsS -X POST "$VERCEL_DEPLOY_HOOK"
+          echo ""
+          echo "OK — Vercel Production 배포 트리거됨 (Cloud Run 반영 후 사이트 갱신)"
+
       # if: 에서 secrets 를 직접 쓸 수 없어, 출력으로 게이팅 (Unrecognized named-value: 'secrets' 방지)
       - name: Vercel 동기화 여부 게이트
         id: vercel_gate

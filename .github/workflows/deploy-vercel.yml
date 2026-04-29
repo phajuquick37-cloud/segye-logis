@@ -1,0 +1,41 @@
+# Production 사이트는 Vercel 단일 호스팅 (Firebase Hosting / Blaze 불필요)
+# GitHub → Settings → Secrets → VERCEL_DEPLOY_HOOK 에 Vercel Deploy Hook URL 저장
+# (Vercel 프로젝트 → Settings → Git → Deploy Hooks → Create Hook)
+
+name: Trigger Vercel Production
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "src/**"
+      - "api/**"
+      - "index.html"
+      - "vite.config.ts"
+      - "package.json"
+      - "package-lock.json"
+      - "public/**"
+      - "vercel.json"
+      - "firebase-applet-config.json"
+      - ".github/workflows/deploy-vercel.yml"
+  workflow_dispatch:
+
+jobs:
+  hook:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Invoke Vercel Deploy Hook
+        env:
+          VERCEL_DEPLOY_HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
+        run: |
+          set -euo pipefail
+          if [ -z "${VERCEL_DEPLOY_HOOK:-}" ]; then
+            echo "::notice::VERCEL_DEPLOY_HOOK 시크릿이 없습니다. Vercel이 저장소와 연결돼 있으면 자동 배포됩니다. 수동 재배포: Vercel → Deployments → Redeploy."
+            exit 0
+          fi
+          curl -fsS -X POST "$VERCEL_DEPLOY_HOOK"
+          echo ""
+          echo "OK — Vercel Production 배포가 시작되었습니다."

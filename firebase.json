@@ -8,41 +8,5 @@
       "database": "ai-studio-08ae3b29-6eb5-4e08-8bb0-f20ab80e5ffc",
       "rules": "firestore.rules"
     }
-  ],
-  "hosting": {
-    "public": "dist",
-    "ignore": [
-      "firebase.json",
-      "**/.*",
-      "**/node_modules/**"
-    ],
-    "cleanUrls": true,
-    "rewrites": [
-      {
-        "source": "/api/health",
-        "run": {
-          "serviceId": "tax-automation",
-          "region": "asia-northeast3"
-        }
-      },
-      {
-        "source": "/api/status",
-        "run": {
-          "serviceId": "tax-automation",
-          "region": "asia-northeast3"
-        }
-      },
-      {
-        "source": "/api/run",
-        "run": {
-          "serviceId": "tax-automation",
-          "region": "asia-northeast3"
-        }
-      },
-      {
-        "source": "**",
-        "destination": "/index.html"
-      }
-    ]
-  }
+  ]
 }
