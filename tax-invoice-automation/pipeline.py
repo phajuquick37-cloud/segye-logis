@@ -91,6 +91,16 @@ async def run_pipeline(manual: bool = False) -> dict:
         # 3. Firebase 저장
         firebase_ids = save_invoices(all_finals)
         summary["firebase"] = len(firebase_ids)
+        if not firebase_ids and all_finals:
+            n_browser_ok = sum(1 for f in all_finals if f.get("success"))
+            logger.warning(
+                "Firestore 저장 0건 — 브라우저 성공 %d건 / 후보 %d건 "
+                "(실패 건은 success=False·저장필터·중복·발행일 하한·크리덴셜 확인)",
+                n_browser_ok,
+                len(all_finals),
+            )
+        elif firebase_ids:
+            logger.info("Firestore 반영 완료 — 문서 %d개 (관리자 tax_invoices 구독과 동일 DB 필요)", len(firebase_ids))
 
         # 4. Google Sheets 백업
         sw = SheetsWriter()

@@ -7,11 +7,14 @@ service cloud.firestore {
       return request.auth != null;
     }
     
+    // users/{aid} 문서 없을 때 get() 실패로 전체 규칙이 막히지 않도록: 이메일 먼저, 존재 시에만 get
     function isAdmin() {
-      return isAuthenticated() && 
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-         request.auth.token.email == "phajuquick37@gmail.com" ||
-         request.auth.token.email == "staff@segyelogis.com");
+      return isAuthenticated() && (
+        request.auth.token.email == "phajuquick37@gmail.com" ||
+        request.auth.token.email == "staff@segyelogis.com" ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
     }
 
     function isValidInquiry(data) {

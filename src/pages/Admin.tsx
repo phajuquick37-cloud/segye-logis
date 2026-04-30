@@ -120,16 +120,21 @@ export default function Admin() {
 
     // 세금계산서 — Firestore에서 내려받은 뒤 issue_date 내림차순으로 클라이언트 정렬
     const q3 = query(collection(db, "tax_invoices"), orderBy("created_at", "desc"));
-    const unsub3 = onSnapshot(q3, (snap) => {
-      const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as any[];
-      // issue_date(발행일) 기준 내림차순, 없으면 created_at 기준
-      docs.sort((a, b) => {
-        const da = a.issue_date || a.created_at?.toDate?.()?.toISOString?.() || "";
-        const db2 = b.issue_date || b.created_at?.toDate?.()?.toISOString?.() || "";
-        return da > db2 ? -1 : da < db2 ? 1 : 0;
-      });
-      setTaxInvoices(docs);
-    });
+    const unsub3 = onSnapshot(
+      q3,
+      (snap) => {
+        const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as any[];
+        docs.sort((a, b) => {
+          const da = a.issue_date || a.created_at?.toDate?.()?.toISOString?.() || "";
+          const db2 = b.issue_date || b.created_at?.toDate?.()?.toISOString?.() || "";
+          return da > db2 ? -1 : da < db2 ? 1 : 0;
+        });
+        setTaxInvoices(docs);
+      },
+      (err) => {
+        console.error("[Admin] tax_invoices 스냅샷 실패 — 규칙·DB이름·인덱스 확인:", err);
+      }
+    );
 
     return () => { unsub1(); unsub2(); unsub3(); };
   }, [isAdmin]);
