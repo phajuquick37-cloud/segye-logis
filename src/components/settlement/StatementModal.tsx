@@ -370,9 +370,16 @@ DocumentBody.displayName = "DocumentBody";
 export default function StatementModal({
   record,
   onClose,
+  onMailSentOk,
 }: {
   record: ArRecord;
   onClose: () => void;
+  /** 신용내역 화면 등 상위에서 ‘메일 전송 완료’ 배너 표시용 */
+  onMailSentOk?: (payload: {
+    clientName: string;
+    recipientCount: number;
+    results: MailSendReportLine[];
+  }) => void;
 }) {
   const [items, setItems]           = useState<SettlementItem[]>([]);
   const [loadingItems, setLoading]  = useState(true);
@@ -610,6 +617,11 @@ export default function StatementModal({
       setSentOk(allOk);
       if (allOk) {
         setSentErr("");
+        onMailSentOk?.({
+          clientName: record.client_name,
+          recipientCount: results.length,
+          results,
+        });
       } else {
         const failed = results.filter((r) => !r.ok);
         setSentErr(`${failed.length}명 발송 실패: ${failed.map((f) => f.to).join(", ")}`);

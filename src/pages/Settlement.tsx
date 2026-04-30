@@ -880,6 +880,12 @@ export default function Settlement() {
   const [showUpload, setUpload]   = useState(false);
   const [selectedRecord, setSelectedRecord] = useState<ArRecord | null>(null);
   const [quickMailRecord, setQuickMailRecord] = useState<ArRecord | null>(null);
+  /** 신용내역 메인에 표시하는 메일 전송 성공 안내 (모달 밖에서도 확인) */
+  const [mailSentNotice, setMailSentNotice] = useState<{
+    clientName: string;
+    recipientCount: number;
+    hint: string;
+  } | null>(null);
   const [bulkMailBusy, setBulkMailBusy] = useState(false);
   const [bulkMailBanner, setBulkMailBanner] = useState<{
     ok?: string;
@@ -1326,6 +1332,32 @@ export default function Settlement() {
     setActiveView("credits");
   };
 
+  const notifyMailSentOk = useCallback(
+    (payload: { clientName: string; recipientCount: number; results: MailSendReportLine[] }) => {
+      const okLines = payload.results.filter((r) => r.ok);
+      const parts = okLines.map((r) => {
+        const m = r.detail.match(/messageId:\s*([^\s)]+)/i);
+        return m ? `${r.to} (messageId: ${m[1]})` : `${r.to} (발송 성공)`;
+      });
+      const hint =
+        parts.length > 0
+          ? parts.join(" · ")
+          : "메일 서버에서 발송 성공 응답을 받았습니다.";
+      setMailSentNotice({
+        clientName: payload.clientName,
+        recipientCount: okLines.length || payload.recipientCount,
+        hint,
+      });
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (!mailSentNotice) return;
+    const id = window.setTimeout(() => setMailSentNotice(null), 14_000);
+    return () => window.clearTimeout(id);
+  }, [mailSentNotice]);
+
   return (
     <div className="min-h-screen bg-slate-100 p-4 md:p-8">
       <div className="mx-auto max-w-7xl space-y-6">
@@ -1370,6 +1402,34 @@ export default function Settlement() {
             </button>
           ))}
         </div>
+
+        {mailSentNotice && (
+          <div
+            role="status"
+            className="flex items-start gap-3 rounded-xl border-2 border-emerald-400 bg-emerald-50 px-4 py-3 shadow-md"
+          >
+            <CheckCircle className="h-6 w-6 text-emerald-600 shrink-0 mt-0.5" aria-hidden />
+            <div className="flex-1 min-w-0">
+              <p className="font-black text-emerald-950 text-base tracking-tight">메일 전송 완료 — 정상 전송 확인</p>
+              <p className="text-sm text-emerald-900 mt-1">
+                <strong className="font-bold">{mailSentNotice.clientName}</strong>
+                {" — "}
+                <span className="font-semibold">{mailSentNotice.recipientCount}명</span> 수신처에 거래명세 PNG 메일이 서버 응답 기준으로 발송되었습니다.
+              </p>
+              <p className="text-xs text-emerald-800/95 mt-2 break-words leading-relaxed border-t border-emerald-200/80 pt-2">
+                {mailSentNotice.hint}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setMailSentNotice(null)}
+              className="text-emerald-700 hover:text-emerald-900 p-1 rounded-lg hover:bg-emerald-100/80 shrink-0"
+              aria-label="안내 닫기"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+        )}
 
         {/* ══ 신용내역 뷰 ══ */}
         {activeView === "credits" && (
@@ -1837,11 +1897,21 @@ export default function Settlement() {
       </div>
 
       {/* ── 거래명세서 모달 ── */}
-      {selectedRecord && <StatementModal record={selectedRecord} onClose={() => setSelectedRecord(null)} />}
+      {selectedRecord && (
+        <StatementModal
+          record={selectedRecord}
+          onClose={() => setSelectedRecord(null)}
+          onMailSentOk={notifyMailSentOk}
+        />
+      )}
 
       {/* ── 바로 메일 전송 패널 ── */}
       {quickMailRecord && (
-        <QuickMailPanel record={quickMailRecord} onClose={() => setQuickMailRecord(null)} />
+        <QuickMailPanel
+          record={quickMailRecord}
+          onClose={() => setQuickMailRecord(null)}
+          onMailSentOk={notifyMailSentOk}
+        />
       )}
 
       {/* ── 입금확인 다이얼로그 ── */}
@@ -1951,7 +2021,19 @@ export default function Settlement() {
 // ══════════════════════════════════════════════════════════════
 // 바로 메일 전송 패널 (PNG 캡처 후 즉시 전송)
 // ══════════════════════════════════════════════════════════════
-function QuickMailPanel({ record, onClose }: { record: ArRecord; onClose: () => void }) {
+function QuickMailPanel({
+  record,
+  onClose,
+  onMailSentOk,
+}: {
+  record: ArRecord;
+  onClose: () => void;
+  onMailSentOk?: (payload: {
+    clientName: string;
+    recipientCount: number;
+    results: MailSendReportLine[];
+  }) => void;
+}) {
   const [items, setItems]     = useState<SettlementItem[]>([]);
   const [profile, setProfile] = useState<ModalClientProfile | null>(null);
   const [loading, setLoading] = useState(true);
@@ -2045,6 +2127,11 @@ function QuickMailPanel({ record, onClose }: { record: ArRecord; onClose: () => 
       setSentOk(allOk);
       if (allOk) {
         setSentErr("");
+        onMailSentOk?.({
+          clientName: record.client_name,
+          recipientCount: results.length,
+          results,
+        });
         setTimeout(() => { setSentOk(false); setSendReport(null); onClose(); }, 3500);
       } else {
         setSentErr(`${results.filter((r) => !r.ok).length}건 실패 — 아래 상세를 확인하세요.`);
