@@ -92,7 +92,8 @@ export function splitRow(row: RawRow, rules: SplitRule[]): SplitRow[] {
   result.push({
     ...row,
     clientName: main,
-    amount: row.amount, // main 행은 원본 금액 그대로
+    amount: row.amount,
+    deliveryFee: row.deliveryFee,
     splitFrom: row.clientName,
     isSplitAlias: false,
   });
@@ -102,9 +103,9 @@ export function splitRow(row: RawRow, rules: SplitRule[]): SplitRow[] {
     result.push({
       ...row,
       clientName: rule.keyword,
-      // "full" 모드: alias 행은 0원 (추적 목적)
-      // "share" 모드: 원본 금액 복사
       amount: rule.amountMode === "share" ? row.amount : 0,
+      /** 탁송은 본행(상위 상호)에만 집계 — 별칭 행에 복사하면 탁송이 중복 합산됨 */
+      deliveryFee: 0,
       splitFrom: row.clientName,
       isSplitAlias: true,
     });

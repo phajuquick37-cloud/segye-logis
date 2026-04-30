@@ -27,6 +27,7 @@ import {
   isBlankCreditClientName,
   normalizePaymentCell, isCreditPaymentForSettlement,
   isIncludedStatusForCreditSettlement,
+  netAmountExcludingDeliveryWhenSeparateCols,
 } from "../utils/sheetParser";
 import {
   detectAllAliases, applyEntitySplit, aggregateToRecords,
@@ -502,16 +503,25 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
         const s = String(getVal(key)).trim();
         return s || undefined;
       };
+      let amount =
+        patchedIdx.amount !== -1
+          ? safeNum(getVal("amount"))
+          : row.amount;
+      const deliveryFee = patchedIdx["deliveryfee"] !== -1
+        ? safeNum(getVal("deliveryfee"))
+        : row.deliveryFee;
+      const amountHdr = patchedIdx.amount !== -1 ? headers[patchedIdx.amount] : null;
+      amount = netAmountExcludingDeliveryWhenSeparateCols(
+        amount,
+        deliveryFee,
+        amountHdr,
+        patchedIdx.deliveryfee !== -1
+      );
       return {
         ...row,
         clientName:  normalizeCreditClientCell(getVal("client")),
-        amount:
-          patchedIdx.amount !== -1
-            ? safeNum(getVal("amount"))
-            : row.amount,
-        deliveryFee: patchedIdx["deliveryfee"] !== -1
-          ? safeNum(getVal("deliveryfee"))
-          : row.deliveryFee,
+        amount,
+        deliveryFee,
         memo: patchedIdx["memo"] !== -1 ? String(getVal("memo")).trim() : row.memo,
         jeeyo: patchedIdx["jeeyo"] !== -1
           ? String(getVal("jeeyo")).trim() || undefined

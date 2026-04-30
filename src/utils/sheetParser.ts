@@ -9,6 +9,20 @@ export type ColKey =
   | "departure" | "destination" | "vehicle_type" | "driver" | "vehicle_no"
   | "unload_client" | "row_client" | "round_trip";
 
+/** 운임·요금 전용 열(우선 매핑) — 탁송은 보통 다른 열 */
+const AMOUNT_HINTS_FREIGHT: string[] = [
+  "요금", "운임요금", "운임", "운임비", "청구",
+];
+
+/**
+ * 위가 없을 때만 사용 — 행 금액에 탁송이 섞인 경우가 많은 열.
+ * 별도 「탁송」 열이 있으면 집계용 amount에서 탁송을 빼 운임만 남김(netAmountExcludingDeliveryWhenSeparateCols).
+ */
+const AMOUNT_HINTS_FALLBACK: string[] = [
+  "합계금액", "청구금액", "결제금액", "총금액", "공급대가",
+  "총액", "금액", "공급가액", "세액포함합계", "amount", "total",
+];
+
 /** 각 컬럼 키별 인식 후보 헤더명 (앞쪽일수록 우선순위 높음) */
 export const COL_HINTS: Record<ColKey, string[]> = {
   date: [
@@ -38,12 +52,7 @@ export const COL_HINTS: Record<ColKey, string[]> = {
     "감액", "DC금액", "DC", "D/C",
     "dc", "discount",
   ],
-  amount: [
-    "요금", "운임요금",
-    "합계금액", "청구금액", "결제금액", "총금액", "공급대가",
-    "총액", "금액", "청구", "운임", "운임비",
-    "공급가액", "세액포함합계", "amount", "total",
-  ],
+  amount: [...AMOUNT_HINTS_FREIGHT, ...AMOUNT_HINTS_FALLBACK],
   deliveryfee: [
     "탁송료", "탁송비", "배달료", "배달비", "배송료", "택배비", "택배료",
     "delivery_fee", "deliveryfee",
@@ -168,7 +177,37 @@ export interface ParseResult {
 // 헬퍼: 헤더 정규화 (공백·부호 제거, 소문자)
 // ─────────────────────────────────────────────────────────────
 function norm(s: string): string {
-  return s.toLowerCase().replace(/[\s_\-\(\)\[\]（）]/g, "");
+  return s.toLowerCase().replace(/[\s_\-().\[\]（）]/g, "");
+}
+
+/**
+ * 집계 「요금」 amount: 엑셀 셀이 운임+탁송 합이고 별도 탁송 열이 있으면 탁송만큼 빼 이중 합산을 막음.
+ * 「요금」「운임」 전용 헤더는 차감하지 않음.
+ */
+export function netAmountExcludingDeliveryWhenSeparateCols(
+  rawAmount: number,
+  deliveryFee: number,
+  amountColumnHeader: string | null | undefined,
+  hasDeliveryColumn: boolean
+): number {
+  if (!hasDeliveryColumn || deliveryFee <= 0 || rawAmount < deliveryFee) return rawAmount;
+  if (!amountColumnHeaderImpliesFreightPlusDeliveryCombined(amountColumnHeader)) return rawAmount;
+  return rawAmount - deliveryFee;
+}
+
+function amountColumnHeaderImpliesFreightPlusDeliveryCombined(h: string | null | undefined): boolean {
+  const n = norm(String(h ?? "").trim());
+  if (!n) return false;
+  if (n === "요금" || n === "운임" || n === "운임비") return false;
+  if (n.includes("운임요금")) return false;
+  if (n.includes("운임") && !n.includes("합계") && !n.includes("총")) return false;
+  if (n.includes("합계") || n.includes("총액") || n.includes("총금액")) return true;
+  if (n.includes("세액포함")) return true;
+  if (n.includes("결제금액") || n.includes("청구금액")) return true;
+  if (n.includes("공급대가") || n.includes("공급가액")) return true;
+  if (n === "금액") return true;
+  if (n === "amount" || n === "total") return true;
+  return false;
 }
 
 /** 신용 구분용 거래처명 셀 정규화 (공백·유니코드·제로폭 제거) */
@@ -523,11 +562,18 @@ function sheetToResult(
     return pickBest(COL_HINTS.row_status);
   }
 
+  /** 운임 전용 열을 먼저 잡고, 없을 때만 합계형 열(탁송 혼재 가능) */
+  function pickAmountColumn(): number {
+    const fr = pickBest(AMOUNT_HINTS_FREIGHT);
+    if (fr !== -1) return fr;
+    return pickBest(AMOUNT_HINTS_FALLBACK);
+  }
+
   const detectedIdx: Record<ColKey, number> = {
     client:       pickClientColumn(),
     base_amount:  pickBest(COL_HINTS.base_amount),
     discount_amount: pickBest(COL_HINTS.discount_amount),
-    amount:       pickBest(COL_HINTS.amount),
+    amount:       pickAmountColumn(),
     deliveryfee:  pickBest(COL_HINTS.deliveryfee),
     date:         pickBest(COL_HINTS.date),
     duedate:      pickBest(COL_HINTS.duedate),
@@ -628,6 +674,15 @@ function sheetToResult(
     headers.forEach((h, idx) => { if (h) _original[h] = row[idx]; });
 
     const str = (k: ColKey) => { const v = get(row, k); return v != null ? String(v).trim() : ""; };
+    const rawAmt = parseAmount(get(row, "amount"));
+    const deliv  = parseAmount(get(row, "deliveryfee"));
+    const amtHdr = detectedIdx.amount !== -1 ? headers[detectedIdx.amount] : null;
+    const amt    = netAmountExcludingDeliveryWhenSeparateCols(
+      rawAmt,
+      deliv,
+      amtHdr,
+      detectedIdx.deliveryfee !== -1
+    );
     rows.push({
       date:         parseDate(get(row, "date")),
       clientName,
@@ -639,8 +694,8 @@ function sheetToResult(
         detectedIdx.discount_amount !== -1
           ? parseAmount(get(row, "discount_amount"))
           : undefined,
-      amount:       parseAmount(get(row, "amount")),
-      deliveryFee:  parseAmount(get(row, "deliveryfee")),
+      amount:       amt,
+      deliveryFee:  deliv,
       paymentLabel,
       statusLabel,
       memo:         str("memo"),
@@ -773,7 +828,17 @@ export function reapplyColMap(
 
     const str2 = (v: any) => v != null ? String(v).trim() : "";
     // _original을 이용해 재파싱
-    const rows: RawRow[] = result.rows.map((r) => ({
+    const rows: RawRow[] = result.rows.map((r) => {
+      const rawAmt = parseAmount(get(r._original, "amount"));
+      const deliv = parseAmount(get(r._original, "deliveryfee"));
+      const amtHdr = patched.amount !== -1 ? headers[patched.amount] ?? null : null;
+      const amt = netAmountExcludingDeliveryWhenSeparateCols(
+        rawAmt,
+        deliv,
+        amtHdr,
+        patched.deliveryfee !== -1
+      );
+      return {
       date:         parseDate(get(r._original, "date")),
       clientName:   normalizeCreditClientCell(get(r._original, "client")),
       baseAmount:
@@ -784,8 +849,8 @@ export function reapplyColMap(
         patched.discount_amount !== -1
           ? parseAmount(get(r._original, "discount_amount"))
           : undefined,
-      amount:       parseAmount(get(r._original, "amount")),
-      deliveryFee:  parseAmount(get(r._original, "deliveryfee")),
+      amount:       amt,
+      deliveryFee:  deliv,
       paymentLabel: normalizePaymentCell(get(r._original, "payment")) || undefined,
       memo:         str2(get(r._original, "memo")),
       jeeyo:        str2(get(r._original, "jeeyo")) || undefined,
@@ -807,7 +872,8 @@ export function reapplyColMap(
           ? normalizePaymentCell(get(r._original, "row_status")) || ""
           : undefined,
       _original:    r._original,
-    })).filter((r) => {
+    };
+    }).filter((r) => {
       if (isBlankCreditClientName(r.clientName)) return false;
       if (patched.payment === -1) return false;
       if (!isCreditPaymentForSettlement(get(r._original, "payment"))) return false;
