@@ -7,6 +7,7 @@
 import asyncio
 import logging
 import re
+import time
 from pathlib import Path
 from typing import Dict, List, Optional
 from playwright.async_api import async_playwright, Page, Browser, BrowserContext, ElementHandle
@@ -20,6 +21,113 @@ from config import (
 from platform_detector import detect_platform, extract_platform_from_page
 
 logger = logging.getLogger(__name__)
+
+
+def _attach_image_request_logging(page: Page, label: str) -> None:
+    """gif/jpg 등 이미지 요청 URL을 로그로 남김."""
+
+    def on_request(req):  # sync callback
+        try:
+            u = req.url or ""
+            rt = req.resource_type or ""
+            base = u.split("?", 1)[0].lower()
+            if rt == "image" or base.endswith(
+                (".gif", ".jpg", ".jpeg", ".png", ".webp", ".svg", ".bmp", ".ico")
+            ):
+                logger.info("[%s] 이미지 리소스 요청 (%s) %s", label, rt, u[:300])
+        except Exception:
+            pass
+
+    page.on("request", on_request)
+
+
+async def _log_page_image_elements(page: Page, label: str) -> None:
+    try:
+        rows = await page.eval_on_selector_all(
+            "img",
+            """els => els.slice(0, 60).map((e, i) => ({
+                i,
+                src: String(e.currentSrc || e.src || '').slice(0, 300),
+                complete: !!e.complete,
+                nw: e.naturalWidth,
+                nh: e.naturalHeight
+            }))""",
+        )
+        if not rows:
+            logger.info("[%s] DOM: <img> 없음", label)
+            return
+        for r in rows:
+            logger.info(
+                "[%s] img #%s complete=%s natural=%sx%s %s",
+                label,
+                r.get("i"),
+                r.get("complete"),
+                r.get("nw"),
+                r.get("nh"),
+                r.get("src"),
+            )
+    except Exception as e:
+        logger.debug("[%s] img DOM 로그 실패: %s", label, e)
+
+
+async def _wait_for_invoice_images_loaded(page: Page, timeout_ms: int) -> None:
+    """img가 있으면 complete·naturalWidth>0 될 때까지 최대 timeout_ms."""
+    logger.info("세금계산서 이미지 로드 대기 (최대 %dms)", timeout_ms)
+    try:
+        await page.wait_for_function(
+            """() => {
+                const imgs = Array.from(document.querySelectorAll('img'));
+                if (!imgs.length) return true;
+                return imgs.every(i => i.complete && i.naturalWidth > 0);
+            }""",
+            timeout=timeout_ms,
+        )
+        logger.info("이미지 로드 조건 충족(또는 img 없음)")
+    except Exception as e:
+        logger.warning("이미지 완전 로드 미충족(캡처는 계속): %s", e)
+
+
+async def click_issue_approve_hunt(
+    page: Page,
+    total_timeout_ms: int,
+    per_selector_timeout_ms: int = 1200,
+) -> int:
+    """
+    [승인]/[발행]을 이미지 로드보다 우선해 반복 탐색한다.
+    total_timeout_ms 동안 라운드를 돌며 보이는 버튼부터 클릭.
+    """
+    deadline = time.monotonic() + total_timeout_ms / 1000.0
+    total_clicks = 0
+    round_id = 0
+    while time.monotonic() < deadline:
+        round_id += 1
+        round_clicks = 0
+        for selector in ISSUE_APPROVE_BUTTON_SELECTORS:
+            if time.monotonic() >= deadline:
+                break
+            try:
+                loc = page.locator(selector).first
+                if await loc.is_visible(timeout=per_selector_timeout_ms):
+                    await loc.scroll_into_view_if_needed()
+                    await loc.click(timeout=8000)
+                    round_clicks += 1
+                    total_clicks += 1
+                    logger.info("승인/발행 우선 클릭 (라운드 %d): %s", round_id, selector)
+                    try:
+                        await page.wait_for_load_state("domcontentloaded", timeout=12000)
+                    except Exception:
+                        pass
+                    await asyncio.sleep(0.35)
+            except Exception:
+                continue
+        if round_clicks == 0:
+            await asyncio.sleep(0.35)
+    logger.info(
+        "승인/발행 우선 탐색 종료 (한도 %dms): 총 %d회 클릭",
+        total_timeout_ms,
+        total_clicks,
+    )
+    return total_clicks
 
 
 # ─── 사업자번호 입력 ──────────────────────────────────────────────────────────
@@ -90,10 +198,11 @@ async def click_confirm_button(page: Page) -> bool:
     """공통 선택자로 확인/조회 버튼 클릭"""
     # 버튼 클릭 후 networkidle 대기 60초, 초과 시 domcontentloaded로 폴백
     _WAIT_MS = 60000
+    sel_timeout = int(BROWSER_CONFIG.get("confirm_selector_timeout_ms", 10_000))
 
     for selector in CONFIRM_BUTTON_SELECTORS:
         try:
-            el = await page.wait_for_selector(selector, timeout=3000, state="visible")
+            el = await page.wait_for_selector(selector, timeout=sel_timeout, state="visible")
             if el:
                 await el.scroll_into_view_if_needed()
                 await el.click()
@@ -134,10 +243,11 @@ async def click_issue_approve_if_present(page: Page) -> int:
     공동인증·ActiveX·보안 프로그램 설치는 사용하지 않음.
     """
     clicks = 0
+    vis_timeout = 2500
     for selector in ISSUE_APPROVE_BUTTON_SELECTORS:
         try:
             loc = page.locator(selector).first
-            if await loc.is_visible(timeout=1500):
+            if await loc.is_visible(timeout=vis_timeout):
                 await loc.scroll_into_view_if_needed()
                 await loc.click(timeout=8000)
                 clicks += 1
@@ -298,6 +408,7 @@ class TaxInvoiceBrowser:
             viewport=BROWSER_CONFIG["viewport"],
             locale="ko-KR",
             timezone_id="Asia/Seoul",
+            ignore_https_errors=bool(BROWSER_CONFIG.get("ignore_https_errors", True)),
         )
         logger.info(f"🌐 브라우저 시작 ({BROWSER_CONFIG['browser']})")
 
@@ -353,10 +464,12 @@ class TaxInvoiceBrowser:
 
         output_dir.mkdir(parents=True, exist_ok=True)
         page = await self.context.new_page()
+        page_tag = (link_info.get("text") or "link")[:24]
+        _attach_image_request_logging(page, f"{page_tag}:{url[:40]}")
 
         try:
             # 1. 페이지 열기 — networkidle 우선, 타임아웃 시 domcontentloaded 폴백
-            logger.info(f"🔗 링크 열기: {url[:80]}")
+            logger.info("🌐 접속 URL: %s", url[:480] + ("…" if len(url) > 480 else ""))
             try:
                 await page.goto(
                     url,
@@ -397,8 +510,15 @@ class TaxInvoiceBrowser:
 
                 # 5. 확인 버튼
                 await click_confirm_button(page)
-                await asyncio.sleep(2)
 
+                hunt_ms = int(BROWSER_CONFIG.get("issue_approve_hunt_ms", 30_000))
+                await click_issue_approve_hunt(page, hunt_ms)
+
+                img_ms = int(BROWSER_CONFIG.get("image_load_wait_ms", 30_000))
+                await _wait_for_invoice_images_loaded(page, img_ms)
+                await _log_page_image_elements(page, "after-img-wait")
+
+                await asyncio.sleep(0.5)
                 confirm_ss = output_dir / "step3_after_confirm.png"
                 await page.screenshot(path=str(confirm_ss), full_page=False)
                 result["screenshots"].append(str(confirm_ss))

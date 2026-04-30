@@ -30,6 +30,8 @@ from config import (
     get_imap_since_date_str,
     get_effective_mail_window_start_date,
     is_spam_hard_blocked,
+    is_blocked_invoice_email,
+    passes_etax_or_nts_spam_guard,
 )
 
 _KST = ZoneInfo("Asia/Seoul")
@@ -476,8 +478,24 @@ class EmailReader:
                             body["html"],
                             body["text"],
                         ):
+                            why = "기타"
+                            if is_blocked_invoice_email(
+                                from_addr, subject, body["html"], body["text"]
+                            ):
+                                why = "쇼핑·광고·차단도메인·본문차단키워드"
+                            elif not mandatory_tax_invoice_keyword_in_subject_or_sender(
+                                from_addr, subject
+                            ):
+                                why = "제목·발신 필수키워드 없음(원콜·세금·거래명세 등)"
+                            elif not passes_etax_or_nts_spam_guard(
+                                from_addr,
+                                subject,
+                                body["html"],
+                                body["text"],
+                            ):
+                                why = "본문·제목에 전자세금·국세청 신호 없음"
                             logger.info(
-                                f"⏭ 수집 대상 아님(키워드·전자세금·쇼핑차단) — [{subject[:50]}]"
+                                "⏭ 수집 제외 [%s] — [%s]", why, subject[:50]
                             )
                             continue
 

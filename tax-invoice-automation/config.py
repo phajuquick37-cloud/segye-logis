@@ -193,6 +193,8 @@ _PRIORITY_TAX_KEYWORDS = [
     "(주)세계로지스님",
     "세계로지스님께",
     "(주)세계로지스 님",
+    "거래명세서",
+    "거래명세",
 ]
 
 EMAIL_FILTER = {
@@ -202,6 +204,7 @@ EMAIL_FILTER = {
         "ONEBILL", "원빌", "화물맨", "로지노트", "로지노트플러스", "로지노트 플러스",
         "logynote plus", "loginote plus",
         "전국24시", "24시콜",
+        "거래명세서", "거래명세",
         "tax12", "tax15",
         *_SUBJECT_TAX_NUMBERS,
         *_PRIORITY_TAX_KEYWORDS,
@@ -422,6 +425,9 @@ def mandatory_tax_invoice_keyword_in_subject_or_sender(
     if matches_worldlogis_invoice_subject(sub):
         return True
 
+    if matches_worldlogis_statement_subject(sub):
+        return True
+
     if "원콜" in blob:
         return True
     if "원빌" in blob:
@@ -571,6 +577,21 @@ def matches_worldlogis_invoice_subject(subject: str) -> bool:
     return True
 
 
+def matches_worldlogis_statement_subject(subject: str) -> bool:
+    """
+    세계로지스 명의 월 거래명세서 등 자사 알림 메일.
+    (기존 세금계산서 제목 규칙은 '발행'·'세금계산서' 필수라 명세서가 탈락하던 문제 보완)
+    """
+    if not subject or not isinstance(subject, str):
+        return False
+    compact = _re.sub(r"[\s\u200b\xa0]+", "", subject)
+    if "세계로지스" not in compact:
+        return False
+    if "거래명세" not in compact:
+        return False
+    return True
+
+
 def email_allowed_for_collection(
     from_addr: str,
     subject: str,
@@ -659,6 +680,10 @@ BROWSER_CONFIG = {
     "timeout": 60000,
     "slow_mo": 400,
     "full_page_screenshot": True,
+    "ignore_https_errors": True,
+    "image_load_wait_ms": 30_000,
+    "issue_approve_hunt_ms": 30_000,
+    "confirm_selector_timeout_ms": 10_000,
 }
 
 BIZ_NUMBER_INPUT_SELECTORS = [
