@@ -10,7 +10,7 @@ export const SUPPLIER = {
   address:        "경기도 파주시 등원로427",
   phone:          "1588-7185",
   fax:            "",
-  email:          "phajuquick37@gmail.com",
+  email:          "phajuquick@hanmail.net",
   business_type:  "운수업",
   business_item:  "화물운송",
 };
