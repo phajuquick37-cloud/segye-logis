@@ -423,6 +423,17 @@ export default function StatementModal({
   };
   const removeRecipient = (email: string) => setRecipients(prev => prev.filter(e => e !== email));
 
+  // 거래처정보(client_profiles) 이메일 → PNG/메일 수신인에 자동 반영 (QuickMailPanel과 동일)
+  useEffect(() => {
+    if (!clientProfile?.email?.trim()) return;
+    const profEmails = String(clientProfile.email)
+      .split(/[,;\s]+/)
+      .map((e) => e.trim())
+      .filter(Boolean);
+    if (profEmails.length === 0) return;
+    setRecipients((prev) => Array.from(new Set([...prev, ...profEmails])));
+  }, [clientProfile?.id, clientProfile?.email]);
+
   // ── 아이템 로드 ──
   useEffect(() => {
     setLoading(true);
