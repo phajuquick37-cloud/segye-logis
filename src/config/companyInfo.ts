@@ -32,8 +32,8 @@ export const EMAILJS = {
 export const VAT_RATE = 0.1; // 10%
 
 /**
- * 신용내역·거래명세 공통: 공급가(요금+탁송료) → 부가세 포함 합계.
- * (요금 열에는 탁송을 넣지 않고, 합계에만 탁송+부가세 반영)
+ * 신용내역·거래명세 공통: 공급가 = 요금열 집계분 + 탁송 열 값 → 부가세 포함 합계.
+ * 요금열 집계분은 업로드 시 (행 금액 − 행 탁송) 합산값.
  */
 export function grandTotalVatIncluded(record: { total_amount: number; delivery_fee?: number }): number {
   const supply = record.total_amount + (record.delivery_fee ?? 0);

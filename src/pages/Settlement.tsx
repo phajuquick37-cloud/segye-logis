@@ -115,7 +115,7 @@ function currentMonth() {
 }
 function fmtDateTime(iso: string) { return iso.slice(0, 16).replace("T", " "); }
 
-/** 실제 청구금액: (요금 + 탁송료) × 1.1 (부가세 10%) — 탁송은 요금 칸에 넣지 않고 합계만 반영 */
+/** 청구 합계(부가포함): 탁송 열 값을 더한 뒤 부가세 — 요금 열은 금액−탁송 집계분만 사용 */
 function calcGrandTotal(r: { total_amount: number; delivery_fee?: number }): number {
   return grandTotalVatIncluded(r);
 }
@@ -126,7 +126,8 @@ const CREDIT_TABLE_HEAD: readonly { label: string; title?: string }[] = [
   { label: "신용건수" },
   {
     label: "요금",
-    title: "엑셀 요금(운임) 합만 표시합니다. 탁송료를 이 열에 더하지 않습니다.",
+    title:
+      "같은 행: 금액(합계)열 − 탁송열 → 여기 합산. 탁송은 합계(부가포함)에만 반영.",
   },
   { label: "탁송료", title: "탁송료 합산" },
   { label: "합계(부가포함)", title: "(요금 + 탁송료)에 부가세 10%를 더한 금액" },
@@ -381,7 +382,7 @@ function PreviewTable({ records, billingMonth, onChangeBillingMonth, onChangeAmo
             <TableRow>
               <TableHead>거래처명</TableHead>
               <TableHead className="text-center">건수</TableHead>
-              <TableHead className="text-right" title="엑셀 요금(운임) 합만. 탁송은 합계에만 반영">요금</TableHead>
+              <TableHead className="text-right" title="행마다 (금액−탁송) 후 거래처 합산. 탁송 열은 합계에만">요금</TableHead>
               <TableHead className="text-right">탁송료</TableHead>
               <TableHead className="text-right" title="(요금+탁송)×1.1">합계(부가포함)</TableHead>
               <TableHead className="w-8"></TableHead>
@@ -627,7 +628,7 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
 
           const fee      = safeN(aggregated.total_amount);
           const deliv    = safeN(aggregated.delivery_fee ?? 0);
-          const grandTotal = Math.round((fee + deliv) * 1.1);
+          const grandTotal = grandTotalVatIncluded({ total_amount: fee, delivery_fee: deliv });
 
           const aggClient = normalizeCreditNameForLink(aggregated.client_name);
           const matching = splitRows.filter((row) => {
@@ -1729,7 +1730,7 @@ export default function Settlement() {
                           {/* 요금 — 운임(집계)만, 탁송 미포함 */}
                           <td
                             className="px-4 py-3 text-right font-mono tabular-nums text-slate-700"
-                            title="요금(운임)만 표시. 탁송은 합계(부가포함)에 반영됩니다."
+                            title="행별 (금액열 − 탁송열) 합산. 탁송은 합계(부가포함)에 반영."
                           >
                             {r.total_amount.toLocaleString()}<span className="text-xs text-slate-400 ml-0.5">원</span>
                           </td>

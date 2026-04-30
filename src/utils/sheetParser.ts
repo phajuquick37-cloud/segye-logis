@@ -15,8 +15,7 @@ const AMOUNT_HINTS_FREIGHT: string[] = [
 ];
 
 /**
- * 위가 없을 때만 사용 — 행 금액에 탁송이 섞인 경우가 많은 열.
- * 별도 「탁송」 열이 있으면 집계용 amount에서 탁송을 빼 운임만 남김(netAmountExcludingDeliveryWhenSeparateCols).
+ * 위가 없을 때만 사용 — 금액(합계) 열 후보. 탁송 열이 같이 잡히면 **행마다 (이 열 − 탁송)** 후 요금 합산.
  */
 const AMOUNT_HINTS_FALLBACK: string[] = [
   "합계금액", "청구금액", "결제금액", "총금액", "공급대가",
@@ -181,39 +180,17 @@ function norm(s: string): string {
 }
 
 /**
- * 금액 컬럼 헤더가 「요금/운임」만 담는다고 확신할 때 true.
- * 그 외(청구금액·합계·금액 등) + 별도 탁송 열이 있으면 셀 값에서 탁송을 빼 운임만 집계.
- */
-function isExplicitFreightOnlyAmountHeader(h: string | null | undefined): boolean {
-  const n = norm(String(h ?? "").trim());
-  if (!n) return false;
-  if (n.includes("합계") || n.includes("총액") || n.includes("총금액") || /^총/.test(n)) return false;
-  if (n.includes("세액포함")) return false;
-  if (n.includes("청구금액") || n.includes("결제금액")) return false;
-  if (n.includes("공급대가") || n.includes("공급가액")) return false;
-  if (n === "금액" || n === "amount" || n === "total") return false;
-
-  if (n === "요금" || n === "운임" || n === "운임비" || n === "청구") return true;
-  if (n.includes("운임요금")) return true;
-  if (n.includes("운임")) return true;
-  if (n.includes("요금") && !n.includes("청구금")) return true;
-  return false;
-}
-
-/**
- * 집계 amount: 별도 탁송 열이 있을 때, 금액 열이 합계(운임+탁송)인 경우 탁송만큼 빼서 운임만 남김.
- * 명시적 운임 전용 헤더는 차감하지 않음.
+ * 신용 집계: **같은 행**에서 금액(합계·요금 등 매핑된 열) − 탁송료를 **먼저** 적용한 값 → `total_amount`(요금 열) 합산.
+ * 탁송 열은 `delivery_fee`로 그대로 저장. 합계(부가포함)는 `(요금+탁송)×1.1` 로만 자동 계산.
  */
 export function netAmountExcludingDeliveryWhenSeparateCols(
   rawAmount: number,
   deliveryFee: number,
-  amountColumnHeader: string | null | undefined,
+  _amountColumnHeader: string | null | undefined,
   hasDeliveryColumn: boolean
 ): number {
-  if (!hasDeliveryColumn || deliveryFee <= 0 || rawAmount < deliveryFee) return rawAmount;
-  if (!String(amountColumnHeader ?? "").trim()) return rawAmount;
-  if (isExplicitFreightOnlyAmountHeader(amountColumnHeader)) return rawAmount;
-  return rawAmount - deliveryFee;
+  if (!hasDeliveryColumn || deliveryFee <= 0) return rawAmount;
+  return Math.max(0, rawAmount - deliveryFee);
 }
 
 /** 신용 구분용 거래처명 셀 정규화 (공백·유니코드·제로폭 제거) */
