@@ -7,6 +7,10 @@ export interface SettlementItem {
   quantity: number;
   unit_price: number;
   supply_amount: number;
+  /** 엑셀 「기본요금」 등 — 있으면 명세 기본요금·할인 계산에 사용 */
+  base_amount?: number;
+  /** 엑셀 「할인요금」 등 — 있으면 할인요금 열에 그대로 표시 */
+  discount_amount?: number;
   tax_amount: number;
   total_amount: number;
   memo: string;

@@ -4,7 +4,7 @@ import * as XLSX from "xlsx";
 // 컬럼 키 정의
 // ─────────────────────────────────────────────────────────────
 export type ColKey =
-  | "date" | "client" | "amount" | "deliveryfee" | "payment" | "memo" | "jeeyo" | "bizno" | "duedate"
+  | "date" | "client" | "base_amount" | "discount_amount" | "amount" | "deliveryfee" | "payment" | "memo" | "jeeyo" | "bizno" | "duedate"
   | "departure" | "destination" | "vehicle_type" | "driver" | "vehicle_no"
   | "unload_client" | "row_client" | "round_trip";
 
@@ -27,8 +27,16 @@ export const COL_HINTS: Record<ColKey, string[]> = {
     "청구처", "청구거래처", "정산거래처",
     "client",
   ],
+  // 집계·청구 금액 (녹원 등: 「요금」 열 — 「기본요금」은 base_amount 에서 먼저 잡힘)
+  base_amount: [
+    "기본요금", "기본 운임", "기본운임", "표준요금",
+  ],
+  discount_amount: [
+    "할인요금", "할인액", "할인금액", "할인",
+    "dc", "discount",
+  ],
   amount: [
-    "요금", "기본요금", "운임요금",
+    "요금", "운임요금",
     "합계금액", "청구금액", "결제금액", "총금액", "공급대가",
     "총액", "금액", "청구", "운임", "운임비",
     "공급가액", "세액포함합계", "amount", "total",
@@ -73,6 +81,10 @@ export const COL_HINTS: Record<ColKey, string[]> = {
 export interface RawRow {
   date: string;       // ISO "YYYY-MM-DD" (없으면 "")
   clientName: string;
+  /** 엑셀 기본요금 열 (선택) */
+  baseAmount?: number;
+  /** 엑셀 할인요금 열 (선택) */
+  discountAmount?: number;
   amount: number;
   deliveryFee: number;
   memo: string;
@@ -98,6 +110,8 @@ export interface RawRow {
 export interface DetectedCols {
   date: string | null;
   client: string | null;
+  base_amount: string | null;
+  discount_amount: string | null;
   amount: string | null;
   deliveryfee: string | null;
   payment: string | null;
@@ -457,6 +471,8 @@ function sheetToResult(
 
   const detectedIdx: Record<ColKey, number> = {
     client:       pickClientColumn(),
+    base_amount:  pickBest(COL_HINTS.base_amount),
+    discount_amount: pickBest(COL_HINTS.discount_amount),
     amount:       pickBest(COL_HINTS.amount),
     deliveryfee:  pickBest(COL_HINTS.deliveryfee),
     date:         pickBest(COL_HINTS.date),
@@ -498,6 +514,8 @@ function sheetToResult(
   const detected: DetectedCols = {
     date:         h("date"),
     client:       h("client"),
+    base_amount:  h("base_amount"),
+    discount_amount: h("discount_amount"),
     amount:       h("amount"),
     deliveryfee:  h("deliveryfee"),
     payment:      h("payment"),
@@ -553,6 +571,14 @@ function sheetToResult(
     rows.push({
       date:         parseDate(get(row, "date")),
       clientName,
+      baseAmount:
+        detectedIdx.base_amount !== -1
+          ? parseAmount(get(row, "base_amount"))
+          : undefined,
+      discountAmount:
+        detectedIdx.discount_amount !== -1
+          ? parseAmount(get(row, "discount_amount"))
+          : undefined,
       amount:       parseAmount(get(row, "amount")),
       deliveryFee:  parseAmount(get(row, "deliveryfee")),
       paymentLabel,
@@ -585,12 +611,12 @@ function emptyResult(fileName: string, sheetName: string, warnings: string[]): P
   return {
     rows: [],
     detected: {
-      date: null, client: null, amount: null, deliveryfee: null, payment: null, memo: null, jeeyo: null, bizno: null, duedate: null,
+      date: null, client: null, base_amount: null, discount_amount: null, amount: null, deliveryfee: null, payment: null, memo: null, jeeyo: null, bizno: null, duedate: null,
       departure: null, destination: null, vehicle_type: null, driver: null, vehicle_no: null,
       unload_client: null, row_client: null, round_trip: null, allHeaders: [],
     },
     detectedIdx: {
-      date: -1, client: -1, amount: -1, deliveryfee: -1, payment: -1, memo: -1, jeeyo: -1, bizno: -1, duedate: -1,
+      date: -1, client: -1, base_amount: -1, discount_amount: -1, amount: -1, deliveryfee: -1, payment: -1, memo: -1, jeeyo: -1, bizno: -1, duedate: -1,
       departure: -1, destination: -1, vehicle_type: -1, driver: -1, vehicle_no: -1,
       unload_client: -1, row_client: -1, round_trip: -1,
     },
@@ -683,6 +709,14 @@ export function reapplyColMap(
     const rows: RawRow[] = result.rows.map((r) => ({
       date:         parseDate(get(r._original, "date")),
       clientName:   normalizeCreditClientCell(get(r._original, "client")),
+      baseAmount:
+        patched.base_amount !== -1
+          ? parseAmount(get(r._original, "base_amount"))
+          : undefined,
+      discountAmount:
+        patched.discount_amount !== -1
+          ? parseAmount(get(r._original, "discount_amount"))
+          : undefined,
       amount:       parseAmount(get(r._original, "amount")),
       deliveryFee:  parseAmount(get(r._original, "deliveryfee")),
       paymentLabel: normalizePaymentCell(get(r._original, "payment")) || undefined,

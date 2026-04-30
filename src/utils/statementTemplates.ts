@@ -36,9 +36,36 @@ function lineBaseAmount(item: SettlementItem): number {
   return item.supply_amount;
 }
 
-function lineDiscount(item: SettlementItem): number {
-  const b = lineBaseAmount(item);
+/** 녹원 등: 엑셀 기본요금 열이 있으면 우선 */
+function lineListBaseAmount(item: SettlementItem): number {
+  if (
+    item.base_amount != null &&
+    Number.isFinite(item.base_amount) &&
+    item.base_amount > 0
+  ) {
+    return Math.round(item.base_amount);
+  }
+  return lineBaseAmount(item);
+}
+
+/** 할인요금 열 값 또는 (기본−공급가) 추정 */
+function lineDiscountDisplay(item: SettlementItem): number {
+  if (
+    item.discount_amount != null &&
+    Number.isFinite(item.discount_amount) &&
+    item.discount_amount >= 0
+  ) {
+    return Math.round(item.discount_amount);
+  }
+  const b = lineListBaseAmount(item);
   return Math.max(0, b - item.supply_amount);
+}
+
+/** 요금(할인 후) = 기본요금 − 할인요금 — 명세표 표시용 */
+function lineFeeAfterDiscount(item: SettlementItem): number {
+  const b = lineListBaseAmount(item);
+  const d = lineDiscountDisplay(item);
+  return Math.max(0, b - d);
 }
 
 /** 금액 열이 라이더·왕복 등에 잘못 들어온 경우 표시 제외 */
@@ -199,13 +226,13 @@ function cellForKey(item: SettlementItem, key: StatementColumnKey): string | num
     case "vehicle_no":
       return (item.vehicle_no || "").trim();
     case "base_fee":
-      return lineBaseAmount(item).toLocaleString();
+      return lineListBaseAmount(item).toLocaleString();
     case "discount":
-      return lineDiscount(item).toLocaleString();
+      return lineDiscountDisplay(item).toLocaleString();
     case "fee":
     case "sum_simple":
     case "sum_amount":
-      return item.supply_amount.toLocaleString();
+      return lineFeeAfterDiscount(item).toLocaleString();
     case "consignment":
       return "0";
     case "rider":

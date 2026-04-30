@@ -92,7 +92,9 @@ interface ArRecord {
 }
 
 const COL_LABEL: Record<ColKey, string> = {
-  date: "날짜", client: "거래처명", amount: "요금",
+  date: "날짜", client: "거래처명",
+  base_amount: "기본요금(표시용)", discount_amount: "할인요금(표시용)",
+  amount: "요금(집계)",
   deliveryfee: "탁송료", payment: "지급(신용·선불·착불)",
   memo: "비고", jeeyo: "적요", bizno: "사업자번호", duedate: "결제일",
   row_client: "고객명(상호)",
@@ -263,7 +265,7 @@ function ColumnMappingPanel({ result, overrides, onOverride }: {
 }) {
   const REQUIRED: ColKey[] = ["client", "amount", "payment"];
   const OPTIONAL: ColKey[] = [
-    "deliveryfee", "duedate", "memo", "jeeyo", "date", "bizno",
+    "deliveryfee", "base_amount", "discount_amount", "duedate", "memo", "jeeyo", "date", "bizno",
     "row_client", "departure", "destination", "round_trip", "vehicle_type", "driver", "vehicle_no", "unload_client",
   ];
   const effectiveIdx = (key: ColKey) => overrides[key] !== undefined ? overrides[key]! : result.detectedIdx[key];
@@ -496,6 +498,10 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
         driver:       strOpt("driver", row.driver),
         vehicleNo:    strOpt("vehicle_no", row.vehicleNo),
         unloadClient: strOpt("unload_client", row.unloadClient),
+        baseAmount:
+          patchedIdx.base_amount !== -1 ? safeNum(getVal("base_amount")) : undefined,
+        discountAmount:
+          patchedIdx.discount_amount !== -1 ? safeNum(getVal("discount_amount")) : undefined,
         roundTrip:
           patchedIdx.round_trip !== -1
             ? String(getVal("round_trip")).trim()
@@ -614,11 +620,15 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
 
           rowsToSave.forEach((row) => {
             const rowAmt = safeN((row as any).amount ?? 0);
+            const baseAmtNum =
+              (row as any).baseAmount !== undefined ? safeN((row as any).baseAmount) : undefined;
+            const unitPrice =
+              baseAmtNum != null && baseAmtNum > 0 ? baseAmtNum : rowAmt;
             const itemData: Record<string, any> = {
               date:          row.date || `${aggregated.billing_month}-01`,
               description:   (row as any).rowClient || row.memo || `${aggregated.billing_month} 화물 운송비`,
               quantity:      1,
-              unit_price:    rowAmt,
+              unit_price:    unitPrice,
               supply_amount: rowAmt,
               tax_amount:    0,
               total_amount:  rowAmt,
@@ -636,6 +646,10 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
             if ((row as any).jeeyo)       itemData.jeeyo        = (row as any).jeeyo;
             if ((row as any).roundTrip !== undefined)
               itemData.round_trip = (row as any).roundTrip;
+            if ((row as any).baseAmount !== undefined)
+              itemData.base_amount = safeN((row as any).baseAmount);
+            if ((row as any).discountAmount !== undefined)
+              itemData.discount_amount = safeN((row as any).discountAmount);
             if ((row as any).paymentLabel) itemData.pay_type     = (row as any).paymentLabel;
             batch.set(doc(collection(db, "ar_records", arRef.id, "items")), itemData);
           });
