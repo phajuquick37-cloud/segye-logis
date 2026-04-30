@@ -204,14 +204,40 @@ export default function Admin() {
         method: "POST",
         headers: { Authorization: `Bearer ${idToken}`, Accept: "application/json" },
       });
-      const j = (await r.json().catch(() => ({}))) as { error?: unknown; message?: string; detail?: unknown };
+      const j = (await r.json().catch(() => ({}))) as {
+        error?: unknown;
+        message?: string;
+        detail?: unknown;
+        status?: string;
+      };
+      const lineDead = pickErr(j, `${r.status} ${r.statusText || "요청 실패"}`);
+      const looksBusy =
+        String(j.status || "").toLowerCase() === "busy" ||
+        /이미\s*세금계산서\s*수집이\s*진행|수집이\s*진행\s*중|실행\s*중|잠시\s*후\s*다시\s*시도|already\s*running|\bbusy\b/i.test(
+          lineDead
+        );
       if (!r.ok) {
-        const line = pickErr(j, `${r.status} ${r.statusText || "요청 실패"}`);
-        throw new Error(line);
+        if (looksBusy) {
+          setTaxCollectMessage(
+            typeof j.message === "string" && j.message
+              ? j.message
+              : lineDead.replace(/^실패:\s*/i, "").trim() || "이미 수집이 진행 중입니다. 잠시 후 목록을 확인해 주세요."
+          );
+          return;
+        }
+        throw new Error(lineDead);
       }
       setTaxCollectMessage(j.message || "수집을 시작했습니다. 잠시 후 목록이 갱신됩니다.");
     } catch (e) {
       const line = e instanceof Error ? e.message : String(e);
+      const busyOnly =
+        /이미\s*세금계산서\s*수집이\s*진행|수집이\s*진행\s*중|실행\s*중|잠시\s*후\s*다시\s*시도|already\s*running|\bbusy\b/i.test(
+          line
+        );
+      if (busyOnly) {
+        setTaxCollectMessage(line.replace(/^실패:\s*/i, "").trim());
+        return;
+      }
       setTaxCollectMessage(`실패: ${line === "[object Object]" ? "응답 파싱 오류 — 서버 로그를 확인하세요." : line}`);
     } finally {
       setTaxCollectLoading(false);

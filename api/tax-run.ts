@@ -188,6 +188,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
     if (!r.ok) {
       let msg = formatCloudRunErrorBody(body) || r.statusText || "수집 요청 실패";
+      const bodyStatus =
+        typeof (body as { status?: unknown }).status === "string"
+          ? String((body as { status: string }).status).toLowerCase()
+          : "";
+      const busyByCode = r.status === 409 || r.status === 429;
+      const busyByBody = bodyStatus === "busy" || bodyStatus === "already_running";
+      const busyByText =
+        /이미\s*세금계산서\s*수집이\s*진행|수집이\s*진행\s*중|실행\s*중|잠시\s*후\s*다시\s*시도|already\s*running|\bbusy\b/i.test(
+          msg
+        );
+      if (busyByCode || busyByBody || busyByText) {
+        return res.status(200).json({
+          status: "busy",
+          message:
+            msg ||
+            "이미 세금계산서 수집이 진행 중입니다. 잠시 후 목록을 확인해 주세요.",
+        });
+      }
       if (r.status === 401 && /인증/i.test(msg)) {
         msg += " — Vercel의 TAX_COLLECT_SECRET(또는 VITE_TAX_AUTOMATION_SECRET 등)이 Cloud Run TAX_COLLECT_SECRET·GitHub Actions 시크릿과 동일한지 확인하세요.";
       }
@@ -197,6 +215,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       typeof body.message === "string" && body.message
         ? body.message
         : "수집을 시작했습니다. 잠시 후 목록이 갱신됩니다.";
+    const cloudStatus =
+      typeof (body as { status?: unknown }).status === "string"
+        ? String((body as { status: string }).status)
+        : undefined;
+    if (cloudStatus === "busy") {
+      return res.status(200).json({ status: "busy", message: okMsg });
+    }
     return res.status(200).json({ message: okMsg });
   } catch (e: unknown) {
     console.error("[api/tax-run]", e);
