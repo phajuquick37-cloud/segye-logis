@@ -9,9 +9,9 @@ export type ColKey =
   | "departure" | "destination" | "vehicle_type" | "driver" | "vehicle_no"
   | "unload_client" | "row_client" | "round_trip";
 
-/** 운임·요금 전용 열(우선 매핑) — 탁송은 보통 다른 열 */
+/** 운임·요금 전용 열(우선 매핑) — 탁송은 보통 다른 열. 「청구」는 제외: 「청구금액」과 부분 일치하면 탁송 미차감 버그 발생 */
 const AMOUNT_HINTS_FREIGHT: string[] = [
-  "요금", "운임요금", "운임", "운임비", "청구",
+  "요금", "운임요금", "운임", "운임비",
 ];
 
 /**
@@ -181,8 +181,28 @@ function norm(s: string): string {
 }
 
 /**
- * 집계 「요금」 amount: 엑셀 셀이 운임+탁송 합이고 별도 탁송 열이 있으면 탁송만큼 빼 이중 합산을 막음.
- * 「요금」「운임」 전용 헤더는 차감하지 않음.
+ * 금액 컬럼 헤더가 「요금/운임」만 담는다고 확신할 때 true.
+ * 그 외(청구금액·합계·금액 등) + 별도 탁송 열이 있으면 셀 값에서 탁송을 빼 운임만 집계.
+ */
+function isExplicitFreightOnlyAmountHeader(h: string | null | undefined): boolean {
+  const n = norm(String(h ?? "").trim());
+  if (!n) return false;
+  if (n.includes("합계") || n.includes("총액") || n.includes("총금액") || /^총/.test(n)) return false;
+  if (n.includes("세액포함")) return false;
+  if (n.includes("청구금액") || n.includes("결제금액")) return false;
+  if (n.includes("공급대가") || n.includes("공급가액")) return false;
+  if (n === "금액" || n === "amount" || n === "total") return false;
+
+  if (n === "요금" || n === "운임" || n === "운임비" || n === "청구") return true;
+  if (n.includes("운임요금")) return true;
+  if (n.includes("운임")) return true;
+  if (n.includes("요금") && !n.includes("청구금")) return true;
+  return false;
+}
+
+/**
+ * 집계 amount: 별도 탁송 열이 있을 때, 금액 열이 합계(운임+탁송)인 경우 탁송만큼 빼서 운임만 남김.
+ * 명시적 운임 전용 헤더는 차감하지 않음.
  */
 export function netAmountExcludingDeliveryWhenSeparateCols(
   rawAmount: number,
@@ -191,23 +211,9 @@ export function netAmountExcludingDeliveryWhenSeparateCols(
   hasDeliveryColumn: boolean
 ): number {
   if (!hasDeliveryColumn || deliveryFee <= 0 || rawAmount < deliveryFee) return rawAmount;
-  if (!amountColumnHeaderImpliesFreightPlusDeliveryCombined(amountColumnHeader)) return rawAmount;
+  if (!String(amountColumnHeader ?? "").trim()) return rawAmount;
+  if (isExplicitFreightOnlyAmountHeader(amountColumnHeader)) return rawAmount;
   return rawAmount - deliveryFee;
-}
-
-function amountColumnHeaderImpliesFreightPlusDeliveryCombined(h: string | null | undefined): boolean {
-  const n = norm(String(h ?? "").trim());
-  if (!n) return false;
-  if (n === "요금" || n === "운임" || n === "운임비") return false;
-  if (n.includes("운임요금")) return false;
-  if (n.includes("운임") && !n.includes("합계") && !n.includes("총")) return false;
-  if (n.includes("합계") || n.includes("총액") || n.includes("총금액")) return true;
-  if (n.includes("세액포함")) return true;
-  if (n.includes("결제금액") || n.includes("청구금액")) return true;
-  if (n.includes("공급대가") || n.includes("공급가액")) return true;
-  if (n === "금액") return true;
-  if (n === "amount" || n === "total") return true;
-  return false;
 }
 
 /** 신용 구분용 거래처명 셀 정규화 (공백·유니코드·제로폭 제거) */
@@ -564,6 +570,14 @@ function sheetToResult(
 
   /** 운임 전용 열을 먼저 잡고, 없을 때만 합계형 열(탁송 혼재 가능) */
   function pickAmountColumn(): number {
+    for (let i = 0; i < headers.length; i++) {
+      if (usedIdx.has(i)) continue;
+      const hn = norm(String(headers[i] ?? ""));
+      if (hn === norm("청구")) {
+        usedIdx.add(i);
+        return i;
+      }
+    }
     const fr = pickBest(AMOUNT_HINTS_FREIGHT);
     if (fr !== -1) return fr;
     return pickBest(AMOUNT_HINTS_FALLBACK);
