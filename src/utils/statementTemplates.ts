@@ -31,41 +31,56 @@ export function displayDestinationForStatement(item: SettlementItem): string {
 
 function lineBaseAmount(item: SettlementItem): number {
   const q = item.quantity || 1;
-  const up = item.unit_price ?? 0;
-  if (up > 0) return Math.round(up * q);
-  return item.supply_amount;
+  const upRaw = item.unit_price ?? 0;
+  const up = typeof upRaw === "number" && Number.isFinite(upRaw)
+    ? upRaw
+    : Number(String(upRaw).replace(/,/g, "").trim());
+  const upN = Number.isFinite(up) ? up : 0;
+  if (upN > 0) return Math.round(upN * q);
+  const sup = item.supply_amount;
+  const s =
+    typeof sup === "number" && Number.isFinite(sup)
+      ? sup
+      : Number(String(sup ?? 0).replace(/,/g, "").trim());
+  return Number.isFinite(s) ? Math.round(s) : 0;
+}
+
+/** Firestore·레거시에서 문자열로 온 금액 필드 정규화 */
+function itemMoneyField(item: SettlementItem, key: "base_amount" | "discount_amount"): number | undefined {
+  if (!Object.prototype.hasOwnProperty.call(item, key)) return undefined;
+  const v = (item as unknown as Record<string, unknown>)[key];
+  if (v == null || v === "") return undefined;
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  const n = Number(String(v).replace(/,/g, "").trim());
+  return Number.isFinite(n) ? n : undefined;
 }
 
 /** 녹원 등: 엑셀 기본요금 열이 있으면 우선 */
 function lineListBaseAmount(item: SettlementItem): number {
-  if (
-    item.base_amount != null &&
-    Number.isFinite(item.base_amount) &&
-    item.base_amount > 0
-  ) {
-    return Math.round(item.base_amount);
-  }
+  const b = itemMoneyField(item, "base_amount");
+  if (b !== undefined && b > 0) return Math.round(b);
   return lineBaseAmount(item);
 }
 
 /** 할인요금 열 값 또는 (기본−공급가) 추정 */
 function lineDiscountDisplay(item: SettlementItem): number {
-  if (
-    item.discount_amount != null &&
-    Number.isFinite(item.discount_amount) &&
-    item.discount_amount >= 0
-  ) {
-    return Math.round(item.discount_amount);
-  }
+  const d = itemMoneyField(item, "discount_amount");
+  if (d !== undefined && d >= 0) return Math.round(d);
   const b = lineListBaseAmount(item);
-  return Math.max(0, b - item.supply_amount);
+  const sup = item.supply_amount;
+  const s =
+    typeof sup === "number" && Number.isFinite(sup)
+      ? sup
+      : Number(String(sup ?? 0).replace(/,/g, "").trim());
+  const sN = Number.isFinite(s) ? s : 0;
+  return Math.max(0, Math.round(b - sN));
 }
 
 /** 요금(할인 후) = 기본요금 − 할인요금 — 명세표 표시용 */
 function lineFeeAfterDiscount(item: SettlementItem): number {
   const b = lineListBaseAmount(item);
   const d = lineDiscountDisplay(item);
-  return Math.max(0, b - d);
+  return Math.max(0, Math.round(b - d));
 }
 
 /** 금액 열이 라이더·왕복 등에 잘못 들어온 경우 표시 제외 */

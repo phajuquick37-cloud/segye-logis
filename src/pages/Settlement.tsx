@@ -483,7 +483,10 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
       return {
         ...row,
         clientName:  normalizeCreditClientCell(getVal("client")),
-        amount:      safeNum(getVal("amount")) || row.amount,
+        amount:
+          patchedIdx.amount !== -1
+            ? safeNum(getVal("amount"))
+            : row.amount,
         deliveryFee: patchedIdx["deliveryfee"] !== -1
           ? safeNum(getVal("deliveryfee"))
           : row.deliveryFee,
@@ -650,6 +653,15 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
               itemData.base_amount = safeN((row as any).baseAmount);
             if ((row as any).discountAmount !== undefined)
               itemData.discount_amount = safeN((row as any).discountAmount);
+            // 할인 열이 비어 있거나 매핑 안 됐을 때: 기본요금(저장값) − 집계요금으로 할인액 보강 → 명세 할인요금 열 표시
+            if (itemData.discount_amount === undefined) {
+              const baseForDisc =
+                itemData.base_amount != null
+                  ? safeN(itemData.base_amount)
+                  : safeN(itemData.unit_price);
+              if (baseForDisc > rowAmt)
+                itemData.discount_amount = Math.round(baseForDisc - rowAmt);
+            }
             if ((row as any).paymentLabel) itemData.pay_type     = (row as any).paymentLabel;
             batch.set(doc(collection(db, "ar_records", arRef.id, "items")), itemData);
           });

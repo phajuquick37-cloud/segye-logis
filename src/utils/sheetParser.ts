@@ -32,7 +32,8 @@ export const COL_HINTS: Record<ColKey, string[]> = {
     "기본요금", "기본 운임", "기본운임", "표준요금",
   ],
   discount_amount: [
-    "할인요금", "할인액", "할인금액", "할인",
+    "할인요금", "할인금액", "할인 액", "할인액", "할인비용", "요금할인",
+    "감액", "DC금액", "DC", "D/C",
     "dc", "discount",
   ],
   amount: [
