@@ -1,8 +1,7 @@
 """
 브라우저 자동화 모듈 v2
-- 어느 플랫폼이든 공통 속성(input[type='text'] 등)으로 사업자번호 입력
-- 세금계산서 테이블 영역 자동 감지 후 부분 캡처
-- 팝업/보안 레이어 자동 처리
+원콜 등 메일의 상세보기 URL만 열고(공동인증·ActiveX·보안모듈 경로 없음),
+사업자번호 입력·확인·승인/발행 계열 버튼을 누른 뒤 세금계산서 영역을 캡처한다.
 """
 
 import asyncio
@@ -15,6 +14,7 @@ from playwright.async_api import async_playwright, Page, Browser, BrowserContext
 from config import (
     BROWSER_CONFIG, BUSINESS_CONFIG,
     BIZ_NUMBER_INPUT_SELECTORS, CONFIRM_BUTTON_SELECTORS,
+    ISSUE_APPROVE_BUTTON_SELECTORS,
     is_blocked_tax_invoice_url, is_excluded_tax_platform, is_blocked_invoice_email,
 )
 from platform_detector import detect_platform, extract_platform_from_page
@@ -44,7 +44,7 @@ async def find_biz_number_input(page: Page) -> Optional[ElementHandle]:
         inputs = await page.query_selector_all("input:visible")
         for inp in inputs:
             t = (await inp.get_attribute("type") or "text").lower()
-            if t in ("text", "number", "tel", "password"):
+            if t in ("text", "number", "tel"):
                 return inp
     except Exception:
         pass
@@ -128,13 +128,37 @@ async def click_confirm_button(page: Page) -> bool:
         return False
 
 
+async def click_issue_approve_if_present(page: Page) -> int:
+    """
+    원콜·전자세금 뷰어 등: '승인'·'발행' 계열 노출 시 클릭.
+    공동인증·ActiveX·보안 프로그램 설치는 사용하지 않음.
+    """
+    clicks = 0
+    for selector in ISSUE_APPROVE_BUTTON_SELECTORS:
+        try:
+            loc = page.locator(selector).first
+            if await loc.is_visible(timeout=1500):
+                await loc.scroll_into_view_if_needed()
+                await loc.click(timeout=8000)
+                clicks += 1
+                logger.info("승인/발행 계열 클릭: %s", selector)
+                await asyncio.sleep(1.0)
+                try:
+                    await page.wait_for_load_state("domcontentloaded", timeout=15000)
+                except Exception:
+                    pass
+        except Exception:
+            continue
+    return clicks
+
+
 # ─── 사업자번호 입력 화면 감지 ────────────────────────────────────────────────
 
 async def needs_biz_number(page: Page) -> bool:
-    """현재 페이지에 사업자번호 입력이 필요한지 판별"""
+    """현재 페이지에 사업자번호 입력이 필요한지 판별 (공동인증 화면과 혼동 줄이기 위해 단어 선별)."""
     try:
         text = await page.inner_text("body")
-        keywords = ["사업자", "등록번호", "인증", "확인", "조회", "번호를 입력", "business"]
+        keywords = ["사업자", "등록번호", "확인", "조회", "번호를 입력", "business", "사업자번호"]
         if any(kw in text for kw in keywords):
             el = await find_biz_number_input(page)
             return el is not None
@@ -254,34 +278,6 @@ async def extract_dom_data(page: Page) -> Dict:
     return data
 
 
-def detect_cert_or_hometax_login_failure(full_text: str, page_url: str) -> Optional[str]:
-    """
-    페이지에 표시된 홈택스·공동인증 오류를 탐지한다.
-    (운영 로그에 흔한 '결과코드 4001 / 공동인증서 비밀번호가 일치하지 않습니다' 와 동일 계열)
-    """
-    t = f"{full_text or ''}\n{page_url or ''}"
-    if not t.strip():
-        return None
-    tl = t.lower()
-    on_ht = "hometax.go.kr" in tl or "teet.hometax" in tl
-
-    if "공동인증서 비밀번호" in t or "인증서 비밀번호가 일치하지 않" in t:
-        return (
-            "공동인증서 비밀번호 불일치: 자동화·브라우저에 넣은 인증서 암호가 실제와 다르거나 "
-            "인증서가 재발급·만료되었습니다. 국세청/대행 프로그램에서 최신 암호·인증서로 갱신하세요."
-        )
-    if ("결과코드" in t or "결과 코드" in t) and "4001" in t and (on_ht or "인증" in t or "공동" in t):
-        return (
-            "홈택스 결과코드 4001(인증서 비밀번호 불일치 계열). 저장된 공동인증서 암호와 "
-            "실제 인증서를 맞추거나, 인증서를 다시 등록한 뒤 서버·에이전트 설정을 업데이트하세요."
-        )
-    if on_ht and ("로그인 실패" in t or "인증에 실패" in t) and ("공동" in t or "인증서" in t):
-        return (
-            "홈택스 로그인·인증서 단계 실패. 비밀번호·보안모듈·인증서 유효기간을 확인하세요."
-        )
-    return None
-
-
 # ─── 메인 브라우저 클래스 ─────────────────────────────────────────────────────
 
 class TaxInvoiceBrowser:
@@ -320,13 +316,12 @@ class TaxInvoiceBrowser:
         email_info: Dict,
     ) -> Dict:
         """
-        단일 링크 처리:
+        단일 링크 처리 (메일의 상세보기 URL → Playwright, 공동인증·ActiveX 미사용):
         1. URL 열기
-        2. 팝업 처리
-        3. 사업자번호 입력 (필요시)
-        4. 확인 버튼 클릭
-        5. 테이블 영역 캡처
-        6. DOM 데이터 추출
+        2. 팝업 처리 · 승인/발행 버튼(노출 시)
+        3. 사업자번호 입력 (필요시) 및 확인
+        4. 재팝업 · 승인/발행
+        5. 테이블 캡처 및 DOM 추출
         """
         url = link_info["url"]
         result = {
@@ -383,6 +378,7 @@ class TaxInvoiceBrowser:
 
             # 2. 팝업 처리
             await handle_popups(page)
+            await click_issue_approve_if_present(page)
 
             # 3. 초기 스크린샷
             init_ss = output_dir / "step1_initial.png"
@@ -407,9 +403,12 @@ class TaxInvoiceBrowser:
                 await page.screenshot(path=str(confirm_ss), full_page=False)
                 result["screenshots"].append(str(confirm_ss))
 
+                await click_issue_approve_if_present(page)
+
             # 재차 팝업 처리
             await handle_popups(page)
             await asyncio.sleep(1)
+            await click_issue_approve_if_present(page)
 
             # 6. 페이지 내 플랫폼 재감지
             try:
@@ -430,13 +429,7 @@ class TaxInvoiceBrowser:
                 page_url = page.url or ""
             except Exception:
                 page_url = ""
-            body_text = result["dom_data"].get("full_text", "") or ""
-            auth_fail = detect_cert_or_hometax_login_failure(body_text, page_url)
-            if auth_fail:
-                result["error"] = "hometax_cert_auth"
-                result["success"] = False
-                logger.error("홈택스/공동인증 실패 — %s", auth_fail)
-            elif is_blocked_tax_invoice_url(page_url):
+            if is_blocked_tax_invoice_url(page_url):
                 result["error"] = "blocked_url_after_redirect"
                 result["success"] = False
                 logger.info(f"🚫 리다이렉트 후 차단 URL — 스킵: {page_url[:80]}")

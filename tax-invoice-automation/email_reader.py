@@ -1,17 +1,22 @@
 """
 이메일 읽기 모듈 v2
-Gmail IMAP으로 세금계산서 메일을 읽고,
-'확인하기' / '상세보기' 버튼 링크를 우선 추출합니다.
+한메일(IMAP) 등으로 수신된 원콜·운송플랫폼 세금계산서 메일에서
+본문 URL(상세보기·확인하기 등)을 추출합니다.
+MIME 본문이 표준 text/html · text/plain 이 아니거나,
+Content-Disposition 이 attachment 로 잘못 붙은 HTML 등도 최대한 복원합니다.
 """
 
 import imaplib
 import email
+import base64
+import quopri
 import re
 import logging
 from datetime import datetime, timezone
 from email.header import decode_header
+from email.message import Message
 from email.utils import parsedate_to_datetime
-from typing import List, Dict
+from typing import List, Dict, Optional
 from zoneinfo import ZoneInfo
 from bs4 import BeautifulSoup
 
@@ -97,22 +102,185 @@ def extract_button_links(html: str) -> List[Dict]:
     return sorted(seen.values(), key=lambda x: x["priority"])
 
 
+_MAX_BODY_BYTES = 2_000_000
+_URL_SCAN_RE = re.compile(r'https?://[^\s<>"\'{}|\\^`\[\]]+', re.I)
+
+
+def _charset_from_header(raw: str) -> Optional[str]:
+    if not raw:
+        return None
+    m = re.search(r"charset\s*=\s*['\"]?([A-Za-z0-9_\-]+)", raw, re.I)
+    return m.group(1).strip().strip('"').strip("'") if m else None
+
+
+def _charset_candidates(part: Message) -> List[str]:
+    out: List[str] = []
+    for c in (part.get_content_charset(), _charset_from_header(part.get("Content-Type", ""))):
+        if not c:
+            continue
+        c = str(c).strip().strip('"').strip("'")
+        if c.upper() in ("UNKNOWN-8BIT", "BIN"):
+            continue
+        if c.lower() not in {x.lower() for x in out}:
+            out.append(c)
+    for fb in ("utf-8", "cp949", "euc-kr", "iso-2022-kr", "johab", "latin-1"):
+        if fb.lower() not in {x.lower() for x in out}:
+            out.append(fb)
+    return out
+
+
+def _decode_raw_payload(part: Message) -> Optional[bytes]:
+    try:
+        raw = part.get_payload(decode=True)
+        if raw is None:
+            return None
+        if isinstance(raw, str):
+            return raw.encode("utf-8", errors="surrogateescape")
+        return raw
+    except Exception:
+        pass
+    try:
+        pl = part.get_payload()
+        if not isinstance(pl, str):
+            return None
+        cte = str(part.get("Content-Transfer-Encoding", "") or "").lower().strip()
+        if cte == "base64":
+            return base64.standard_b64decode(re.sub(r"\s+", "", pl))
+        if cte in ("quoted-printable", "qp"):
+            return quopri.decodestring(pl.encode("utf-8", errors="ignore"))
+    except Exception:
+        pass
+    return None
+
+
+def _decode_part_to_string(part: Message) -> Optional[str]:
+    raw = _decode_raw_payload(part)
+    if not raw:
+        return None
+    if len(raw) > _MAX_BODY_BYTES:
+        raw = raw[:_MAX_BODY_BYTES]
+    for cs in _charset_candidates(part):
+        try:
+            return raw.decode(cs)
+        except Exception:
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
+def _should_skip_part_for_body(part: Message) -> bool:
+    ct = (part.get_content_type() or "").lower()
+    if ct.startswith("multipart/"):
+        return True
+    cd = str(part.get("Content-Disposition", "") or "").lower()
+    if "attachment" in cd:
+        if ct == "message/rfc822":
+            return False
+        if ct in ("text/html", "text/plain") or ct.startswith("text/"):
+            return False
+        if ct in (
+            "application/octet-stream",
+            "application/x-unknown-content-type",
+            "application/msword",
+            "binary/octet-stream",
+        ):
+            return False
+        return True
+    return False
+
+
+def _sniff_html_content(s: str) -> bool:
+    if not s or len(s) < 12:
+        return False
+    sl = s[:8000].lstrip().lower()
+    if sl.startswith("<!") or "<html" in sl[:3000] or "<body" in sl[:3000]:
+        return True
+    if "href=" in sl or "<a " in sl or "<table" in sl:
+        return True
+    return False
+
+
+def _merge_body_part(body: Dict[str, str], part: Message) -> None:
+    if _should_skip_part_for_body(part):
+        return
+    ct = (part.get_content_type() or "").lower()
+
+    if ct == "message/rfc822":
+        inner = part.get_payload()
+        if isinstance(inner, list):
+            inner = next((x for x in inner if isinstance(x, Message)), None)
+        if isinstance(inner, Message):
+            sub = get_email_body(inner)
+            if sub["html"]:
+                body["html"] += "\n" + sub["html"]
+            if sub["text"]:
+                body["text"] += "\n" + sub["text"]
+        return
+
+    if part.is_multipart():
+        return
+
+    s = _decode_part_to_string(part)
+    if not s or not s.strip():
+        return
+
+    if ct == "text/html":
+        body["html"] += "\n" + s
+    elif ct == "text/plain":
+        body["text"] += "\n" + s
+    elif ct in ("text/enriched", "text/rfc822-headers"):
+        body["text"] += "\n" + s
+    elif ct in (
+        "application/octet-stream",
+        "application/x-unknown-content-type",
+        "binary/octet-stream",
+    ) or ("xml" in ct and "html" in s[:200].lower()):
+        if _sniff_html_content(s):
+            body["html"] += "\n" + s
+        else:
+            body["text"] += "\n" + s
+    elif _sniff_html_content(s):
+        body["html"] += "\n" + s
+    else:
+        body["text"] += "\n" + s
+
+
+def extract_urls_deep_scan(msg: Message) -> List[str]:
+    """
+    본문 파싱이 빈약할 때를 대비해, 모든 비바이너리 파트를 디코드해 URL을 훑는다.
+    (한메일·중계기에서 Content-Type 이 어긋난 경우 보조)
+    """
+    found: List[str] = []
+    seen = set()
+    for part in msg.walk():
+        if part.is_multipart():
+            continue
+        ct = (part.get_content_type() or "").lower()
+        if ct.startswith(("image/", "audio/", "video/", "application/pkcs", "application/x-pkcs")):
+            continue
+        s = _decode_part_to_string(part)
+        if not s:
+            continue
+        for u in _URL_SCAN_RE.findall(s):
+            u = u.rstrip(").,;]'\"")
+            if u not in seen:
+                seen.add(u)
+                found.append(u)
+    return found
+
+
 def extract_all_links(html: str, text: str) -> List[Dict]:
     """
     HTML + 텍스트에서 모든 링크 수집 (fallback용)
     """
     results = []
-    url_pattern = r'https?://[^\s<>"{}|\\^`\[\]]+'
-
-    # 텍스트 URL
-    for url in re.findall(url_pattern, text or ""):
+    for url in _URL_SCAN_RE.findall(text or ""):
         results.append({"url": url, "text": "", "priority": 3})
 
     # HTML 모든 링크
     if html:
         try:
             soup = BeautifulSoup(html, "html.parser")
-            for a in soup.find_all("a", href=True):
+            for a in soup.find_all(["a", "area"], href=True):
                 href = a["href"]
                 if href.startswith("http"):
                     results.append({"url": href, "text": a.get_text(strip=True), "priority": 3})
@@ -129,43 +297,23 @@ def extract_all_links(html: str, text: str) -> List[Dict]:
     return unique
 
 
-def get_email_body(msg) -> Dict[str, str]:
-    """이메일 본문 추출"""
-    body = {"html": "", "text": ""}
-    if msg.is_multipart():
-        for part in msg.walk():
-            ct = part.get_content_type()
-            cd = str(part.get("Content-Disposition", ""))
-            if "attachment" in cd:
-                continue
-            try:
-                payload = part.get_payload(decode=True)
-                if not payload:
-                    continue
-                charset = part.get_content_charset() or "utf-8"
-                decoded = payload.decode(charset, errors="replace")
-                if ct == "text/html":
-                    body["html"] += decoded
-                elif ct == "text/plain":
-                    body["text"] += decoded
-            except Exception as e:
-                logger.warning(f"파트 디코딩 실패: {e}")
-    else:
-        try:
-            payload = msg.get_payload(decode=True)
-            if payload:
-                charset = msg.get_content_charset() or "utf-8"
-                decoded = payload.decode(charset, errors="replace")
-                if msg.get_content_type() == "text/html":
-                    body["html"] = decoded
-                else:
-                    body["text"] = decoded
-        except Exception as e:
-            logger.warning(f"본문 디코딩 실패: {e}")
+def get_email_body(msg: Message) -> Dict[str, str]:
+    """이메일 본문 추출 (multipart/alternative·related, message/rfc822, attachment 표기 HTML 등)."""
+    body: Dict[str, str] = {"html": "", "text": ""}
+    try:
+        if msg.is_multipart():
+            for part in msg.walk():
+                _merge_body_part(body, part)
+        else:
+            _merge_body_part(body, msg)
+    except Exception as e:
+        logger.warning(f"본문 추출 실패: {e}")
+    body["html"] = (body["html"] or "").strip()
+    body["text"] = (body["text"] or "").strip()
     return body
 
 
-def extract_inline_images(msg) -> List[Dict]:
+def extract_inline_images(msg: Message) -> List[Dict]:
     """
     이메일에서 인라인/첨부 이미지 추출.
     이미지형 세금계산서 메일 (링크 없이 이미지만 있는 경우) 대응.
@@ -355,15 +503,31 @@ class EmailReader:
                         if body["html"]:
                             links = extract_button_links(body["html"])
 
+                        tax_url_kws = [
+                            "invoice", "세금", "tax", "bill", "계산서",
+                            "hometax", "onebill", "onecall", "1call", "tax12", "tax15",
+                            "loginote", "logynote",
+                        ]
+
                         # 2순위: fallback — 모든 링크에서 세금계산서 관련 URL 필터링
                         if not links:
                             all_links = extract_all_links(body["html"], body["text"])
-                            tax_kws = [
-                                "invoice", "세금", "tax", "bill", "계산서",
-                                "hometax", "onebill", "tax12", "tax15", "loginote", "logynote",
-                            ]
                             links = [lnk for lnk in all_links
-                                     if any(kw in lnk["url"].lower() for kw in tax_kws)]
+                                     if any(kw in lnk["url"].lower() for kw in tax_url_kws)]
+
+                        # 3순위: 비표준 MIME·깨진 Content-Type — 전 파트 원문에서 URL 스캔 (한메일 등)
+                        if not links:
+                            for u in extract_urls_deep_scan(msg):
+                                if is_blocked_tax_invoice_url(u):
+                                    continue
+                                if any(kw in u.lower() for kw in tax_url_kws):
+                                    links.append({"url": u, "text": "", "priority": 4})
+                            if links:
+                                logger.info(
+                                    "MIME 심층 스캔으로 링크 %d건 복원 — [%s]",
+                                    len(links),
+                                    subject[:40],
+                                )
 
                         # 차단 URL 제거 (허용 발신자 메일에 마켓/교육 링크가 섞인 경우)
                         before_n = len(links)

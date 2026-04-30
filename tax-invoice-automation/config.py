@@ -209,6 +209,7 @@ EMAIL_FILTER = {
     "button_keywords": [
         "확인하기", "상세보기", "조회하기", "열람",
         "세금계산서 확인", "계산서 보기",
+        "승인", "발행", "전자세금계산서",
     ],
     "recipient_keywords": [
         "세계로지스", "세 계 로 지 스",
@@ -671,7 +672,6 @@ BIZ_NUMBER_INPUT_SELECTORS = [
     "input[name*='corp']", "input[name*='Corp']",
     "input[name*='reg']",  "input[id*='biz']",
     "input[id*='corp']",   "input[id*='reg']",
-    "input[type='password']",
 ]
 
 CONFIRM_BUTTON_SELECTORS = [
@@ -688,6 +688,22 @@ CONFIRM_BUTTON_SELECTORS = [
     ".btn-confirm", ".btn-submit", ".btn-ok",
     "#btnConfirm", "#btnSubmit", "#btnOk",
     "a.btn:has-text('확인')",
+]
+
+# 원콜·전자세금 뷰어(메일 링크) — 공동인증 없이 노출되는 승인/발행 UI만 대상
+ISSUE_APPROVE_BUTTON_SELECTORS = [
+    "button:has-text('승인')",
+    "button:has-text('발행')",
+    "button:has-text('전자세금계산서 승인')",
+    "a:has-text('승인')",
+    "a:has-text('발행')",
+    "a:has-text('전자세금계산서 승인')",
+    "[role='button']:has-text('승인')",
+    "[role='button']:has-text('발행')",
+    "input[type='button'][value*='승인']",
+    "input[type='submit'][value*='승인']",
+    "input[type='button'][value*='발행']",
+    "input[type='submit'][value*='발행']",
 ]
 
 # --- OCR ---
