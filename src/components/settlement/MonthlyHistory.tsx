@@ -19,6 +19,7 @@ import {
   Lock, Unlock, CheckCircle, AlertCircle, Clock,
   TrendingUp, ChevronRight, Calendar, Users, Trash2,
 } from "lucide-react";
+import { grandTotalVatIncluded } from "../../config/companyInfo";
 
 // ─────────────────────────────────────────────────────────────
 // 타입
@@ -28,6 +29,7 @@ interface ArRecord {
   billing_month: string;
   client_name: string;
   total_amount: number;
+  delivery_fee?: number;
   paid_amount: number;
   unpaid_amount: number;
   checked: boolean;
@@ -144,13 +146,14 @@ export default function MonthlyHistory({
         });
       }
       const s = map.get(m)!;
+      const billGrand = grandTotalVatIncluded(r);
       s.clientCount++;
-      s.totalBilled += r.total_amount;
+      s.totalBilled += billGrand;
       if (r.checked) {
         s.confirmedCount++;
-        s.totalConfirmed += r.total_amount;
+        s.totalConfirmed += billGrand;
       } else {
-        s.totalOutstanding += r.total_amount;
+        s.totalOutstanding += billGrand;
       }
     });
 
@@ -226,7 +229,7 @@ export default function MonthlyHistory({
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
           { label: "관리 월수",   val: `${totalMonths}개월`, icon: Calendar,    color: "text-slate-700", bg: "bg-slate-100" },
-          { label: "누적 청구액", val: `${totalBilled.toLocaleString()}원`,   icon: TrendingUp,  color: "text-blue-700",    bg: "bg-blue-50" },
+          { label: "누적 청구(부가포함)", val: `${totalBilled.toLocaleString()}원`,   icon: TrendingUp,  color: "text-blue-700",    bg: "bg-blue-50" },
           { label: "누적 입금",   val: `${totalConfirmed.toLocaleString()}원`, icon: CheckCircle, color: "text-emerald-700", bg: "bg-emerald-50" },
           { label: "누적 미수금", val: `${totalOutstanding.toLocaleString()}원`, icon: AlertCircle, color: "text-red-700",  bg: "bg-red-50" },
         ].map(({ label, val, icon: Icon, color, bg }) => (
@@ -265,9 +268,24 @@ export default function MonthlyHistory({
               <tr className="bg-slate-50 border-b border-slate-200">
                 <th className="text-left px-5 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">마감월</th>
                 <th className="text-center px-3 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">거래처</th>
-                <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">총 청구액</th>
-                <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">입금 확인</th>
-                <th className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">미수금</th>
+                <th
+                  className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider"
+                  title="거래처별 합계(부가포함)의 합. (요금+탁송)×1.1"
+                >
+                  총 청구(부가포함)
+                </th>
+                <th
+                  className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider"
+                  title="입금 확인된 건의 합계(부가포함) 합"
+                >
+                  입금 확인
+                </th>
+                <th
+                  className="text-right px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider"
+                  title="미확인 건의 합계(부가포함) 합"
+                >
+                  미수금
+                </th>
                 <th className="text-center px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider w-36">수금률</th>
                 <th className="text-center px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wider">상태</th>
                 <th className="px-3 py-3 w-32"></th>
@@ -449,7 +467,7 @@ export default function MonthlyHistory({
             description={
               `⚠️ 이 달의 신용내역 데이터를 완전히 삭제합니다.\n\n` +
               `• 거래처: ${s?.clientCount ?? 0}개\n` +
-              `• 청구액: ${(s?.totalBilled ?? 0).toLocaleString()}원\n\n` +
+              `• 청구(부가포함): ${(s?.totalBilled ?? 0).toLocaleString()}원\n\n` +
               `삭제된 데이터는 복구할 수 없습니다.\n정말 삭제하시겠습니까?`
             }
             confirmLabel={deleting ? "삭제 중..." : "전체 삭제"}

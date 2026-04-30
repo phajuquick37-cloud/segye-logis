@@ -119,6 +119,22 @@ function calcGrandTotal(r: { total_amount: number; delivery_fee?: number }): num
   return grandTotalVatIncluded(r);
 }
 
+/** 신용내역 메인 테이블 헤더(요금=운임만·탁송은 합계에만 반영) */
+const CREDIT_TABLE_HEAD: readonly { label: string; title?: string }[] = [
+  { label: "거래처명" },
+  { label: "신용건수" },
+  {
+    label: "요금",
+    title: "엑셀 요금(운임) 합만 표시합니다. 탁송료를 이 열에 더하지 않습니다.",
+  },
+  { label: "탁송료", title: "탁송료 합산" },
+  { label: "합계(부가포함)", title: "(요금 + 탁송료)에 부가세 10%를 더한 금액" },
+  { label: "비고" },
+  { label: "결제일" },
+  { label: "입금확인" },
+  { label: "" },
+] as const;
+
 const FIRESTORE_BATCH_LIMIT = 450;
 
 /** 거래명세 메일 캡처용 — `ar_records` 세부 items 로드 */
@@ -364,15 +380,15 @@ function PreviewTable({ records, billingMonth, onChangeBillingMonth, onChangeAmo
             <TableRow>
               <TableHead>거래처명</TableHead>
               <TableHead className="text-center">건수</TableHead>
-              <TableHead className="text-right">요금</TableHead>
+              <TableHead className="text-right" title="엑셀 요금(운임) 합만. 탁송은 합계에만 반영">요금</TableHead>
               <TableHead className="text-right">탁송료</TableHead>
-              <TableHead className="text-right">합계(부가포함)</TableHead>
+              <TableHead className="text-right" title="(요금+탁송)×1.1">합계(부가포함)</TableHead>
               <TableHead className="w-8"></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {records.map((r, i) => {
-              const gt = Math.round((r.total_amount + (r.delivery_fee ?? 0)) * 1.1);
+              const gt = grandTotalVatIncluded(r);
               return (
                 <TableRow key={i} className={r.split_from ? "bg-orange-50" : ""}>
                   <TableCell className="font-semibold">
@@ -698,7 +714,7 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
     setPreview((prev) => prev.map((r, i) => {
       if (i !== idx) return r;
       const next = { ...r, [field]: val };
-      const gt = Math.round((next.total_amount + (next.delivery_fee ?? 0)) * 1.1);
+      const gt = grandTotalVatIncluded(next);
       next.unpaid_amount = Math.max(0, gt - next.paid_amount);
       if (next.paid_amount >= gt && gt > 0) next.status = "paid";
       else if (next.paid_amount > 0) next.status = "partial";
@@ -1629,16 +1645,14 @@ export default function Settlement() {
                           <div className="w-0.5 h-4 bg-white/25 rounded-full group-hover:bg-white/70 transition-colors" />
                         </div>
                       </th>
-                      {[
-                        "거래처명", "신용건수", "요금", "탁송료",
-                        "합계(부가포함)", "비고", "결제일", "입금확인", "",
-                      ].map((label, idx) => (
+                      {CREDIT_TABLE_HEAD.map((h, idx) => (
                         <th
                           key={idx}
+                          title={h.title}
                           className="px-3 py-3 text-xs font-bold tracking-wide relative overflow-hidden"
                           style={{ width: colWidths[idx + 1] }}
                         >
-                          <span className="block text-center truncate">{label}</span>
+                          <span className="block text-center truncate">{h.label}</span>
                           {idx < 8 && (
                             <div
                               onMouseDown={(e) => startResize(e, idx + 1)}
@@ -1702,8 +1716,11 @@ export default function Settlement() {
                             </span>
                           </td>
 
-                          {/* 요금 */}
-                          <td className="px-4 py-3 text-right font-mono tabular-nums text-slate-700">
+                          {/* 요금 — 운임(집계)만, 탁송 미포함 */}
+                          <td
+                            className="px-4 py-3 text-right font-mono tabular-nums text-slate-700"
+                            title="요금(운임)만 표시. 탁송은 합계(부가포함)에 반영됩니다."
+                          >
                             {r.total_amount.toLocaleString()}<span className="text-xs text-slate-400 ml-0.5">원</span>
                           </td>
 
@@ -1808,7 +1825,12 @@ export default function Settlement() {
                                     <tr className="bg-blue-100 text-blue-800">
                                       <th className="text-left px-3 py-2 font-semibold rounded-l">날짜</th>
                                       <th className="text-left px-3 py-2 font-semibold">내용 / 구간</th>
-                                      <th className="text-right px-3 py-2 font-semibold">요금</th>
+                                      <th
+                                        className="text-right px-3 py-2 font-semibold"
+                                        title="품목 운임 합(탁송은 상위 행 탁송료·합계에 반영)"
+                                      >
+                                        요금
+                                      </th>
                                       <th className="text-left px-3 py-2 font-semibold rounded-r">비고</th>
                                     </tr>
                                   </thead>
@@ -1826,7 +1848,7 @@ export default function Settlement() {
                                   </tbody>
                                   <tfoot>
                                     <tr className="bg-slate-100 font-bold text-slate-700 border-t border-slate-200">
-                                      <td colSpan={2} className="px-3 py-2">소 계 ({itemsCache[r.id].length}건)</td>
+                                      <td colSpan={2} className="px-3 py-2">소 계 · 운임 합 ({itemsCache[r.id].length}건, 탁송 제외)</td>
                                       <td className="px-3 py-2 text-right font-mono text-blue-700">
                                         {itemsCache[r.id].reduce((s: number, it: any) => s + (it.supply_amount ?? it.total_amount ?? 0), 0).toLocaleString()}원
                                       </td>
