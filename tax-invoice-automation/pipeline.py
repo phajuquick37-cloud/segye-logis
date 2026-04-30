@@ -76,6 +76,10 @@ async def run_pipeline(manual: bool = False) -> dict:
                 return {"status": "email_error", "message": "IMAP 미연결·계정/비밀번호 확인"}
             emails = reader.fetch_tax_invoice_emails()
 
+        logger.info(
+            "email_reader 수집 후보 메일 %d건 (제목·발신 힌트·필터 반영)",
+            len(emails),
+        )
         if not emails:
             logger.info("처리할 새 이메일 없음")
             return {"status": "no_emails", "firebase": 0, "success": 0, "fail": 0}

@@ -186,6 +186,15 @@ async def input_business_number(page: Page) -> bool:
 
         await el.type(value_to_type, delay=60)
         logger.info(f"사업자번호 입력 완료: {value_to_type}")
+        try:
+            await el.press("Enter")
+            await asyncio.sleep(0.4)
+        except Exception:
+            try:
+                await page.keyboard.press("Enter")
+                await asyncio.sleep(0.4)
+            except Exception:
+                pass
         return True
     except Exception as e:
         logger.error(f"사업자번호 입력 실패: {e}")
@@ -265,16 +274,15 @@ async def click_issue_approve_if_present(page: Page) -> int:
 # ─── 사업자번호 입력 화면 감지 ────────────────────────────────────────────────
 
 async def needs_biz_number(page: Page) -> bool:
-    """현재 페이지에 사업자번호 입력이 필요한지 판별 (공동인증 화면과 혼동 줄이기 위해 단어 선별)."""
+    """
+    보이는 사업자번호 입력 칸이 있으면 True.
+    (한메일 보안·열람 게이트 등 — 키워드 미일치여도 입력 시도)
+    """
     try:
-        text = await page.inner_text("body")
-        keywords = ["사업자", "등록번호", "확인", "조회", "번호를 입력", "business", "사업자번호"]
-        if any(kw in text for kw in keywords):
-            el = await find_biz_number_input(page)
-            return el is not None
+        el = await find_biz_number_input(page)
+        return el is not None
     except Exception:
-        pass
-    return False
+        return False
 
 
 # ─── 세금계산서 테이블 감지 + 캡처 ───────────────────────────────────────────
@@ -498,17 +506,23 @@ class TaxInvoiceBrowser:
             await page.screenshot(path=str(init_ss), full_page=False)
             result["screenshots"].append(str(init_ss))
 
-            # 4. 사업자번호 입력 (필요시)
-            if await needs_biz_number(page):
-                logger.info("🔐 사업자번호 입력 화면 감지")
-                await input_business_number(page)
+            # 4. 사업자번호 입력 (한메일 보안 등 — 최대 2회 시도)
+            for biz_round in range(2):
+                if not await needs_biz_number(page):
+                    break
+                logger.info(
+                    "🔐 사업자번호 입력 화면 감지 (%d/2) — 사장님 번호 입력 후 진행",
+                    biz_round + 1,
+                )
+                ok_in = await input_business_number(page)
+                if not ok_in:
+                    logger.warning("사업자 입력창 조작 실패 — 계속 확인/열람 시도")
                 await asyncio.sleep(0.5)
 
-                input_ss = output_dir / "step2_after_input.png"
+                input_ss = output_dir / f"step2_after_input_r{biz_round}.png"
                 await page.screenshot(path=str(input_ss), full_page=False)
                 result["screenshots"].append(str(input_ss))
 
-                # 5. 확인 버튼
                 await click_confirm_button(page)
 
                 hunt_ms = int(BROWSER_CONFIG.get("issue_approve_hunt_ms", 30_000))
@@ -519,11 +533,21 @@ class TaxInvoiceBrowser:
                 await _log_page_image_elements(page, "after-img-wait")
 
                 await asyncio.sleep(0.5)
-                confirm_ss = output_dir / "step3_after_confirm.png"
+                confirm_ss = output_dir / f"step3_after_confirm_r{biz_round}.png"
                 await page.screenshot(path=str(confirm_ss), full_page=False)
                 result["screenshots"].append(str(confirm_ss))
 
                 await click_issue_approve_if_present(page)
+                await handle_popups(page)
+
+            if await needs_biz_number(page):
+                logger.warning(
+                    "사업자번호 화면이 남아 있을 수 있음 — 추가 승인/열람 버튼 탐색"
+                )
+                await click_issue_approve_hunt(
+                    page,
+                    int(BROWSER_CONFIG.get("issue_approve_hunt_ms", 30_000)),
+                )
 
             # 재차 팝업 처리
             await handle_popups(page)

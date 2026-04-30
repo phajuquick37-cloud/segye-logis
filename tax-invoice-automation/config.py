@@ -401,6 +401,60 @@ def tax_priority_keywords_match(
     return False
 
 
+# 제목·발신 중 한 곳이라도 걸리면 수집 대상(이후 is_spam_hard_blocked 등만 별도)
+TAX_SUBJECT_SENDER_ALWAYS_COLLECT_KO = (
+    "화물맨",
+    "원콜",
+    "24시",
+    "로지노트",
+    "세금",
+    "원빌",
+    "화물전문가",
+    "세계로지스",
+)
+TAX_SUBJECT_SENDER_ALWAYS_COLLECT_EN = (
+    "onebill",
+    "onecall",
+    "onbill",
+    "1-bill",
+    "1call",
+    "logynote",
+    "loginote",
+    "lgnoteplus",
+    "hwamulman",
+    "call24",
+    "tax",
+)
+
+
+def loose_carrier_or_tax_hint_in_subject_or_sender(
+    from_addr: str, subject: str,
+) -> bool:
+    """
+    제목 또는 발신에 운송·세금 힌트가 하나라도 있으면 True.
+
+    · 화물맨·원콜·24시·로지노트·onebill·tax·세금 …
+    · ``[화물전문가 세계로지스]`` 등 브랜드 제목 포함
+    """
+    frm = (from_addr or "").strip()
+    sub = (subject or "").strip()
+    blob = f"{frm}\n{sub}"
+    if not blob.strip():
+        return False
+    blob_l = blob.lower()
+    for token in TAX_SUBJECT_SENDER_ALWAYS_COLLECT_KO:
+        if token in blob:
+            return True
+    for token in TAX_SUBJECT_SENDER_ALWAYS_COLLECT_EN:
+        if token in blob_l:
+            return True
+    if _re.search(r"\btax\s*\d{1,3}\b", blob_l):
+        return True
+    if _TAX_NUMBER_SENDER_RE.search((from_addr or "").lower()):
+        return True
+    return False
+
+
 def mandatory_tax_invoice_keyword_in_subject_or_sender(
     from_addr: str, subject: str,
 ) -> bool:
@@ -422,12 +476,8 @@ def mandatory_tax_invoice_keyword_in_subject_or_sender(
     sub_l = sub.lower()
     hay = frm_l + "\n" + sub_l
 
-    # 느슨 승격( email_allowed 와 동일 방향 — 로그·보조 판별용 )
-    if "세계로지스" in blob or "화물전문가" in blob:
-        return True
-    if "24시" in blob:
-        return True
-    if "tax" in hay:
+    # 아래 loose_carrier_or_tax_hint 와 동기화된 최우선 승격 (forward ref — 런타임에 정의됨)
+    if loose_carrier_or_tax_hint_in_subject_or_sender(from_addr, subject):
         return True
 
     if matches_worldlogis_invoice_subject(sub):
@@ -522,60 +572,6 @@ def recipient_keyword_required(from_addr: str) -> bool:
     return True
 
 
-def loose_carrier_or_tax_hint_in_subject_or_sender(
-    from_addr: str, subject: str,
-) -> bool:
-    """
-    발신·제목만 보고 수집 후보로 즉시 승격(본문의 전자세금·국세청 검사 생략).
-
-    · 화물맨·원콜·24시·로지노트·onebill·tax 등 느슨 매칭
-    · ``[화물전문가 세계로지스]`` 처럼 브랜드만 있는 제목도 통과
-    """
-    frm = (from_addr or "").strip()
-    sub = (subject or "").strip()
-    blob = f"{frm}\n{sub}"
-    if not blob.strip():
-        return False
-    blob_l = blob.lower()
-
-    if "세계로지스" in blob:
-        return True
-
-    for h in (
-        "화물맨",
-        "화물전문가",
-        "원콜",
-        "원빌",
-        "로지노트",
-        "24시",
-    ):
-        if h in blob:
-            return True
-
-    for h in (
-        "onebill",
-        "onecall",
-        "onbill",
-        "1-bill",
-        "1call",
-        "logynote",
-        "loginote",
-        "lgnoteplus",
-        "hwamulman",
-        "call24",
-    ):
-        if h in blob_l:
-            return True
-
-    if "tax" in blob_l:
-        return True
-
-    if _re.search(r"\btax\s*\d{1,3}\b", blob_l):
-        return True
-
-    return False
-
-
 def passes_etax_or_nts_spam_guard(
     from_addr: str,
     subject: str,
@@ -663,14 +659,17 @@ def email_allowed_for_collection(
     body_text: str = "",
 ) -> bool:
     """
-    (0) Q10·광고·쇼핑 등 — ``is_blocked_invoice_email`` (제목·발신·본문)
-    (0.5) 느슨 힌트(화물맨·원콜·24시·세계로지스·tax 등)면 전자세금 본문 검사 생략
-    (1) 필수 키워드 + (2) TAX_REQUIRE_ETAX_OR_NTS_SIGNAL 시 세금 신호
+    (0) 제목·발신에 운송·세금 힌트 → 즉시 수집 후보(본문 전자세금 검사 생략).
+        단 제목·발신만 보는 명백 스팸(is_spam_hard_blocked)은 제외.
+    (1) 그 외: 쇼핑·차단 도메인 등
+    (2) 필수 키워드 + 전자세금 신호
     """
+    if loose_carrier_or_tax_hint_in_subject_or_sender(from_addr, subject):
+        if is_spam_hard_blocked(from_addr, subject):
+            return False
+        return True
     if is_blocked_invoice_email(from_addr, subject, body_html, body_text):
         return False
-    if loose_carrier_or_tax_hint_in_subject_or_sender(from_addr, subject):
-        return True
     if not mandatory_tax_invoice_keyword_in_subject_or_sender(from_addr, subject):
         return False
     return passes_etax_or_nts_spam_guard(
@@ -771,14 +770,19 @@ CONFIRM_BUTTON_SELECTORS = [
     "button:has-text('확인하기')",
     "button:has-text('검색')",
     "button:has-text('열람')",
+    "button:has-text('다음')",
+    "button:has-text('인증')",
+    "button:has-text('계속')",
     "button:has-text('Submit')",
     "button:has-text('OK')",
     "input[type='submit']",
     "input[type='button'][value*='확인']",
     "input[type='button'][value*='조회']",
+    "input[type='button'][value*='다음']",
     ".btn-confirm", ".btn-submit", ".btn-ok",
     "#btnConfirm", "#btnSubmit", "#btnOk",
     "a.btn:has-text('확인')",
+    "a:has-text('확인')",
 ]
 
 # 원콜·전자세금 뷰어(메일 링크) — 공동인증 없이 노출되는 승인/발행 UI만 대상

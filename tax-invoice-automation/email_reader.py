@@ -445,10 +445,13 @@ class EmailReader:
                         date_str = msg.get("Date", "")
 
                         if is_spam_hard_blocked(from_addr, subject):
-                            logger.info(
-                                f"⏭ 스팸 제목·발신 차단 — [{subject[:50]}]"
-                            )
-                            continue
+                            if not loose_carrier_or_tax_hint_in_subject_or_sender(
+                                from_addr, subject
+                            ):
+                                logger.info(
+                                    f"⏭ 스팸 제목·발신 차단 — [{subject[:50]}]"
+                                )
+                                continue
 
                         try:
                             received_date = parsedate_to_datetime(date_str)
