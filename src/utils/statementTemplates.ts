@@ -300,7 +300,7 @@ function modelFromKeys(
 
 /** 녹원씨앤아이 — 헤더 회색 */
 const NOKWON_KEYS: StatementColumnKey[] = [
-  "order_date", "client_name", "dest_site", "round_trip", "dep_dong", "category", "arr_dong",
+  "order_date", "client_name", "round_trip", "dep_dong", "category", "arr_dong",
   "vehicle", "form", "base_fee", "discount", "fee", "consignment", "rider",
 ];
 
