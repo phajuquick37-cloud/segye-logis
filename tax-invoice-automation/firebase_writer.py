@@ -51,26 +51,33 @@ def _init_firebase():
         from config import FIREBASE_ADMIN_CONFIG
 
         if not firebase_admin._apps:
-            # 절대경로로 credentials 파일 탐색
+            # 절대경로로 credentials 파일 탐색 (없으면 GCP ADC: Cloud Run 기본 서비스 계정)
             cred_file = FIREBASE_ADMIN_CONFIG["credentials_file"]
             cred_path = Path(cred_file)
             if not cred_path.is_absolute():
-                # 스크립트 위치 기준 → 현재 작업 디렉토리 순으로 탐색
-                candidates = [
+                for c in (
                     _BASE_DIR / cred_file,
                     Path.cwd() / cred_file,
                     Path.home() / cred_file,
-                ]
-                for c in candidates:
+                ):
                     if c.exists():
                         cred_path = c
                         break
-            logger.info(f"credentials 파일 경로: {cred_path}")
-            cred = credentials.Certificate(str(cred_path))
-            firebase_admin.initialize_app(
-                cred,
-                {"storageBucket": FIREBASE_ADMIN_CONFIG["storage_bucket"]},
-            )
+            opts = {
+                "storageBucket": FIREBASE_ADMIN_CONFIG["storage_bucket"],
+                "projectId": FIREBASE_ADMIN_CONFIG.get("project_id") or None,
+            }
+            opts = {k: v for k, v in opts.items() if v}
+            if cred_path.exists():
+                logger.info("Firebase: 서비스 계정 JSON 사용 → %s", cred_path)
+                cred = credentials.Certificate(str(cred_path))
+                firebase_admin.initialize_app(cred, opts)
+            else:
+                logger.warning(
+                    "Firebase: JSON 없음 → Application Default Credentials 사용 "
+                    "(Cloud Run이면 서비스 계정에 Firestore+Storage 권한이 있어야 합니다)"
+                )
+                firebase_admin.initialize_app(options=opts)
 
         # 커스텀 데이터베이스 ID 지원
         db_id = FIREBASE_ADMIN_CONFIG.get("database_id")
@@ -82,10 +89,7 @@ def _init_firebase():
         logger.error("firebase-admin 미설치: pip install firebase-admin")
         return False
     except FileNotFoundError:
-        logger.error(
-            "Firebase 서비스 계정 키가 없습니다. TAX_GOOGLE_CREDENTIALS_PATH 또는 "
-            "GOOGLE_APPLICATION_CREDENTIALS 에 JSON 경로를 설정하세요."
-        )
+        logger.error("Firebase 인증 파일 오류(경로 확인). ADC 폴백도 실패했을 수 있습니다.")
         return False
     except Exception as e:
         logger.error(f"Firebase 초기화 실패: {e}")

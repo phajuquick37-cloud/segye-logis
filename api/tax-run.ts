@@ -137,16 +137,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(403).json({ error: "권한이 없습니다." });
     }
 
-    // 대시보드에서 자주 바꾸는 VITE_* 를 우선 — 예전 TAX_AUTOMATION_* 만 남아 있으면 구 URL이 먼저 쓰이던 문제 방지
+    // 대시보드에서 자주 바꾸는 값: 서버(api/tax-run)는 TAX_* 우선( Vite 빌드와 무관하게 Vercel 런타임에 잡히도록 )
     const baseRaw =
-      process.env.VITE_TAX_AUTOMATION_URL ||
       process.env.TAX_AUTOMATION_URL ||
+      process.env.VITE_TAX_AUTOMATION_URL ||
       "";
     const base = normalizeAutomationBaseUrl(baseRaw);
     if (!base) {
       return res.status(500).json({
         error:
-          "VITE_TAX_AUTOMATION_URL(또는 TAX_AUTOMATION_URL)이 없거나 URL 형식이 잘못되었습니다. 베이스만. 시크릿은 VITE_TAX_AUTOMATION_SECRET 등 Cloud Run TAX_COLLECT_SECRET 과 동일하게",
+          "VITE_TAX_AUTOMATION_URL(또는 TAX_AUTOMATION_URL)이 없거나 URL 형식이 잘못되었습니다. Vercel Production·Preview에 TAX_AUTOMATION_URL 을 넣고 재배포하세요. 베이스 URL만(끝에 /api/run 없음).",
       });
     }
 

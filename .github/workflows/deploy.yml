@@ -110,6 +110,8 @@ jobs:
               "TAX_SCHEDULE_INTERVAL_MINUTES": "60",
               "TAX_MAIL_LOOKBACK_DAYS": "30",
               "TAX_REQUIRE_ETAX_OR_NTS_SIGNAL": "true",
+              "TAX_STARTUP_PIPELINE_DELAY_SEC": "90",
+              "TAX_PIPELINE_TIMEOUT_SEC": "3300",
           }
 
           cmd = [

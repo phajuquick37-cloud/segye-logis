@@ -16,7 +16,8 @@ Google 연동:
   · 선택: Google Sheets 백업 — gspread + 동일 계정 JSON
 
 실행 예시:
-  python main.py                 # 1회 수집 (pipeline)
+  python main.py --pipeline      # 1회 전체 수집 (IMAP → 캡처 → Firestore tax_invoices)
+  python main.py                 # 위와 동일 (--pipeline 생략 시에도 1회 수집)
   python main.py --server          # Cloud Run / 로컬 서버 (FastAPI + 스케줄러)
   python main.py --test            # IMAP + Firebase + Sheets 연결 테스트
   python main.py --check-google    # Firebase/서비스계정·환경 변수 요약 (Gmail API 제외)
@@ -196,6 +197,12 @@ async def run_once() -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="세계로지스 세금계산서 자동화 (main.py 단일 진입점)")
+    parser.add_argument(
+        "--pipeline",
+        action="store_true",
+        help="전체 1회 실행: IMAP(한메일 등)에서 세금 메일 수집 → 링크·사업자번호·캡처 → "
+        "Firestore tax_invoices·Storage (세계로지스.com 관리자와 동일 DB 동기화; 별도 Gmail API 없음)",
+    )
     parser.add_argument("--server", action="store_true", help="FastAPI(api_server) + 스케줄러 (Cloud Run 기본)")
     parser.add_argument("--url", help="특정 세금 링크 URL 직접 처리 + Firestore 저장")
     parser.add_argument("--test", action="store_true", help="IMAP + Firebase + Sheets 테스트")
@@ -217,6 +224,8 @@ def main() -> None:
         asyncio.run(run_url(args.url))
     elif args.server:
         run_server()
+    elif args.pipeline:
+        asyncio.run(run_once())
     else:
         asyncio.run(run_once())
 

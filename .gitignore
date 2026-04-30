@@ -16,6 +16,8 @@ GoogleCloudSDKInstaller.exe
 
 # 세금계산서 봇 - 민감 파일
 tax-invoice-automation/google_credentials.json
+# 실수로 복제된 서비스 계정·이중 확장자 JSON (커밋 금지)
+**/firebase-applet-config.json.json
 # GCP 서비스 계정 키(로컬 다운로드·절대 커밋 금지)
 gen-lang-client-*-*.json
 tax-invoice-automation/output/

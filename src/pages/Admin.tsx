@@ -74,6 +74,7 @@ export default function Admin() {
   const [hideExcludedTaxPlatforms, setHideExcludedTaxPlatforms] = useState(true);
   const [taxCollectLoading, setTaxCollectLoading] = useState(false);
   const [taxCollectMessage, setTaxCollectMessage] = useState("");
+  const [taxInvoicesSnapshotError, setTaxInvoicesSnapshotError] = useState<string | null>(null);
 
   // 비밀번호 입력 상태
   const [passwordInput, setPasswordInput] = useState("");
@@ -120,9 +121,10 @@ export default function Admin() {
 
     // 세금계산서 — Firestore에서 내려받은 뒤 issue_date 내림차순으로 클라이언트 정렬
     const q3 = query(collection(db, "tax_invoices"), orderBy("created_at", "desc"));
-    const unsub3 = onSnapshot(
+    const unsub32 = onSnapshot(
       q3,
       (snap) => {
+        setTaxInvoicesSnapshotError(null);
         const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as any[];
         docs.sort((a, b) => {
           const da = a.issue_date || a.created_at?.toDate?.()?.toISOString?.() || "";
@@ -132,11 +134,13 @@ export default function Admin() {
         setTaxInvoices(docs);
       },
       (err) => {
+        const msg = err?.message || String(err);
+        setTaxInvoicesSnapshotError(msg);
         console.error("[Admin] tax_invoices 스냅샷 실패 — 규칙·DB이름·인덱스 확인:", err);
       }
     );
 
-    return () => { unsub1(); unsub2(); unsub3(); };
+    return () => { unsub1(); unsub2(); unsub32(); };
   }, [isAdmin]);
 
   const handlePasswordLogin = async (e: React.FormEvent) => {
@@ -232,7 +236,10 @@ export default function Admin() {
         }
         throw new Error(lineDead);
       }
-      setTaxCollectMessage(j.message || "수집을 시작했습니다. 잠시 후 목록이 갱신됩니다.");
+      setTaxCollectMessage(
+        (j.message || "백그라운드에서 수집 중입니다.") +
+          " 완료까지 수 분 걸릴 수 있습니다. 잠시 후 새로고침해 주세요. 목록이 비면 Cloud Run 로그의 last_pipeline·IMAP·Firebase를 확인하세요."
+      );
     } catch (e) {
       const line = e instanceof Error ? e.message : String(e);
       const busyOnly =

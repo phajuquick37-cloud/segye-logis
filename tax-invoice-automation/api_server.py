@@ -12,6 +12,7 @@ import asyncio
 import logging
 import os
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, BackgroundTasks, Header, HTTPException
@@ -30,7 +31,7 @@ from config import (
     TAX_MAIL_LOOKBACK_DAYS,
 )
 from scheduler import start_scheduler, stop_scheduler, get_next_run
-from pipeline import run_pipeline, is_running
+from pipeline import run_pipeline, is_running, get_last_pipeline_summary
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,8 @@ app.add_middleware(
         "https://www.세계로지스.com",
         "https://xn--989ax3tm6gxob89q.com",
         "https://www.xn--989ax3tm6gxob89q.com",
+        "https://xn--vk1b88f7uf0b7kda.com",
+        "https://www.xn--vk1b88f7uf0b7kda.com",
         "https://15887185.co.kr",
         "https://www.15887185.co.kr",
         "http://localhost:5173",
@@ -91,11 +94,22 @@ async def startup():
         f"저장=발행일≧{get_min_issue_date_for_save() or '하한없음'}"
     )
 
-    # 서버 시작 직후 즉시 1회 수집 (60분 대기 없이 바로 시작)
+    # 즉시 수집은「지금 수집」과 겹쳐 계속 busy 로 보이기 쉬움 → 기본 90초 후 1회
     async def _initial_run():
-        logger.info("🚀 서버 시작 직후 초기 수집 실행")
+        raw = (os.environ.get("TAX_STARTUP_PIPELINE_DELAY_SEC") or "90").strip()
+        try:
+            delay_sec = max(0, int(raw))
+        except ValueError:
+            delay_sec = 90
+        if delay_sec > 0:
+            logger.info(
+                "⏳ 초기 수집 전 %ss 대기 (TAX_STARTUP_PIPELINE_DELAY_SEC=0 이면 즉시)",
+                delay_sec,
+            )
+            await asyncio.sleep(delay_sec)
+        logger.info("🚀 서버 초기 수집 실행")
         result = await run_pipeline(manual=False)
-        logger.info(f"초기 수집 완료: {result}")
+        logger.info("초기 수집 완료: %s", result)
 
     asyncio.create_task(_initial_run())
 
@@ -131,8 +145,15 @@ async def status():
     floor = get_min_issue_date_for_save()
     imap_addr = (EMAIL_CONFIG.get("email_address") or "").strip()
     imap_pwd = (EMAIL_CONFIG.get("app_password") or "").strip()
-    cred_path = (FIREBASE_ADMIN_CONFIG.get("credentials_file") or "").strip()
-    cred_ok = bool(cred_path) and os.path.isfile(cred_path)
+    cred_file = (FIREBASE_ADMIN_CONFIG.get("credentials_file") or "").strip()
+    cred_ok = False
+    if cred_file:
+        cp = Path(cred_file)
+        if cp.is_file():
+            cred_ok = True
+        elif not cp.is_absolute():
+            base = Path(__file__).resolve().parent
+            cred_ok = (base / cred_file).is_file() or (Path.cwd() / cred_file).is_file()
     return {
         "status": "ok",
         "running": is_running(),
@@ -155,6 +176,7 @@ async def status():
         "firebase_project_id": FIREBASE_ADMIN_CONFIG.get("project_id") or None,
         "firestore_database_id": FIREBASE_ADMIN_CONFIG.get("database_id") or None,
         "google_credentials_file_present": cred_ok,
+        "last_pipeline": get_last_pipeline_summary(),
     }
 
 

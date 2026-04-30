@@ -5,7 +5,8 @@ scheduler.py 와 api_server.py 양쪽에서 import해서 사용
 
 import asyncio
 import logging
-from datetime import datetime
+import os
+from datetime import datetime, timezone
 from pathlib import Path
 
 from config import STORAGE_CONFIG, FIREBASE_ADMIN_CONFIG
@@ -24,9 +25,32 @@ logger = logging.getLogger(__name__)
 
 _running = False
 
+# /api/status · 로그용 — 왜 관리자에 안 보이는지 추적
+_last_pipeline_summary: dict = {}
+
 
 def is_running() -> bool:
     return _running
+
+
+def get_last_pipeline_summary() -> dict:
+    """최근 1회 파이프라인 종료 요약(타임아웃·no_emails·firebase 건수 등)."""
+    return dict(_last_pipeline_summary)
+
+
+def _record_pipeline_done(result: dict, elapsed_sec: float | None = None) -> None:
+    global _last_pipeline_summary
+    now = datetime.now(tz=timezone.utc).isoformat()
+    st = (result or {}).get("status")
+    _last_pipeline_summary = {
+        "finished_at_utc": now,
+        "status": st,
+        "firebase": (result or {}).get("firebase"),
+        "success": (result or {}).get("success"),
+        "fail": (result or {}).get("fail"),
+        "message": (result or {}).get("message"),
+        "elapsed_sec": (result or {}).get("elapsed_sec", elapsed_sec),
+    }
 
 
 async def run_pipeline(manual: bool = False) -> dict:
@@ -41,19 +65,20 @@ async def run_pipeline(manual: bool = False) -> dict:
 
     start_time = datetime.now()
     summary = {"start": start_time.isoformat(), "success": 0, "fail": 0, "sheet": 0, "firebase": 0}
+    timeout_sec = int(os.environ.get("TAX_PIPELINE_TIMEOUT_SEC", "3300"))
 
-    try:
+    async def _work() -> dict:
         logger.info(f"{'[수동]' if manual else '[자동]'} 파이프라인 시작")
 
         # 1. 이메일 수집
         with EmailReader() as reader:
             if not reader.mail:
-                return {"status": "email_error"}
+                return {"status": "email_error", "message": "IMAP 미연결·계정/비밀번호 확인"}
             emails = reader.fetch_tax_invoice_emails()
 
         if not emails:
             logger.info("처리할 새 이메일 없음")
-            return {"status": "no_emails"}
+            return {"status": "no_emails", "firebase": 0, "success": 0, "fail": 0}
 
         # 2. 브라우저 + 파싱
         all_finals = []
@@ -125,8 +150,20 @@ async def run_pipeline(manual: bool = False) -> dict:
         logger.info(f"파이프라인 완료: {summary}")
         return {"status": "ok", **summary}
 
+    out: dict
+    try:
+        out = await asyncio.wait_for(_work(), timeout=float(timeout_sec))
+        _record_pipeline_done(out)
+        return out
+    except asyncio.TimeoutError:
+        logger.error("파이프라인 타임아웃 (%ss) — _running 해제 후 재시도 가능", timeout_sec)
+        out = {"status": "error", "message": f"pipeline_timeout_{timeout_sec}s"}
+        _record_pipeline_done(out)
+        return out
     except Exception as e:
         logger.error(f"파이프라인 오류: {e}")
-        return {"status": "error", "message": str(e)}
+        out = {"status": "error", "message": str(e)}
+        _record_pipeline_done(out)
+        return out
     finally:
         _running = False
