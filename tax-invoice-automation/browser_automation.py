@@ -254,6 +254,34 @@ async def extract_dom_data(page: Page) -> Dict:
     return data
 
 
+def detect_cert_or_hometax_login_failure(full_text: str, page_url: str) -> Optional[str]:
+    """
+    페이지에 표시된 홈택스·공동인증 오류를 탐지한다.
+    (운영 로그에 흔한 '결과코드 4001 / 공동인증서 비밀번호가 일치하지 않습니다' 와 동일 계열)
+    """
+    t = f"{full_text or ''}\n{page_url or ''}"
+    if not t.strip():
+        return None
+    tl = t.lower()
+    on_ht = "hometax.go.kr" in tl or "teet.hometax" in tl
+
+    if "공동인증서 비밀번호" in t or "인증서 비밀번호가 일치하지 않" in t:
+        return (
+            "공동인증서 비밀번호 불일치: 자동화·브라우저에 넣은 인증서 암호가 실제와 다르거나 "
+            "인증서가 재발급·만료되었습니다. 국세청/대행 프로그램에서 최신 암호·인증서로 갱신하세요."
+        )
+    if ("결과코드" in t or "결과 코드" in t) and "4001" in t and (on_ht or "인증" in t or "공동" in t):
+        return (
+            "홈택스 결과코드 4001(인증서 비밀번호 불일치 계열). 저장된 공동인증서 암호와 "
+            "실제 인증서를 맞추거나, 인증서를 다시 등록한 뒤 서버·에이전트 설정을 업데이트하세요."
+        )
+    if on_ht and ("로그인 실패" in t or "인증에 실패" in t) and ("공동" in t or "인증서" in t):
+        return (
+            "홈택스 로그인·인증서 단계 실패. 비밀번호·보안모듈·인증서 유효기간을 확인하세요."
+        )
+    return None
+
+
 # ─── 메인 브라우저 클래스 ─────────────────────────────────────────────────────
 
 class TaxInvoiceBrowser:
@@ -402,7 +430,13 @@ class TaxInvoiceBrowser:
                 page_url = page.url or ""
             except Exception:
                 page_url = ""
-            if is_blocked_tax_invoice_url(page_url):
+            body_text = result["dom_data"].get("full_text", "") or ""
+            auth_fail = detect_cert_or_hometax_login_failure(body_text, page_url)
+            if auth_fail:
+                result["error"] = "hometax_cert_auth"
+                result["success"] = False
+                logger.error("홈택스/공동인증 실패 — %s", auth_fail)
+            elif is_blocked_tax_invoice_url(page_url):
                 result["error"] = "blocked_url_after_redirect"
                 result["success"] = False
                 logger.info(f"🚫 리다이렉트 후 차단 URL — 스킵: {page_url[:80]}")
