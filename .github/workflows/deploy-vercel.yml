@@ -1,6 +1,7 @@
-# Production 사이트는 Vercel 단일 호스팅 (Firebase Hosting / Blaze 불필요)
-# GitHub → Settings → Secrets → VERCEL_DEPLOY_HOOK 에 Vercel Deploy Hook URL 저장
-# (Vercel 프로젝트 → Settings → Git → Deploy Hooks → Create Hook)
+# Production 사이트는 Vercel 단일 호스팅
+# 우선순위 1) VERCEL_DEPLOY_HOOK — Post URL (프로젝트 → Settings → Git → Deploy Hooks)
+# 우선순위 2) VERCEL_TOKEN + VERCEL_ORG_ID + VERCEL_PROJECT_ID — GitHub Actions에서 직접 빌드·배포
+# 둘 다 없으면 Vercel-Git 연동만 기대(연동이 끊기면 배포가 안 됨 — 시크릿 중 하나를 설정할 것)
 
 name: Trigger Vercel Production
 
@@ -10,6 +11,7 @@ on:
       - master
     paths:
       - "src/**"
+      - "components/**"
       - "api/**"
       - "index.html"
       - "vite.config.ts"
@@ -22,20 +24,55 @@ on:
   workflow_dispatch:
 
 jobs:
-  hook:
+  deploy:
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
+      - name: Decide deploy mode
+        id: gate
+        env:
+          HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
+          TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          PROJ: ${{ secrets.VERCEL_PROJECT_ID }}
+          ORG: ${{ secrets.VERCEL_ORG_ID }}
+        run: |
+          if [ -n "$HOOK" ]; then
+            echo "mode=hook" >> "$GITHUB_OUTPUT"
+          elif [ -n "$TOKEN" ] && [ -n "$PROJ" ] && [ -n "$ORG" ]; then
+            echo "mode=cli" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=none" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Invoke Vercel Deploy Hook
+        if: steps.gate.outputs.mode == 'hook'
         env:
           VERCEL_DEPLOY_HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK }}
         run: |
           set -euo pipefail
-          if [ -z "${VERCEL_DEPLOY_HOOK:-}" ]; then
-            echo "::notice::VERCEL_DEPLOY_HOOK 시크릿이 없습니다. Vercel이 저장소와 연결돼 있으면 자동 배포됩니다. 수동 재배포: Vercel → Deployments → Redeploy."
-            exit 0
-          fi
           curl -fsS -X POST "$VERCEL_DEPLOY_HOOK"
           echo ""
-          echo "OK — Vercel Production 배포가 시작되었습니다."
+          echo "OK — Vercel Production 배포가 시작되었습니다 (Deploy Hook)."
+
+      - name: Checkout (CLI 배포)
+        if: steps.gate.outputs.mode == 'cli'
+        uses: actions/checkout@v4
+
+      - name: Deploy via Vercel CLI
+        if: steps.gate.outputs.mode == 'cli'
+        uses: amondnet/vercel-action@v42
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          working-directory: ./
+          vercel-args: "--prod"
+
+      - name: 배포 트리거 없음 (시크릿 또는 Git 연동 확인)
+        if: steps.gate.outputs.mode == 'none'
+        run: |
+          echo "::warning::VERCEL_DEPLOY_HOOK 또는 (VERCEL_TOKEN+VERCEL_ORG_ID+VERCEL_PROJECT_ID)가 없습니다."
+          echo "이 저장소 push만으로는 Actions가 Production을 트리거하지 못합니다."
+          echo "Vercel 대시보드에서 Git 저장소 연결 여부를 확인하거나, 위 시크릿 중 하나를 설정하세요."
+          echo "즉시 반영: Vercel → Deployments → 최신 커밋 → Redeploy."
