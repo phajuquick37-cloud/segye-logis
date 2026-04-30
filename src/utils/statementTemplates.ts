@@ -91,9 +91,9 @@ function statementLineDiscount(item: SettlementItem): number {
   return Math.max(0, b - sN);
 }
 
-/** 명세 「요금」열: 항상 기본 − 할인 (할인은 이 식에만 반영) */
+/** 명세 「요금」·「합계」류 금액 열: 업로드 시 저장한 집계 줄 금액(supply_amount = 엑셀 요금 열)·기본·할인과 독립 */
 function statementLineFee(item: SettlementItem): number {
-  return Math.max(0, statementLineBase(item) - statementLineDiscount(item));
+  return coerceSupplyAmount(item);
 }
 
 /** 금액 열이 라이더·왕복 등에 잘못 들어온 경우 표시 제외 */
@@ -336,7 +336,7 @@ function modelFromKeys(
   };
 }
 
-/** 녹원씨앤아이 — 「기본」「할인」 헤더(값은 기존 계산: 요금=기본−할인) */
+/** 녹원씨앤아이 — 「기본」「할인」 헤더 · 요금 열은 supply_amount(집계 요금) */
 function nokwonResolvedModel(): ResolvedTemplateModel {
   const m = modelFromKeys("nokwon", "녹원씨앤아이양식", NOKWON_KEYS, "gray");
   return {
