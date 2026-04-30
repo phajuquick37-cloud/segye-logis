@@ -96,7 +96,8 @@ const COL_LABEL: Record<ColKey, string> = {
   memo: "비고", jeeyo: "적요", bizno: "사업자번호", duedate: "결제일",
   row_client: "고객명(상호)",
   departure: "출발동·출발지", destination: "도착동·도착지", vehicle_type: "차량·톤수",
-  driver: "기사명", vehicle_no: "차량번호", unload_client: "하차지고객",
+  driver: "기사·라이더", vehicle_no: "차량번호", unload_client: "하차지고객",
+  round_trip: "왕복",
 };
 
 function currentMonth() {
@@ -262,7 +263,7 @@ function ColumnMappingPanel({ result, overrides, onOverride }: {
   const REQUIRED: ColKey[] = ["client", "amount", "payment"];
   const OPTIONAL: ColKey[] = [
     "deliveryfee", "duedate", "memo", "jeeyo", "date", "bizno",
-    "row_client", "departure", "destination", "vehicle_type", "driver", "vehicle_no", "unload_client",
+    "row_client", "departure", "destination", "round_trip", "vehicle_type", "driver", "vehicle_no", "unload_client",
   ];
   const effectiveIdx = (key: ColKey) => overrides[key] !== undefined ? overrides[key]! : result.detectedIdx[key];
   return (
@@ -494,6 +495,7 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
         driver:       strOpt("driver", row.driver),
         vehicleNo:    strOpt("vehicle_no", row.vehicleNo),
         unloadClient: strOpt("unload_client", row.unloadClient),
+        roundTrip:    strOpt("round_trip", row.roundTrip),
         paymentLabel:
           patchedIdx.payment !== -1
             ? normalizePaymentCell(getVal("payment")) || undefined
@@ -627,7 +629,8 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
             if ((row as any).vehicleNo)    itemData.vehicle_no   = (row as any).vehicleNo;
             if ((row as any).unloadClient) itemData.unload_client= (row as any).unloadClient;
             if ((row as any).rowClient)    itemData.row_client   = (row as any).rowClient;
-            if ((row as any).jeeyo)        itemData.jeeyo        = (row as any).jeeyo;
+            if ((row as any).jeeyo)       itemData.jeeyo        = (row as any).jeeyo;
+            if ((row as any).roundTrip)   itemData.round_trip   = (row as any).roundTrip;
             if ((row as any).paymentLabel) itemData.pay_type     = (row as any).paymentLabel;
             batch.set(doc(collection(db, "ar_records", arRef.id, "items")), itemData);
           });

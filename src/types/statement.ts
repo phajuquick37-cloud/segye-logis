@@ -18,6 +18,8 @@ export interface SettlementItem {
   unload_client?: string;
   row_client?: string;
   jeeyo?: string;
+  /** 엑셀 「왕복」 등 전용 열 (없으면 명세표 왕복 칸은 적요·비고 규칙으로만 보조) */
+  round_trip?: string;
 }
 
 export type StatementTemplateKey =

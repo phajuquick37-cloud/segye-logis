@@ -6,7 +6,7 @@ import * as XLSX from "xlsx";
 export type ColKey =
   | "date" | "client" | "amount" | "deliveryfee" | "payment" | "memo" | "jeeyo" | "bizno" | "duedate"
   | "departure" | "destination" | "vehicle_type" | "driver" | "vehicle_no"
-  | "unload_client" | "row_client";
+  | "unload_client" | "row_client" | "round_trip";
 
 /** 각 컬럼 키별 인식 후보 헤더명 (앞쪽일수록 우선순위 높음) */
 export const COL_HINTS: Record<ColKey, string[]> = {
@@ -60,10 +60,11 @@ export const COL_HINTS: Record<ColKey, string[]> = {
     "차량", "차량명", "차량종류", "차량형태", "차종",
     "톤수", "톤", "ton", "tonnage",
   ],
-  driver:        ["기사명", "기사", "운전자", "드라이버", "driver"],
+  driver:        ["라이더", "라이더명", "기사명", "기사", "운전자", "드라이버", "driver"],
   vehicle_no:    ["차량번호", "차번", "번호판", "차량번", "plate"],
   unload_client: ["하차지고객", "하차고객", "하차처고객", "하차처"],
   row_client:    ["고객명", "고객", "고객명(상호)", "수하인", "customer"],
+  round_trip:    ["왕복", "왕복구분", "편도 왕복", "편도왕복", "편도·왕복", "왕·편"],
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -87,6 +88,7 @@ export interface RawRow {
   vehicleNo?: string;
   unloadClient?: string;
   rowClient?: string;   // 행별 고객명(상호) — 거래처명과 별도
+  roundTrip?: string;
   /** 지급란 원문(신용/선불/착불 등) — 신용 집계 판별용 */
   paymentLabel?: string;
   /** 원본 셀 값 전체 (컬럼 헤더 → 값) */
@@ -110,6 +112,7 @@ export interface DetectedCols {
   vehicle_no: string | null;
   unload_client: string | null;
   row_client: string | null;
+  round_trip: string | null;
   /** 파일 내 전체 헤더 목록 */
   allHeaders: string[];
 }
@@ -469,6 +472,7 @@ function sheetToResult(
     vehicle_no:   pickBest(COL_HINTS.vehicle_no),
     unload_client:pickBest(COL_HINTS.unload_client),
     row_client:   pickBest(COL_HINTS.row_client),
+    round_trip:   pickBest(COL_HINTS.round_trip),
   };
 
   if (detectedIdx.date    === -1) warnings.push("날짜 컬럼을 자동으로 찾지 못했습니다. 수동으로 지정해주세요.");
@@ -508,6 +512,7 @@ function sheetToResult(
     vehicle_no:   h("vehicle_no"),
     unload_client:h("unload_client"),
     row_client:   h("row_client"),
+    round_trip:   h("round_trip"),
     allHeaders:   headers,
   };
 
@@ -562,6 +567,7 @@ function sheetToResult(
       vehicleNo:    str("vehicle_no")   || undefined,
       unloadClient: str("unload_client")|| undefined,
       rowClient:    str("row_client")   || undefined,
+      roundTrip:    str("round_trip")   || undefined,
       _original,
     });
   }
@@ -578,12 +584,12 @@ function emptyResult(fileName: string, sheetName: string, warnings: string[]): P
     detected: {
       date: null, client: null, amount: null, deliveryfee: null, payment: null, memo: null, jeeyo: null, bizno: null, duedate: null,
       departure: null, destination: null, vehicle_type: null, driver: null, vehicle_no: null,
-      unload_client: null, row_client: null, allHeaders: [],
+      unload_client: null, row_client: null, round_trip: null, allHeaders: [],
     },
     detectedIdx: {
       date: -1, client: -1, amount: -1, deliveryfee: -1, payment: -1, memo: -1, jeeyo: -1, bizno: -1, duedate: -1,
       departure: -1, destination: -1, vehicle_type: -1, driver: -1, vehicle_no: -1,
-      unload_client: -1, row_client: -1,
+      unload_client: -1, row_client: -1, round_trip: -1,
     },
     fileName,
     sheetName,
@@ -688,6 +694,7 @@ export function reapplyColMap(
       vehicleNo:    str2(get(r._original, "vehicle_no"))   || undefined,
       unloadClient: str2(get(r._original, "unload_client"))|| undefined,
       rowClient:    str2(get(r._original, "row_client"))   || undefined,
+      roundTrip:    str2(get(r._original, "round_trip"))     || undefined,
       _original:    r._original,
     })).filter((r) => {
       if (isBlankCreditClientName(r.clientName)) return false;

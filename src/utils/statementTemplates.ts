@@ -41,8 +41,40 @@ function lineDiscount(item: SettlementItem): number {
   return Math.max(0, b - item.supply_amount);
 }
 
+/** 금액 열이 라이더·왕복 등에 잘못 들어온 경우 표시 제외 */
+function looksLikeNumericFee(s: string): boolean {
+  const t = s.replace(/\s/g, "").replace(/원$/u, "");
+  if (!t) return false;
+  return /^-?\d[\d,]*\.?\d*%?$/.test(t);
+}
+
 function roundTripCell(item: SettlementItem): string {
-  return (item.memo || "").trim() || (item.jeeyo || "").trim() || "";
+  const dedicated = (item.round_trip ?? "").trim();
+  if (dedicated) {
+    if (looksLikeNumericFee(dedicated)) return "";
+    return dedicated;
+  }
+
+  const depShown = normStmtCell(displayDepartureForStatement(item));
+  const destShown = normStmtCell(displayDestinationForStatement(item));
+  const depRaw = normStmtCell((item.departure ?? "").trim());
+  const destRaw = normStmtCell((item.destination ?? "").trim());
+  const hasAddr = !!(depShown || destShown || depRaw || destRaw);
+
+  const j = (item.jeeyo ?? "").trim();
+  const m = (item.memo ?? "").trim();
+  const raw = j || (hasAddr ? "" : m);
+  if (!raw) return "";
+  if (looksLikeNumericFee(raw)) return "";
+
+  const client = normStmtCell(item.row_client || item.description || "");
+  const rawN = normStmtCell(raw);
+  if (depShown && rawN === depShown) return "";
+  if (destShown && rawN === destShown) return "";
+  if (depRaw && !depShown && rawN === depRaw) return "";
+  if (destRaw && !destShown && rawN === destRaw) return "";
+  if (client && rawN === client) return "";
+  return raw;
 }
 
 function categoryCell(item: SettlementItem): string {
@@ -54,8 +86,15 @@ function categoryCell(item: SettlementItem): string {
   return "신용";
 }
 
+function riderDisplayName(item: SettlementItem): string {
+  const d = (item.driver ?? "").trim();
+  if (!d) return "";
+  if (looksLikeNumericFee(d)) return "";
+  return d;
+}
+
 function riderCell(item: SettlementItem): string {
-  return (item.driver || "").trim();
+  return riderDisplayName(item);
 }
 
 /** 내부 열 키 — 커스텀 양식 저장·복원용 */
@@ -155,7 +194,7 @@ function cellForKey(item: SettlementItem, key: StatementColumnKey): string | num
     case "unload_client":
       return (item.unload_client || "").trim();
     case "driver_name":
-      return (item.driver || "").trim();
+      return riderDisplayName(item);
     case "vehicle_no":
       return (item.vehicle_no || "").trim();
     case "base_fee":
