@@ -45,42 +45,55 @@ function lineBaseAmount(item: SettlementItem): number {
   return Number.isFinite(s) ? Math.round(s) : 0;
 }
 
-/** Firestore·레거시에서 문자열로 온 금액 필드 정규화 */
-function itemMoneyField(item: SettlementItem, key: "base_amount" | "discount_amount"): number | undefined {
-  if (!Object.prototype.hasOwnProperty.call(item, key)) return undefined;
-  const v = (item as unknown as Record<string, unknown>)[key];
-  if (v == null || v === "") return undefined;
-  if (typeof v === "number" && Number.isFinite(v)) return v;
-  const n = Number(String(v).replace(/,/g, "").trim());
-  return Number.isFinite(n) ? n : undefined;
-}
-
-/** 녹원 등: 엑셀 기본요금 열이 있으면 우선 */
-function lineListBaseAmount(item: SettlementItem): number {
-  const b = itemMoneyField(item, "base_amount");
-  if (b !== undefined && b > 0) return Math.round(b);
-  return lineBaseAmount(item);
-}
-
-/** 할인요금 열 값 또는 (기본−공급가) 추정 */
-function lineDiscountDisplay(item: SettlementItem): number {
-  const d = itemMoneyField(item, "discount_amount");
-  if (d !== undefined && d >= 0) return Math.round(d);
-  const b = lineListBaseAmount(item);
+function coerceSupplyAmount(item: SettlementItem): number {
   const sup = item.supply_amount;
   const s =
     typeof sup === "number" && Number.isFinite(sup)
       ? sup
       : Number(String(sup ?? 0).replace(/,/g, "").trim());
-  const sN = Number.isFinite(s) ? s : 0;
-  return Math.max(0, Math.round(b - sN));
+  return Number.isFinite(s) ? Math.round(s) : 0;
 }
 
-/** 요금(할인 후) = 기본요금 − 할인요금 — 명세표 표시용 */
-function lineFeeAfterDiscount(item: SettlementItem): number {
-  const b = lineListBaseAmount(item);
-  const d = lineDiscountDisplay(item);
-  return Math.max(0, Math.round(b - d));
+/**
+ * 명세 「기본」열: 업로드한 기본 열(base_amount)만 표시. 할인·요금과 섞지 않음.
+ * (키가 없으면 레거시: unit_price·supply 기반)
+ */
+function statementLineBase(item: SettlementItem): number {
+  if (Object.prototype.hasOwnProperty.call(item, "base_amount")) {
+    const raw = (item as unknown as Record<string, unknown>).base_amount;
+    if (raw == null || raw === "") return 0;
+    const n =
+      typeof raw === "number" && Number.isFinite(raw)
+        ? raw
+        : Number(String(raw).replace(/,/g, "").trim());
+    return Number.isFinite(n) ? Math.round(n) : 0;
+  }
+  return lineBaseAmount(item);
+}
+
+/**
+ * 명세 「할인」열: 업로드 할인 열 우선. 없으면 (기본표시값 − 집계요금)만 추정.
+ * 추정값은 「할인」에만 쓰이고 「기본」에는 반영하지 않음.
+ */
+function statementLineDiscount(item: SettlementItem): number {
+  if (Object.prototype.hasOwnProperty.call(item, "discount_amount")) {
+    const raw = (item as unknown as Record<string, unknown>).discount_amount;
+    if (raw == null || raw === "") return 0;
+    const n =
+      typeof raw === "number" && Number.isFinite(raw)
+        ? raw
+        : Number(String(raw).replace(/,/g, "").trim());
+    const v = Number.isFinite(n) ? Math.round(n) : 0;
+    return Math.max(0, v);
+  }
+  const b = statementLineBase(item);
+  const sN = coerceSupplyAmount(item);
+  return Math.max(0, b - sN);
+}
+
+/** 명세 「요금」열: 항상 기본 − 할인 (할인은 이 식에만 반영) */
+function statementLineFee(item: SettlementItem): number {
+  return Math.max(0, statementLineBase(item) - statementLineDiscount(item));
 }
 
 /** 금액 열이 라이더·왕복 등에 잘못 들어온 경우 표시 제외 */
@@ -251,13 +264,13 @@ function cellForKey(item: SettlementItem, key: StatementColumnKey): string | num
     case "vehicle_no":
       return (item.vehicle_no || "").trim();
     case "base_fee":
-      return lineListBaseAmount(item).toLocaleString();
+      return statementLineBase(item).toLocaleString();
     case "discount":
-      return lineDiscountDisplay(item).toLocaleString();
+      return statementLineDiscount(item).toLocaleString();
     case "fee":
     case "sum_simple":
     case "sum_amount":
-      return lineFeeAfterDiscount(item).toLocaleString();
+      return statementLineFee(item).toLocaleString();
     case "consignment":
       return "0";
     case "rider":
