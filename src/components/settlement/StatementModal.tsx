@@ -12,7 +12,7 @@ import jsPDF from "jspdf";
 import { captureStatementToCanvas } from "../../utils/statementCapture";
 import { X, Download, Mail, FileSpreadsheet, Printer, CheckCircle, AlertTriangle, Loader2, ImageIcon, Send } from "lucide-react";
 import { Button } from "../../../components/ui/button";
-import { SUPPLIER, VAT_RATE } from "../../config/companyInfo";
+import { SUPPLIER, statementSupplyVatGrand } from "../../config/companyInfo";
 import { postStatementMail, type MailSendReportLine } from "../../utils/mailClient";
 import type { SettlementItem, StatementArRecord, StatementClientProfile } from "../../types/statement";
 import {
@@ -107,9 +107,7 @@ export const DocumentBody = React.forwardRef<
   HTMLDivElement,
   { record: ArRecord; items: SettlementItem[]; profile?: ClientProfile | null }
 >(({ record, items, profile }, ref) => {
-  const supplyTotal = record.total_amount;
-  const vatTotal    = Math.round(supplyTotal * VAT_RATE);
-  const grandTotal  = supplyTotal + vatTotal;
+  const { supplyBase: supplyTotal, vatTotal, grandTotal } = statementSupplyVatGrand(record);
   const dateRange   = monthDateRange(record.billing_month);
   const tmpl = resolveStatementTemplate(record.client_name, profile ?? null);
   const colCount = tmpl.cols.length;
@@ -521,9 +519,7 @@ export default function StatementModal({
   const handleDownloadExcel = () => {
     const tmpl = resolveStatementTemplate(record.client_name, clientProfile);
     const nc = tmpl.cols.length;
-    const supplyTotal = record.total_amount;
-    const vatTotal = Math.round(supplyTotal * VAT_RATE);
-    const grandTotal = supplyTotal + vatTotal;
+    const { supplyBase: supplyTotal, vatTotal, grandTotal } = statementSupplyVatGrand(record);
     const displayName = (clientProfile?.name || "").trim() || record.client_name;
     const sheetW = Math.max(8, nc);
 
@@ -591,9 +587,7 @@ export default function StatementModal({
       const canvas = await captureStatementToCanvas(docRef.current, { scale: 2 });
       const imageBase64 = canvas.toDataURL("image/png", 0.92);
       await updateDoc(doc(db, "ar_records", record.id), { contact_email: recipients.join(", ") });
-      const supplyTotal = record.total_amount;
-      const vatTotal    = Math.round(supplyTotal * VAT_RATE);
-      const grandTotal  = supplyTotal + vatTotal;
+      const { supplyBase: supplyTotal, vatTotal, grandTotal } = statementSupplyVatGrand(record);
 
       const results: MailSendReportLine[] = [];
       for (const to of recipients) {
@@ -635,9 +629,7 @@ export default function StatementModal({
     }
   };
 
-  const supplyTotal = record.total_amount;
-  const vatTotal    = Math.round(supplyTotal * VAT_RATE);
-  const grandTotal  = supplyTotal + vatTotal;
+  const { grandTotal } = statementSupplyVatGrand(record);
 
   return (
     <div

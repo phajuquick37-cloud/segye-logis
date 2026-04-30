@@ -36,7 +36,7 @@ import { useStaffProfile } from "../hooks/useStaffProfile";
 import MonthlyHistory, { useMonthClosures } from "../components/settlement/MonthlyHistory";
 import StatementModal, { DocumentBody, SettlementItem, ClientProfile as ModalClientProfile } from "../components/settlement/StatementModal";
 import { captureStatementToCanvas } from "../utils/statementCapture";
-import { SUPPLIER, VAT_RATE } from "../config/companyInfo";
+import { SUPPLIER, statementSupplyVatGrand, grandTotalVatIncluded } from "../config/companyInfo";
 import { postStatementMail, splitMailAddresses, type MailSendReportLine } from "../utils/mailClient";
 import {
   TEMPLATE_LABELS,
@@ -114,9 +114,9 @@ function currentMonth() {
 }
 function fmtDateTime(iso: string) { return iso.slice(0, 16).replace("T", " "); }
 
-/** 실제 청구금액: (요금 + 탁송료) × 1.1 (부가세 10%) */
+/** 실제 청구금액: (요금 + 탁송료) × 1.1 (부가세 10%) — 탁송은 요금 칸에 넣지 않고 합계만 반영 */
 function calcGrandTotal(r: { total_amount: number; delivery_fee?: number }): number {
-  return Math.round((r.total_amount + (r.delivery_fee ?? 0)) * 1.1);
+  return grandTotalVatIncluded(r);
 }
 
 const FIRESTORE_BATCH_LIMIT = 450;
@@ -1285,9 +1285,7 @@ export default function Settlement() {
             items,
             profForCapture
           );
-          const supplyTotal = rec.total_amount;
-          const vatTotal = Math.round(supplyTotal * VAT_RATE);
-          const grandTotal = supplyTotal + vatTotal;
+          const { supplyBase: supplyTotal, vatTotal, grandTotal } = statementSupplyVatGrand(rec);
 
           const recResults: MailSendReportLine[] = [];
           for (const to of emailSet) {
@@ -2126,9 +2124,7 @@ function QuickMailPanel({
       const canvas = await captureStatementToCanvas(docRef.current, { scale: 2 });
       const imageBase64 = canvas.toDataURL("image/png", 0.92);
       await updateDoc(doc(db, "ar_records", record.id), { contact_email: recipients.join(", ") });
-      const supplyTotal = record.total_amount;
-      const vatTotal = Math.round(supplyTotal * VAT_RATE);
-      const grandTotal = supplyTotal + vatTotal;
+      const { supplyBase: supplyTotal, vatTotal, grandTotal } = statementSupplyVatGrand(record);
       const results: MailSendReportLine[] = [];
       for (const to of recipients) {
         const line = await postStatementMail({

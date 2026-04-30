@@ -30,3 +30,20 @@ export const EMAILJS = {
 // 부가세 설정
 // ──────────────────────────────────────────────────────────
 export const VAT_RATE = 0.1; // 10%
+
+/**
+ * 신용내역·거래명세 공통: 공급가(요금+탁송료) → 부가세 포함 합계.
+ * (요금 열에는 탁송을 넣지 않고, 합계에만 탁송+부가세 반영)
+ */
+export function grandTotalVatIncluded(record: { total_amount: number; delivery_fee?: number }): number {
+  const supply = record.total_amount + (record.delivery_fee ?? 0);
+  return Math.round(supply * (1 + VAT_RATE));
+}
+
+/** 명세 상단: 공급가액(요금+탁송) · VAT · 합계 — `grandTotal`은 목록 합계(부가포함)와 동일 */
+export function statementSupplyVatGrand(record: { total_amount: number; delivery_fee?: number }) {
+  const supplyBase = record.total_amount + (record.delivery_fee ?? 0);
+  const grandTotal = Math.round(supplyBase * (1 + VAT_RATE));
+  const vatTotal = grandTotal - supplyBase;
+  return { supplyBase, vatTotal, grandTotal };
+}
