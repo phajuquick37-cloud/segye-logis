@@ -362,6 +362,11 @@ export function resolveStatementTemplate(
   return PRESET_MODELS[t];
 }
 
+/** 거래처 양식 연동 UI · 프리셋과 동일한 열 키 순서 */
+export function presetColumnKeys(id: Exclude<StatementTemplateKey, "custom">): StatementColumnKey[] {
+  return PRESET_MODELS[id].cols.map((c) => c.key);
+}
+
 export const TEMPLATE_LABELS: Record<StatementTemplateKey, string> = {
   basic: "기본양식",
   samil: "삼일강업양식",

@@ -41,6 +41,7 @@ import {
   TEMPLATE_LABELS,
   STATEMENT_COLUMN_CATALOG,
   labelForColumnKey,
+  presetColumnKeys,
   type StatementColumnKey,
 } from "../utils/statementTemplates";
 import { captureStatementPngDataUrl } from "../utils/renderStatementCapture";
@@ -2063,7 +2064,17 @@ function statementFormatSummary(p: ClientProfile): string {
     return p.custom_statement_columns.map((k) => labelForColumnKey(k)).join(" → ");
   }
   const k = (p.template in TEMPLATE_LABELS ? p.template : "basic") as StatementTemplateKey;
-  return TEMPLATE_LABELS[k] ?? String(p.template);
+  if (k === "custom") return TEMPLATE_LABELS.custom;
+  const chain = presetColumnKeys(k).map((key) => labelForColumnKey(key)).join(" → ");
+  return `${TEMPLATE_LABELS[k]} — ${chain}`;
+}
+
+function columnKeysMatchPreset(
+  cols: StatementColumnKey[],
+  presetId: Exclude<StatementTemplateKey, "custom">
+): boolean {
+  const ref = presetColumnKeys(presetId);
+  return cols.length === ref.length && cols.every((k, i) => k === ref[i]);
 }
 
 function ClientFormatsPanel() {
@@ -2072,6 +2083,7 @@ function ClientFormatsPanel() {
   const [editId, setEditId] = useState<string | null>(null);
   const [draftTemplate, setDraftTemplate] = useState<StatementTemplateKey>("basic");
   const [draftCols, setDraftCols] = useState<StatementColumnKey[]>([]);
+  const [presetPicker, setPresetPicker] = useState("");
   const [saving, setSaving] = useState(false);
   const [quickName, setQuickName] = useState("");
   const [quickCols, setQuickCols] = useState<StatementColumnKey[]>([]);
@@ -2089,10 +2101,16 @@ function ClientFormatsPanel() {
   const startEdit = (p: ClientProfile) => {
     if (!p.id) return;
     setEditId(p.id);
+    setPresetPicker("");
     const t = (p.template as StatementTemplateKey) || "basic";
     setDraftTemplate(t);
-    const raw = (p.custom_statement_columns || []) as string[];
-    setDraftCols(STATEMENT_COLUMN_CATALOG.filter((c) => raw.includes(c.key)).map((c) => c.key));
+    if (t === "custom") {
+      const raw = (p.custom_statement_columns || []) as string[];
+      const keys = STATEMENT_COLUMN_CATALOG.filter((c) => raw.includes(c.key)).map((c) => c.key);
+      setDraftCols(keys);
+    } else {
+      setDraftCols(presetColumnKeys(t));
+    }
   };
 
   const toggleCol = (key: StatementColumnKey, draft: boolean) => {
@@ -2107,18 +2125,29 @@ function ClientFormatsPanel() {
 
   const saveEdit = async (p: ClientProfile) => {
     if (!p.id) return;
-    const t = draftTemplate;
-    if (t === "custom" && draftCols.length === 0) {
-      alert("커스텀 양식은 헤더를 1개 이상 선택하세요.");
+    if (draftCols.length === 0) {
+      alert("명세표 헤더를 1개 이상 선택하세요.");
       return;
     }
     setSaving(true);
     try {
+      let template: StatementTemplateKey;
+      let customCols: StatementColumnKey[] | null;
+      if (
+        draftTemplate !== "custom" &&
+        columnKeysMatchPreset(draftCols, draftTemplate as Exclude<StatementTemplateKey, "custom">)
+      ) {
+        template = draftTemplate;
+        customCols = null;
+      } else {
+        template = "custom";
+        customCols = draftCols;
+      }
       await setDoc(
         doc(db, "client_profiles", p.id),
         {
-          template: t,
-          custom_statement_columns: t === "custom" ? draftCols : null,
+          template,
+          custom_statement_columns: customCols,
         },
         { merge: true }
       );
@@ -2270,31 +2299,44 @@ function ClientFormatsPanel() {
                     {editId === p.id && (
                       <tr className="bg-indigo-50/50">
                         <td colSpan={3} className="px-4 py-4 space-y-3">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <label className="text-xs font-semibold text-slate-600">양식 종류</label>
-                            <select
-                              className="px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 min-w-[200px]"
-                              value={draftTemplate}
-                              onChange={(e) => {
-                                const t = e.target.value as StatementTemplateKey;
-                                setDraftTemplate(t);
-                                if (t !== "custom") setDraftCols([]);
-                              }}
-                            >
-                              {(Object.entries(TEMPLATE_LABELS) as [StatementTemplateKey, string][]).map(([k, v]) => (
-                                <option key={k} value={k}>{v}</option>
-                              ))}
-                            </select>
-                          </div>
-                          {draftTemplate === "custom" && (
-                            <div className="rounded-xl border border-dashed border-indigo-200 bg-white/80 p-3 space-y-2">
-                              <p className="text-xs font-bold text-indigo-900">표시할 헤더 선택 (순서 유지)</p>
-                              {chipGrid(draftCols, true)}
-                              {draftCols.length === 0 && (
-                                <p className="text-xs text-amber-700">저장하려면 헤더를 1개 이상 선택하세요.</p>
+                          <div className="rounded-xl border border-indigo-200 bg-white p-3 space-y-3 shadow-sm">
+                            <div>
+                              <p className="text-xs font-bold text-indigo-950">명세표 헤더(열) — 편집</p>
+                              <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">
+                                아래에서 표에 넣을 열을 고릅니다. 저장 시 열 구성이 어느 프리셋과 <strong>완전히 같으면</strong> 그 프리셋 이름으로 저장되고, 하나라도 다르면 <strong>커스텀 양식</strong>으로 저장됩니다.
+                              </p>
+                              {draftCols.length > 0 && (
+                                <p className="text-[11px] text-slate-700 mt-2 font-medium bg-slate-50 border border-slate-100 rounded-lg px-2 py-1.5">
+                                  현재 순서: {draftCols.map((k) => labelForColumnKey(k)).join(" → ")}
+                                </p>
                               )}
                             </div>
-                          )}
+                            {chipGrid(draftCols, true)}
+                            {draftCols.length === 0 && (
+                              <p className="text-xs text-amber-700">저장하려면 헤더를 1개 이상 선택하세요.</p>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2 text-xs">
+                            <label className="font-semibold text-slate-600 shrink-0">프리셋 불러오기</label>
+                            <select
+                              className="px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 min-w-[220px] max-w-full"
+                              value={presetPicker}
+                              onChange={(e) => {
+                                const v = e.target.value as Exclude<StatementTemplateKey, "custom"> | "";
+                                setPresetPicker("");
+                                if (!v) return;
+                                setDraftTemplate(v);
+                                setDraftCols(presetColumnKeys(v));
+                              }}
+                            >
+                              <option value="">— 양식 템플릿을 골라 헤더 채우기 —</option>
+                              {(Object.entries(TEMPLATE_LABELS) as [StatementTemplateKey, string][])
+                                .filter(([k]) => k !== "custom")
+                                .map(([k, label]) => (
+                                  <option key={k} value={k}>{label}</option>
+                                ))}
+                            </select>
+                          </div>
                           <div className="flex justify-end gap-2">
                             <Button variant="outline" size="sm" onClick={() => setEditId(null)}>취소</Button>
                             <Button
