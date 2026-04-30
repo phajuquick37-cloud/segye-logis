@@ -42,6 +42,7 @@ import {
   STATEMENT_COLUMN_CATALOG,
   labelForColumnKey,
   presetColumnKeys,
+  statementPresetHeaderLabel,
   type StatementColumnKey,
 } from "../utils/statementTemplates";
 import { captureStatementPngDataUrl } from "../utils/renderStatementCapture";
@@ -93,7 +94,7 @@ interface ArRecord {
 
 const COL_LABEL: Record<ColKey, string> = {
   date: "날짜", client: "거래처명",
-  base_amount: "기본요금(표시용)", discount_amount: "할인요금(표시용)",
+  base_amount: "기본·기본요금(표시용)", discount_amount: "할인요금(표시용)",
   amount: "요금(집계)",
   deliveryfee: "탁송료", payment: "지급(신용·선불·착불)",
   memo: "비고", jeeyo: "적요", bizno: "사업자번호", duedate: "결제일",
@@ -2095,7 +2096,7 @@ function statementFormatSummary(p: ClientProfile): string {
   }
   const k = (p.template in TEMPLATE_LABELS ? p.template : "basic") as StatementTemplateKey;
   if (k === "custom") return TEMPLATE_LABELS.custom;
-  const chain = presetColumnKeys(k).map((key) => labelForColumnKey(key)).join(" → ");
+  const chain = presetColumnKeys(k).map((key) => statementPresetHeaderLabel(k, key)).join(" → ");
   return `${TEMPLATE_LABELS[k]} — ${chain}`;
 }
 
@@ -2337,7 +2338,7 @@ function ClientFormatsPanel() {
                               </p>
                               {draftCols.length > 0 && (
                                 <p className="text-[11px] text-slate-700 mt-2 font-medium bg-slate-50 border border-slate-100 rounded-lg px-2 py-1.5">
-                                  현재 순서: {draftCols.map((k) => labelForColumnKey(k)).join(" → ")}
+                                  현재 순서: {draftCols.map((colKey) => statementPresetHeaderLabel(draftTemplate, colKey)).join(" → ")}
                                 </p>
                               )}
                             </div>

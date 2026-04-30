@@ -201,6 +201,15 @@ export function labelForColumnKey(key: string): string {
   return f?.label ?? key;
 }
 
+/** 프리셋마다 명세 헤더 글자가 카탈로그와 다를 때 (예: 녹원 「기본」) */
+export function statementPresetHeaderLabel(
+  presetId: StatementTemplateKey,
+  key: StatementColumnKey
+): string {
+  if (presetId === "nokwon" && key === "base_fee") return "기본";
+  return labelForColumnKey(key);
+}
+
 export function parseColumnKeysFromProfile(raw: unknown): StatementColumnKey[] {
   if (!Array.isArray(raw)) return [];
   return raw.filter((k): k is StatementColumnKey => typeof k === "string" && COLUMN_KEY_SET.has(k));
@@ -313,6 +322,17 @@ function modelFromKeys(
   };
 }
 
+/** 녹원씨앤아이 — 기본요금 칼럼 헤더는 「기본」(엑셀 「기본」열 연동) */
+function nokwonResolvedModel(): ResolvedTemplateModel {
+  const m = modelFromKeys("nokwon", "녹원씨앤아이양식", NOKWON_KEYS, "gray");
+  return {
+    ...m,
+    cols: m.cols.map((c) =>
+      c.key === "base_fee" ? { ...c, header: "기본" } : c
+    ),
+  };
+}
+
 /** 녹원씨앤아이 — 헤더 회색 */
 const NOKWON_KEYS: StatementColumnKey[] = [
   "order_date", "client_name", "round_trip", "dep_dong", "category", "arr_dong",
@@ -338,7 +358,7 @@ const PRESET_MODELS: Record<Exclude<StatementTemplateKey, "custom">, ResolvedTem
   samil: modelFromKeys("samil", "삼일강업양식", ["date_simple", "client_name_legacy", "dep_dong", "arr_dong", "vehicle", "driver_name", "fee", "vehicle_no"], "dark"),
   jiyoo: modelFromKeys("jiyoo", "지유전자양식", ["date_simple", "client_name", "dep_dong", "unload_client", "arr_dong", "vehicle", "fee"], "dark"),
   rapid: modelFromKeys("rapid", "래피드양식", ["date_simple", "dep_dong", "arr_dong", "note", "fee", "vehicle"], "dark"),
-  nokwon: modelFromKeys("nokwon", "녹원씨앤아이양식", NOKWON_KEYS, "gray"),
+  nokwon: nokwonResolvedModel(),
   dabit: modelFromKeys("dabit", "다빛양식", DABIT_KEYS, "dark"),
   book_person: modelFromKeys("book_person", "(개인)북앤북양식", BOOK_PERSON_KEYS, "dark"),
   book_corp: modelFromKeys("book_corp", "(주)북앤북양식", BOOK_CORP_KEYS, "dark"),
