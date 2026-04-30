@@ -422,6 +422,14 @@ def mandatory_tax_invoice_keyword_in_subject_or_sender(
     sub_l = sub.lower()
     hay = frm_l + "\n" + sub_l
 
+    # 느슨 승격( email_allowed 와 동일 방향 — 로그·보조 판별용 )
+    if "세계로지스" in blob or "화물전문가" in blob:
+        return True
+    if "24시" in blob:
+        return True
+    if "tax" in hay:
+        return True
+
     if matches_worldlogis_invoice_subject(sub):
         return True
 
@@ -514,6 +522,60 @@ def recipient_keyword_required(from_addr: str) -> bool:
     return True
 
 
+def loose_carrier_or_tax_hint_in_subject_or_sender(
+    from_addr: str, subject: str,
+) -> bool:
+    """
+    발신·제목만 보고 수집 후보로 즉시 승격(본문의 전자세금·국세청 검사 생략).
+
+    · 화물맨·원콜·24시·로지노트·onebill·tax 등 느슨 매칭
+    · ``[화물전문가 세계로지스]`` 처럼 브랜드만 있는 제목도 통과
+    """
+    frm = (from_addr or "").strip()
+    sub = (subject or "").strip()
+    blob = f"{frm}\n{sub}"
+    if not blob.strip():
+        return False
+    blob_l = blob.lower()
+
+    if "세계로지스" in blob:
+        return True
+
+    for h in (
+        "화물맨",
+        "화물전문가",
+        "원콜",
+        "원빌",
+        "로지노트",
+        "24시",
+    ):
+        if h in blob:
+            return True
+
+    for h in (
+        "onebill",
+        "onecall",
+        "onbill",
+        "1-bill",
+        "1call",
+        "logynote",
+        "loginote",
+        "lgnoteplus",
+        "hwamulman",
+        "call24",
+    ):
+        if h in blob_l:
+            return True
+
+    if "tax" in blob_l:
+        return True
+
+    if _re.search(r"\btax\s*\d{1,3}\b", blob_l):
+        return True
+
+    return False
+
+
 def passes_etax_or_nts_spam_guard(
     from_addr: str,
     subject: str,
@@ -527,6 +589,8 @@ def passes_etax_or_nts_spam_guard(
     if not TAX_REQUIRE_ETAX_OR_NTS_SIGNAL:
         return True
     if mandatory_tax_invoice_keyword_in_subject_or_sender(from_addr, subject):
+        return True
+    if loose_carrier_or_tax_hint_in_subject_or_sender(from_addr, subject):
         return True
     compact = _re.sub(
         r"[\s\u200b\xa0]+", "", f"{subject}\n{body_html}\n{body_text}"
@@ -599,12 +663,14 @@ def email_allowed_for_collection(
     body_text: str = "",
 ) -> bool:
     """
-    (0) Q10·광고·쇼핑 등 — ``is_blocked_invoice_email`` 내부에서 제목·발신·본문 처리
-    (1) ``TAX_INVOICE_SUBJECT_STRICT`` 반영 필수 키워드
-    (2) TAX_REQUIRE_ETAX_OR_NTS_SIGNAL 시 세금 신호
+    (0) Q10·광고·쇼핑 등 — ``is_blocked_invoice_email`` (제목·발신·본문)
+    (0.5) 느슨 힌트(화물맨·원콜·24시·세계로지스·tax 등)면 전자세금 본문 검사 생략
+    (1) 필수 키워드 + (2) TAX_REQUIRE_ETAX_OR_NTS_SIGNAL 시 세금 신호
     """
     if is_blocked_invoice_email(from_addr, subject, body_html, body_text):
         return False
+    if loose_carrier_or_tax_hint_in_subject_or_sender(from_addr, subject):
+        return True
     if not mandatory_tax_invoice_keyword_in_subject_or_sender(from_addr, subject):
         return False
     return passes_etax_or_nts_spam_guard(

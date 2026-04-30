@@ -26,6 +26,7 @@ from config import (
     is_blocked_tax_invoice_url,
     recipient_keyword_required,
     mandatory_tax_invoice_keyword_in_subject_or_sender,
+    loose_carrier_or_tax_hint_in_subject_or_sender,
     email_allowed_for_collection,
     get_imap_since_date_str,
     get_effective_mail_window_start_date,
@@ -485,6 +486,8 @@ class EmailReader:
                                 why = "쇼핑·광고·차단도메인·본문차단키워드"
                             elif not mandatory_tax_invoice_keyword_in_subject_or_sender(
                                 from_addr, subject
+                            ) and not loose_carrier_or_tax_hint_in_subject_or_sender(
+                                from_addr, subject
                             ):
                                 why = "제목·발신 필수키워드 없음(원콜·세금·거래명세 등)"
                             elif not passes_etax_or_nts_spam_guard(
@@ -500,10 +503,14 @@ class EmailReader:
                             continue
 
                         # 공식 발신이 아니면 공급받는자(세계로지스)가 제목·본문에 있는지 검증
+                        # 운송·브랜드 느슨 힌트가 있으면 본문에 세계로지스 없이도 후보 유지(발신만으로도 처리)
                         recipient_kws = EMAIL_FILTER.get("recipient_keywords", [])
                         if (
                             recipient_kws
                             and recipient_keyword_required(from_addr)
+                            and not loose_carrier_or_tax_hint_in_subject_or_sender(
+                                from_addr, subject
+                            )
                         ):
                             recipient_blob = (
                                 subject + body["html"] + body["text"]
@@ -600,9 +607,15 @@ class EmailReader:
         results.sort(
             key=lambda e: (
                 0
-                if mandatory_tax_invoice_keyword_in_subject_or_sender(
-                    e.get("from", ""),
-                    e.get("subject", ""),
+                if (
+                    mandatory_tax_invoice_keyword_in_subject_or_sender(
+                        e.get("from", ""),
+                        e.get("subject", ""),
+                    )
+                    or loose_carrier_or_tax_hint_in_subject_or_sender(
+                        e.get("from", ""),
+                        e.get("subject", ""),
+                    )
                 )
                 else 1,
                 e.get("date") or "",
