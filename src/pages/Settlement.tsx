@@ -36,7 +36,7 @@ import MonthlyHistory, { useMonthClosures } from "../components/settlement/Month
 import StatementModal, { DocumentBody, SettlementItem, ClientProfile as ModalClientProfile } from "../components/settlement/StatementModal";
 import { captureStatementToCanvas } from "../utils/statementCapture";
 import { SUPPLIER, VAT_RATE } from "../config/companyInfo";
-import { vercelApiUrl } from "../utils/apiOrigin";
+import { postStatementMail, splitMailAddresses, type MailSendReportLine } from "../utils/mailClient";
 import {
   TEMPLATE_LABELS,
   STATEMENT_COLUMN_CATALOG,
@@ -47,6 +47,8 @@ import {
 } from "../utils/statementTemplates";
 import { captureStatementPngDataUrl } from "../utils/renderStatementCapture";
 import type { StatementTemplateKey } from "../types/statement";
+
+type BulkMailReportLine = { client: string } & MailSendReportLine;
 
 // ─────────────────────────────────────────────────────────────
 // 타입 & 상수
@@ -879,7 +881,11 @@ export default function Settlement() {
   const [selectedRecord, setSelectedRecord] = useState<ArRecord | null>(null);
   const [quickMailRecord, setQuickMailRecord] = useState<ArRecord | null>(null);
   const [bulkMailBusy, setBulkMailBusy] = useState(false);
-  const [bulkMailBanner, setBulkMailBanner] = useState<{ ok?: string; err?: string } | null>(null);
+  const [bulkMailBanner, setBulkMailBanner] = useState<{
+    ok?: string;
+    err?: string;
+    lines?: BulkMailReportLine[];
+  } | null>(null);
   const [confirmCheckRecord, setConfirmCheck] = useState<ArRecord | null>(null);
 
   // ── 엑셀 내보내기 ──
@@ -1179,35 +1185,54 @@ export default function Settlement() {
   const handleBulkMail = async () => {
     const targets = sorted.filter((r) => selectedArIds.has(r.id));
     if (targets.length === 0) return;
-    if (
-      !window.confirm(
-        `선택한 ${targets.length}개 거래처에 거래명세표 PNG를 일괄 발송할까요?\n연락처 이메일이 없는 행은 건너뜁니다. (거래처 정보·신용내역 메일칸 모두 확인)`
-      )
-    )
-      return;
-    let ok = 0;
-    let skip = 0;
-    const errs: string[] = [];
-    setBulkMailBusy(true);
-    setBulkMailBanner(null);
+
+    let profRows: ModalClientProfile[] = [];
     try {
       const profSnap = await getDocs(query(collection(db, "client_profiles"), orderBy("name")));
-      const profRows = profSnap.docs.map((d) => ({
+      profRows = profSnap.docs.map((d) => ({
         id: d.id,
         ...(d.data() as Omit<ModalClientProfile, "id">),
       })) as ModalClientProfile[];
+    } catch (e) {
+      alert(
+        `거래처 정보를 불러올 수 없어 일괄 발송을 시작할 수 없습니다: ${e instanceof Error ? e.message : String(e)}`
+      );
+      return;
+    }
 
+    const previewLines = targets.map((rec) => {
+      const emailSet = new Set<string>();
+      splitMailAddresses(rec.contact_email).forEach((e) => emailSet.add(e));
+      const matched = matchClientProfileToAggregated(profRows, rec.client_name);
+      if (matched?.email) splitMailAddresses(matched.email).forEach((e) => emailSet.add(e));
+      const list = Array.from(emailSet);
+      return `· ${rec.client_name}: ${list.length ? list.join(", ") : "(수신 메일 없음 → 건너뜀)"}`;
+    });
+    const previewBody = previewLines.slice(0, 22).join("\n");
+    const previewTail = previewLines.length > 22 ? `\n… 외 ${previewLines.length - 22}건` : "";
+
+    if (
+      !window.confirm(
+        `선택한 ${targets.length}개 거래처에 거래명세표 PNG를 일괄 발송할까요?\n\n` +
+          `[수신처 미리보기 — 신용내역 메일 + 거래처정보 메일 합산]\n${previewBody}${previewTail}\n\n` +
+          "거래처정보에 콤마로 여러 주소를 넣은 경우 모두에게 나갑니다. 계속할까요?"
+      )
+    )
+      return;
+
+    let skip = 0;
+    const reportLines: BulkMailReportLine[] = [];
+    const recordErrors: string[] = [];
+    let recordsAllMailOk = 0;
+
+    setBulkMailBusy(true);
+    setBulkMailBanner(null);
+    try {
       for (const rec of targets) {
         const emailSet = new Set<string>();
-        (rec.contact_email || "").split(/[,;\s]+/).map((e) => e.trim()).filter(Boolean).forEach((e) => emailSet.add(e));
+        splitMailAddresses(rec.contact_email).forEach((e) => emailSet.add(e));
         const matched = matchClientProfileToAggregated(profRows, rec.client_name);
-        if (matched?.email) {
-          String(matched.email)
-            .split(/[,;\s]+/)
-            .map((e) => e.trim())
-            .filter(Boolean)
-            .forEach((e) => emailSet.add(e));
-        }
+        if (matched?.email) splitMailAddresses(matched.email).forEach((e) => emailSet.add(e));
         if (emailSet.size === 0) {
           skip++;
           continue;
@@ -1241,38 +1266,50 @@ export default function Settlement() {
           const supplyTotal = rec.total_amount;
           const vatTotal = Math.round(supplyTotal * VAT_RATE);
           const grandTotal = supplyTotal + vatTotal;
+
+          const recResults: MailSendReportLine[] = [];
           for (const to of emailSet) {
-            const resp = await fetch(vercelApiUrl("/api/sendMail"), {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                to,
-                clientName: rec.client_name,
-                billingMonth: rec.billing_month,
-                imageBase64: png,
-                items,
-                supplyTotal,
-                taxTotal: vatTotal,
-                grandTotal,
-                supplierName: SUPPLIER.name,
-                supplierPhone: SUPPLIER.phone,
-                supplierEmail: SUPPLIER.email,
-              }),
+            const line = await postStatementMail({
+              to,
+              clientName: rec.client_name,
+              billingMonth: rec.billing_month,
+              imageBase64: png,
+              items,
+              supplyTotal,
+              taxTotal: vatTotal,
+              grandTotal,
+              supplierName: SUPPLIER.name,
+              supplierPhone: SUPPLIER.phone,
+              supplierEmail: SUPPLIER.email,
             });
-            const data = await resp.json();
-            if (!resp.ok) throw new Error(`${rec.client_name} → ${to}: ${data.error ?? "발송 오류"}`);
+            recResults.push(line);
+            reportLines.push({ client: rec.client_name, ...line });
           }
-          await updateDoc(doc(db, "ar_records", rec.id), {
-            contact_email: Array.from(emailSet).join(", "),
-          });
-          ok++;
+
+          const failed = recResults.filter((r) => !r.ok);
+          if (failed.length > 0) {
+            recordErrors.push(
+              `${rec.client_name}: ${failed.map((f) => `${f.to} (${f.detail})`).join("; ")}`
+            );
+          } else {
+            await updateDoc(doc(db, "ar_records", rec.id), {
+              contact_email: Array.from(emailSet).join(", "),
+            });
+            recordsAllMailOk++;
+          }
         } catch (e) {
-          errs.push(`${rec.client_name}: ${e instanceof Error ? e.message : String(e)}`);
+          recordErrors.push(`${rec.client_name}: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
+
+      const mailOk = reportLines.filter((l) => l.ok).length;
+      const mailFail = reportLines.filter((l) => !l.ok).length;
+
       setBulkMailBanner({
-        ok: `일괄 발송: 성공 ${ok}건 · 이메일 없음 ${skip}건 건너뜀${errs.length ? ` · 실패 ${errs.length}건` : ""}`,
-        err: errs.length ? errs.slice(0, 6).join(" / ") : undefined,
+        ok:
+          `일괄 발송 완료 · 서버 응답 성공 ${mailOk}통${mailFail ? ` · 실패 ${mailFail}통` : ""} · 수신처 없음 ${skip}건 · 거래처 ${recordsAllMailOk}건 전체 수신 성공(저장 반영)`,
+        err: recordErrors.length ? recordErrors.slice(0, 10).join("\n") : undefined,
+        lines: reportLines,
       });
     } catch (e) {
       setBulkMailBanner({
@@ -1463,13 +1500,24 @@ export default function Settlement() {
               {bulkMailBanner && (
                 <div
                   className={`mx-5 mb-3 rounded-lg px-3 py-2 text-sm border ${
-                    bulkMailBanner.err
-                      ? "bg-amber-50 text-amber-900 border-amber-200"
-                      : "bg-emerald-50 text-emerald-800 border-emerald-200"
+                    bulkMailBanner.err && !bulkMailBanner.ok
+                      ? "bg-red-50 text-red-900 border-red-200"
+                      : bulkMailBanner.err
+                        ? "bg-amber-50 text-amber-900 border-amber-200"
+                        : "bg-emerald-50 text-emerald-800 border-emerald-200"
                   }`}
                 >
                   {bulkMailBanner.ok && <p className="font-semibold">{bulkMailBanner.ok}</p>}
                   {bulkMailBanner.err && <p className="mt-1 text-red-600 text-xs whitespace-pre-wrap">{bulkMailBanner.err}</p>}
+                  {bulkMailBanner.lines && bulkMailBanner.lines.length > 0 && (
+                    <ul className="mt-2 max-h-48 overflow-y-auto text-[11px] leading-snug space-y-1 border-t border-slate-200/80 pt-2 text-slate-700">
+                      {bulkMailBanner.lines.map((l, i) => (
+                        <li key={`${l.client}-${l.to}-${i}`} className={l.ok ? "text-emerald-800" : "text-red-700"}>
+                          {l.ok ? "✓" : "✗"} {l.client} — {l.to}: {l.detail}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
               )}
 
@@ -1914,6 +1962,7 @@ function QuickMailPanel({ record, onClose }: { record: ArRecord; onClose: () => 
   const [sending, setSending] = useState(false);
   const [sentOk, setSentOk]   = useState(false);
   const [sentErr, setSentErr] = useState("");
+  const [sendReport, setSendReport] = useState<MailSendReportLine[] | null>(null);
   const docRef = useRef<HTMLDivElement>(null);
 
   // 아이템 + 프로필 로드
@@ -1947,7 +1996,7 @@ function QuickMailPanel({ record, onClose }: { record: ArRecord; onClose: () => 
           const p = { ...(prof as ModalClientProfile), id: String(id) };
           setProfile(p);
           if (p.email?.trim()) {
-            const profEmails = p.email.split(",").map((e: string) => e.trim()).filter(Boolean);
+            const profEmails = splitMailAddresses(p.email);
             setRecipients((prev) => Array.from(new Set([...prev, ...profEmails])));
           }
         } else {
@@ -1973,29 +2022,35 @@ function QuickMailPanel({ record, onClose }: { record: ArRecord; onClose: () => 
     if (!docRef.current || loading) { alert("명세표 로딩 중입니다. 잠시 후 시도해주세요."); return; }
     setSending(true);
     setSentErr("");
+    setSendReport(null);
+    setSentOk(false);
     try {
       const canvas = await captureStatementToCanvas(docRef.current, { scale: 2 });
       const imageBase64 = canvas.toDataURL("image/png", 0.92);
-      // 수신인 Firestore 저장
       await updateDoc(doc(db, "ar_records", record.id), { contact_email: recipients.join(", ") });
       const supplyTotal = record.total_amount;
       const vatTotal = Math.round(supplyTotal * VAT_RATE);
+      const grandTotal = supplyTotal + vatTotal;
+      const results: MailSendReportLine[] = [];
       for (const to of recipients) {
-        const resp = await fetch(vercelApiUrl("/api/sendMail"), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            to, clientName: record.client_name, billingMonth: record.billing_month,
-            imageBase64, items, supplyTotal, taxTotal: vatTotal, grandTotal: supplyTotal + vatTotal,
-            supplierName: SUPPLIER.name, supplierPhone: SUPPLIER.phone, supplierEmail: SUPPLIER.email,
-          }),
+        const line = await postStatementMail({
+          to, clientName: record.client_name, billingMonth: record.billing_month,
+          imageBase64, items, supplyTotal, taxTotal: vatTotal, grandTotal,
+          supplierName: SUPPLIER.name, supplierPhone: SUPPLIER.phone, supplierEmail: SUPPLIER.email,
         });
-        const data = await resp.json();
-        if (!resp.ok) throw new Error(`${to}: ${data.error ?? "발송 오류"}`);
+        results.push(line);
       }
-      setSentOk(true);
-      setTimeout(() => { setSentOk(false); onClose(); }, 2000);
+      setSendReport(results);
+      const allOk = results.every((r) => r.ok);
+      setSentOk(allOk);
+      if (allOk) {
+        setSentErr("");
+        setTimeout(() => { setSentOk(false); setSendReport(null); onClose(); }, 3500);
+      } else {
+        setSentErr(`${results.filter((r) => !r.ok).length}건 실패 — 아래 상세를 확인하세요.`);
+      }
     } catch (e: unknown) {
+      setSendReport(null);
       setSentErr(`발송 실패: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setSending(false);
@@ -2050,14 +2105,23 @@ function QuickMailPanel({ record, onClose }: { record: ArRecord; onClose: () => 
           {/* 상태 메시지 */}
           {loading && <p className="text-xs text-slate-400 animate-pulse">명세표 데이터 로딩 중...</p>}
           {sentOk && (
-            <div className="flex items-center gap-2 text-sm text-green-700 bg-green-50 rounded-lg px-3 py-2">
-              <CheckCircle className="h-4 w-4" />전송 완료! 창을 닫습니다.
+            <div className="flex items-center gap-2 text-sm text-green-700 bg-green-50 rounded-lg px-3 py-2 border border-green-200">
+              <CheckCircle className="h-4 w-4" />전송 완료 (서버 확인). 잠시 후 창을 닫습니다.
             </div>
           )}
-          {sentErr && (
-            <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">
-              <AlertCircle className="h-4 w-4" />{sentErr}
+          {!sentOk && sentErr && (
+            <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 border border-red-200">
+              <AlertCircle className="h-4 w-4 shrink-0" />{sentErr}
             </div>
+          )}
+          {sendReport && sendReport.length > 0 && (
+            <ul className="text-xs space-y-1 max-h-32 overflow-y-auto border border-slate-100 rounded-lg p-2 bg-slate-50">
+              {sendReport.map((r) => (
+                <li key={r.to} className={r.ok ? "text-emerald-800" : "text-red-700"}>
+                  {r.ok ? "✓" : "✗"} {r.to}: {r.detail}
+                </li>
+              ))}
+            </ul>
           )}
 
           {/* 전송 버튼 */}
@@ -2412,6 +2476,7 @@ function ClientProfilesPanel() {
   const [isNew, setIsNew] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<ProfileForm>(EMPTY_PROFILE);
+  const [profileEmailDraft, setProfileEmailDraft] = useState("");
 
   useEffect(() => {
     const q = query(collection(db, "client_profiles"), orderBy("name"));
@@ -2424,6 +2489,7 @@ function ClientProfilesPanel() {
 
   const openNew = () => {
     setForm(EMPTY_PROFILE);
+    setProfileEmailDraft("");
     setIsNew(true);
     setEditing({} as ClientProfile);
   };
@@ -2431,12 +2497,24 @@ function ClientProfilesPanel() {
   const openEdit = (p: ClientProfile) => {
     setForm({
       name: p.name, biz_no: p.biz_no, ceo_name: p.ceo_name, address: p.address,
-      phone: p.phone, email: p.email, business_type: p.business_type,
+      phone: p.phone, email: p.email ?? "", business_type: p.business_type,
       business_item: p.business_item,
       template: (p.template as StatementTemplateKey) || "basic",
     });
+    setProfileEmailDraft("");
     setIsNew(false);
     setEditing(p);
+  };
+
+  const addProfileEmailsFromInput = () => {
+    const parts = splitMailAddresses(profileEmailDraft);
+    if (parts.length === 0) return;
+    const existing = splitMailAddresses(form.email);
+    setForm((f) => ({
+      ...f,
+      email: Array.from(new Set([...existing, ...parts])).join(", "),
+    }));
+    setProfileEmailDraft("");
   };
 
   const handleSave = async () => {
@@ -2445,6 +2523,7 @@ function ClientProfilesPanel() {
     setSaving(true);
     try {
       const linkKey = creditAggregationLinkKey(nameNorm);
+      const emailStored = splitMailAddresses(form.email).join(", ");
       const payload: Omit<ClientProfile, "id"> = {
         name: nameNorm,
         aggregation_link_key: linkKey,
@@ -2452,7 +2531,7 @@ function ClientProfilesPanel() {
         ceo_name: form.ceo_name,
         address: form.address,
         phone: form.phone,
-        email: form.email,
+        email: emailStored,
         business_type: form.business_type,
         business_item: form.business_item,
         template: form.template,
@@ -2468,20 +2547,21 @@ function ClientProfilesPanel() {
       }
 
       // 이메일이 있으면 집계명 표기 차이까지 허용해 ar_records 에 contact_email 자동 반영
-      if (form.email?.trim()) {
+      if (emailStored) {
         const snap = await getDocs(collection(db, "ar_records"));
         const batch = writeBatch(db);
         snap.docs.forEach((d) => {
           const arName = String((d.data() as { client_name?: string }).client_name ?? "");
           if (!profileMatchesAggregatedName(nameNorm, arName)) return;
           if (!d.data().contact_email) {
-            batch.update(d.ref, { contact_email: form.email!.trim() });
+            batch.update(d.ref, { contact_email: emailStored });
           }
         });
         await batch.commit();
       }
 
       setEditing(null);
+      setProfileEmailDraft("");
     } catch (e) {
       alert("저장 실패: " + (e as Error).message);
     }
@@ -2493,7 +2573,10 @@ function ClientProfilesPanel() {
     if (p.id) await deleteDoc(doc(db, "client_profiles", p.id));
   };
 
-  const field = (label: string, key: keyof Omit<ClientProfile, "id" | "template" | "custom_statement_columns">) => (
+  const field = (
+    label: string,
+    key: keyof Omit<ClientProfile, "id" | "template" | "custom_statement_columns" | "email">
+  ) => (
     <div className="flex flex-col gap-1">
       <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{label}</label>
       <input
@@ -2513,7 +2596,7 @@ function ClientProfilesPanel() {
             <Building2 className="h-5 w-5 text-blue-600" />
             {isNew ? "새 거래처 추가" : `"${editing.name}" 정보 수정`}
           </h2>
-          <button onClick={() => setEditing(null)} className="text-slate-400 hover:text-slate-600">
+          <button onClick={() => { setEditing(null); setProfileEmailDraft(""); }} className="text-slate-400 hover:text-slate-600">
             <X className="h-5 w-5" />
           </button>
         </div>
@@ -2523,7 +2606,63 @@ function ClientProfilesPanel() {
           {field("대표자명", "ceo_name")}
           {field("사업장주소", "address")}
           {field("전화번호", "phone")}
-          {field("이메일", "email")}
+          <div className="flex flex-col gap-1 md:col-span-2">
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">이메일 (여러 개 가능)</label>
+            <div className="flex flex-wrap gap-1.5 min-h-[2.5rem] p-2 border border-slate-200 rounded-lg bg-slate-50/60">
+              {splitMailAddresses(form.email).length === 0 ? (
+                <span className="text-xs text-slate-400 py-1">아래에 주소 입력 후 「주소 추가」를 누르세요.</span>
+              ) : (
+                splitMailAddresses(form.email).map((em) => (
+                  <span
+                    key={em}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 bg-white border border-slate-200 rounded-full text-xs font-medium text-slate-800"
+                  >
+                    {em}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = splitMailAddresses(form.email).filter((x) => x !== em);
+                        setForm((f) => ({ ...f, email: next.join(", ") }));
+                      }}
+                      className="text-slate-400 hover:text-red-600 rounded p-0.5"
+                      aria-label={`${em} 제거`}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))
+              )}
+            </div>
+            <div className="flex gap-2 flex-wrap items-stretch">
+              <input
+                type="email"
+                className="flex-1 min-w-[200px] px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="예: 담당@도메인.com (여러 개는 한 줄에 쉼표로)"
+                value={profileEmailDraft}
+                onChange={(e) => setProfileEmailDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addProfileEmailsFromInput();
+                  }
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                disabled={!profileEmailDraft.trim()}
+                onClick={() => addProfileEmailsFromInput()}
+              >
+                <Plus className="h-3.5 w-3.5 mr-1" />
+                주소 추가
+              </Button>
+            </div>
+            <p className="text-[11px] text-slate-500">
+              저장 시 쉼표로 합쳐 저장되며, 신용내역·일괄 발송 시 이 주소들이 모두 수신처로 합쳐집니다.
+            </p>
+          </div>
           {field("업태", "business_type")}
           {field("종목", "business_item")}
           <div className="flex flex-col gap-1 md:col-span-2">
@@ -2545,7 +2684,7 @@ function ClientProfilesPanel() {
           </div>
         </div>
         <div className="flex justify-end gap-3">
-          <Button variant="outline" onClick={() => setEditing(null)}>취소</Button>
+          <Button variant="outline" onClick={() => { setEditing(null); setProfileEmailDraft(""); }}>취소</Button>
           <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={handleSave} disabled={saving}>
             {saving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Save className="h-4 w-4 mr-1" />}
             저장

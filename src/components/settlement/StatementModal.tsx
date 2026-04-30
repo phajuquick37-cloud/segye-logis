@@ -13,7 +13,7 @@ import { captureStatementToCanvas } from "../../utils/statementCapture";
 import { X, Download, Mail, FileSpreadsheet, Printer, CheckCircle, AlertTriangle, Loader2, ImageIcon, Send } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import { SUPPLIER, VAT_RATE } from "../../config/companyInfo";
-import { vercelApiUrl } from "../../utils/apiOrigin";
+import { postStatementMail, type MailSendReportLine } from "../../utils/mailClient";
 import type { SettlementItem, StatementArRecord, StatementClientProfile } from "../../types/statement";
 import {
   excelStatementGreeting,
@@ -411,6 +411,7 @@ export default function StatementModal({
   const [sending, setSending]       = useState(false);
   const [sentOk, setSentOk]         = useState(false);
   const [sentErr, setSentErr]       = useState("");
+  const [sendReport, setSendReport] = useState<MailSendReportLine[] | null>(null);
   const [pdfBusy, setPdfBusy]       = useState(false);
   const [pngBusy, setPngBusy]       = useState(false);
   const docRef = useRef<HTMLDivElement>(null);
@@ -578,33 +579,45 @@ export default function StatementModal({
   const handleSendEmail = async () => {
     if (recipients.length === 0) { setSentErr("이메일 주소를 추가하세요."); return; }
     if (!docRef.current) return;
-    setSending(true); setSentOk(false); setSentErr("");
+    setSending(true); setSentOk(false); setSentErr(""); setSendReport(null);
     try {
       const canvas = await captureStatementToCanvas(docRef.current, { scale: 2 });
       const imageBase64 = canvas.toDataURL("image/png", 0.92);
-      // 담당자 목록 Firestore 저장
       await updateDoc(doc(db, "ar_records", record.id), { contact_email: recipients.join(", ") });
       const supplyTotal = record.total_amount;
       const vatTotal    = Math.round(supplyTotal * VAT_RATE);
+      const grandTotal  = supplyTotal + vatTotal;
 
-      // 모든 담당자에게 순차 발송
+      const results: MailSendReportLine[] = [];
       for (const to of recipients) {
-        const resp = await fetch(vercelApiUrl("/api/sendMail"), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            to, clientName: record.client_name,
-            billingMonth: record.billing_month, imageBase64, items,
-            supplyTotal, taxTotal: vatTotal, grandTotal: supplyTotal + vatTotal,
-            supplierName: SUPPLIER.name, supplierPhone: SUPPLIER.phone, supplierEmail: SUPPLIER.email,
-          }),
+        const line = await postStatementMail({
+          to,
+          clientName: record.client_name,
+          billingMonth: record.billing_month,
+          imageBase64,
+          items,
+          supplyTotal,
+          taxTotal: vatTotal,
+          grandTotal,
+          supplierName: SUPPLIER.name,
+          supplierPhone: SUPPLIER.phone,
+          supplierEmail: SUPPLIER.email,
         });
-        const data = await resp.json();
-        if (!resp.ok) throw new Error(`${to}: ${data.error ?? "발송 오류"}`);
+        results.push(line);
       }
-      setSentOk(true);
+      setSendReport(results);
+      const allOk = results.every((r) => r.ok);
+      setSentOk(allOk);
+      if (allOk) {
+        setSentErr("");
+      } else {
+        const failed = results.filter((r) => !r.ok);
+        setSentErr(`${failed.length}명 발송 실패: ${failed.map((f) => f.to).join(", ")}`);
+      }
     } catch (e: unknown) {
+      setSendReport(null);
       setSentErr(`발송 실패: ${e instanceof Error ? e.message : String(e)}`);
+      setSentOk(false);
     } finally {
       setSending(false);
     }
@@ -750,11 +763,30 @@ export default function StatementModal({
           </div>
 
           {/* 전송 결과 */}
-          {(sentOk || sentErr) && (
-            <div className={`mt-2 flex items-center gap-2 text-sm rounded-lg px-3 py-2 ${sentOk ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-700 border border-red-200"}`}>
-              {sentOk
-                ? <><CheckCircle className="h-4 w-4 shrink-0" />{recipients.length}명에게 거래명세표 PNG 발송 완료</>
-                : <><AlertTriangle className="h-4 w-4 shrink-0" />{sentErr}</>}
+          {(sentOk || sentErr || (sendReport && sendReport.length > 0)) && (
+            <div
+              className={`mt-2 text-sm rounded-lg px-3 py-2 border ${
+                sentOk
+                  ? "bg-green-50 text-green-800 border-green-200"
+                  : sendReport?.some((r) => r.ok)
+                    ? "bg-amber-50 text-amber-900 border-amber-200"
+                    : "bg-red-50 text-red-800 border-red-200"
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                {sentOk
+                  ? <><CheckCircle className="h-4 w-4 shrink-0" />{recipients.length}명에게 서버 응답 기준 발송 완료</>
+                  : <><AlertTriangle className="h-4 w-4 shrink-0" />{sentErr || "일부 실패"}</>}
+              </div>
+              {sendReport && sendReport.length > 0 && (
+                <ul className="mt-2 space-y-1 text-xs text-slate-700 max-h-36 overflow-y-auto border-t border-slate-200/80 pt-2">
+                  {sendReport.map((r) => (
+                    <li key={r.to} className={r.ok ? "text-emerald-800" : "text-red-700"}>
+                      {r.ok ? "✓" : "✗"} {r.to}: {r.detail}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           )}
         </div>

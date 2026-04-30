@@ -208,7 +208,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    await transporter.sendMail({
+    const info = await transporter.sendMail({
       from: `"${supplierName}" <${gmailUser}>`,
       to,
       subject: `[${supplierName}] ${year}년 ${month}월 거래명세서 - ${clientName}`,
@@ -216,7 +216,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       attachments,
     });
 
-    return res.status(200).json({ ok: true, message: "이메일이 성공적으로 발송되었습니다." });
+    return res.status(200).json({
+      ok: true,
+      message: "이메일이 성공적으로 발송되었습니다.",
+      messageId: info.messageId || undefined,
+    });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[sendMail] error:", message);
