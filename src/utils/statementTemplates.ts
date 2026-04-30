@@ -201,12 +201,13 @@ export function labelForColumnKey(key: string): string {
   return f?.label ?? key;
 }
 
-/** 프리셋마다 명세 헤더 글자가 카탈로그와 다를 때 (예: 녹원 「기본」) */
+/** 프리셋마다 명세 헤더 글자가 카탈로그와 다를 때 (녹원: 기본·할인) */
 export function statementPresetHeaderLabel(
   presetId: StatementTemplateKey,
   key: StatementColumnKey
 ): string {
   if (presetId === "nokwon" && key === "base_fee") return "기본";
+  if (presetId === "nokwon" && key === "discount") return "할인";
   return labelForColumnKey(key);
 }
 
@@ -322,14 +323,16 @@ function modelFromKeys(
   };
 }
 
-/** 녹원씨앤아이 — 기본요금 칼럼 헤더는 「기본」(엑셀 「기본」열 연동) */
+/** 녹원씨앤아이 — 「기본」「할인」 헤더(값은 기존 계산: 요금=기본−할인) */
 function nokwonResolvedModel(): ResolvedTemplateModel {
   const m = modelFromKeys("nokwon", "녹원씨앤아이양식", NOKWON_KEYS, "gray");
   return {
     ...m,
-    cols: m.cols.map((c) =>
-      c.key === "base_fee" ? { ...c, header: "기본" } : c
-    ),
+    cols: m.cols.map((c) => {
+      if (c.key === "base_fee") return { ...c, header: "기본" };
+      if (c.key === "discount") return { ...c, header: "할인" };
+      return c;
+    }),
   };
 }
 
