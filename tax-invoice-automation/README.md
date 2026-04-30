@@ -10,11 +10,14 @@
 
 ```
 tax-invoice-automation/
-├── main.py               ← 실행 파일
-├── config.py             ← 설정 (이메일, 사업자번호 등)
-├── email_reader.py       ← Gmail IMAP 이메일 읽기
-├── browser_automation.py ← Playwright 브라우저 자동화
-├── data_extractor.py     ← 데이터 추출 및 JSON 저장
+├── main.py               ← 유일한 CLI 진입점 (1회 수집 / --server / --test / --check-google)
+├── api_server.py         ← FastAPI 앱 (main.py --server 가 로드)
+├── pipeline.py           ← 이메일 → 브라우저 → Firestore tax_invoices (관리자 동기화)
+├── config.py             ← 설정 (IMAP, 사업자번호, Firebase …)
+├── email_reader.py       ← IMAP (한메일·Gmail 등)
+├── browser_automation.py ← Playwright
+├── data_extractor.py     ← OCR·파싱·JSON
+├── firebase_writer.py    ← Firestore + Storage (관리자 페이지 데이터 소스)
 ├── requirements.txt      ← 필요 패키지
 ├── output/               ← 저장 결과 (자동 생성)
 │   └── {년}/{월}/{발신자}/
@@ -46,7 +49,7 @@ playwright install chromium
 
 | 변수 | 설명 |
 |------|------|
-| `TAX_IMAP_EMAIL` / `TAX_IMAP_APP_PASSWORD` | Gmail IMAP (또는 `GMAIL_USER` / `GMAIL_APP_PASSWORD`) |
+| `TAX_IMAP_EMAIL` / `TAX_IMAP_APP_PASSWORD` | **IMAP** (한메일·Gmail 등, 앱 비밀번호). **Gmail REST API 미사용** |
 | `TAX_GOOGLE_CREDENTIALS_PATH` 또는 `GOOGLE_APPLICATION_CREDENTIALS` | Firebase 서비스 계정 JSON 경로 |
 | `FIREBASE_PROJECT_ID`, `FIRESTORE_DATABASE_ID`, `FIREBASE_STORAGE_BUCKET` | (선택) 기본값은 config 내 프로젝트 |
 | `TAX_BUSINESS_NUMBER`, `TAX_COMPANY_NAME` 등 | (선택) 사업자·상호 표기 |
@@ -56,17 +59,38 @@ playwright install chromium
 
 ---
 
+## 세계로지스.com 관리자 연동
+
+수집 결과는 **Firestore `tax_invoices`** 와 Storage에 저장됩니다. 웹 관리자는 **같은 Firebase 프로젝트·같은 Firestore database ID**(`firebase-applet-config.json` 의 `firestoreDatabaseId`)로 실시간 구독합니다. 별도 HTTP 전송 단계는 없습니다.
+
+---
+
+## Google / Firebase 점검
+
+```bash
+python main.py --check-google   # 서비스 계정·project·database·IMAP 요약
+python main.py --test            # IMAP + Firebase + Sheets 실연결 테스트
+```
+
+`--check-google` 은 **Gmail API** 를 호출하지 않습니다. 메일 수집은 **IMAP 전용**입니다.
+
+---
+
 ## ▶️ 실행 방법
 
 ```bash
-# 이메일 자동 수집 + 처리
+# 이메일 자동 수집 + 처리 + Firestore tax_invoices (관리자 반영)
 python main.py
+
+# Cloud Run 컨테이너 (FastAPI + 스케줄러)
+python main.py --server
 
 # 특정 URL 직접 처리 (테스트용)
 python main.py --url "https://세금계산서링크주소"
 
-# Gmail 연결 테스트만
+# 연결 테스트
 python main.py --test
+python main.py --check-google
 ```
 
 ---

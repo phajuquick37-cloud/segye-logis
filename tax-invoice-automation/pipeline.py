@@ -8,7 +8,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
-from config import STORAGE_CONFIG
+from config import STORAGE_CONFIG, FIREBASE_ADMIN_CONFIG
 from email_reader import EmailReader
 from browser_automation import TaxInvoiceBrowser
 from data_extractor import process_and_save, save_summary
@@ -100,7 +100,15 @@ async def run_pipeline(manual: bool = False) -> dict:
                 len(all_finals),
             )
         elif firebase_ids:
-            logger.info("Firestore 반영 완료 — 문서 %d개 (관리자 tax_invoices 구독과 동일 DB 필요)", len(firebase_ids))
+            db_id = FIREBASE_ADMIN_CONFIG.get("database_id") or "(default)"
+            logger.info(
+                "세계로지스.com 관리자 표시 경로: Firestore 컬렉션 tax_invoices 에 %d건 저장됨 "
+                "(Firebase project=%s database=%s — 웹앱 firebase-applet-config.json 의 "
+                "projectId·firestoreDatabaseId 와 반드시 동일)",
+                len(firebase_ids),
+                FIREBASE_ADMIN_CONFIG.get("project_id"),
+                db_id,
+            )
 
         # 4. Google Sheets 백업
         sw = SheetsWriter()

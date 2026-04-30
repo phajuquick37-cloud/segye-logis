@@ -25,4 +25,5 @@ RUN mkdir -p output logs
 ENV PORT=8080
 EXPOSE 8080
 
-CMD ["sh", "-c", "exec uvicorn api_server:app --host 0.0.0.0 --port ${PORT:-8080} --log-level info"]
+# Cloud Run: 메인 진입점 main.py — FastAPI(api_server) + 스케줄러 (PORT 환경변수 사용)
+CMD ["sh", "-c", "exec python main.py --server"]
