@@ -36,7 +36,7 @@ import {
 import { useStaffProfile } from "../hooks/useStaffProfile";
 import MonthlyHistory, { useMonthClosures } from "../components/settlement/MonthlyHistory";
 import StatementModal, { DocumentBody, SettlementItem, ClientProfile as ModalClientProfile } from "../components/settlement/StatementModal";
-import { captureStatementToCanvas } from "../utils/statementCapture";
+import { captureStatementDataUrlForEmail } from "../utils/statementCapture";
 import { SUPPLIER, statementSupplyVatGrand, grandTotalVatIncluded } from "../config/companyInfo";
 import { postStatementMail, splitMailAddresses, type MailSendReportLine } from "../utils/mailClient";
 import {
@@ -1310,7 +1310,8 @@ export default function Settlement() {
               item_count: rec.item_count,
             },
             items,
-            profForCapture
+            profForCapture,
+            { forEmail: true }
           );
           const { supplyBase: supplyTotal, vatTotal, grandTotal } = statementSupplyVatGrand(rec);
 
@@ -2154,8 +2155,7 @@ function QuickMailPanel({
     setSendReport(null);
     setSentOk(false);
     try {
-      const canvas = await captureStatementToCanvas(docRef.current, { scale: 2 });
-      const imageBase64 = canvas.toDataURL("image/png", 0.92);
+      const imageBase64 = await captureStatementDataUrlForEmail(docRef.current);
       await updateDoc(doc(db, "ar_records", record.id), { contact_email: recipients.join(", ") });
       const { supplyBase: supplyTotal, vatTotal, grandTotal } = statementSupplyVatGrand(record);
       const results: MailSendReportLine[] = [];

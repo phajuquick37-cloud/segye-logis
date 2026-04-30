@@ -9,7 +9,7 @@ import {
 } from "../../utils/sheetParser";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
-import { captureStatementToCanvas } from "../../utils/statementCapture";
+import { captureStatementToCanvas, captureStatementDataUrlForEmail } from "../../utils/statementCapture";
 import { X, Download, Mail, FileSpreadsheet, Printer, CheckCircle, AlertTriangle, Loader2, ImageIcon, Send } from "lucide-react";
 import { Button } from "../../../components/ui/button";
 import { SUPPLIER, statementSupplyVatGrand } from "../../config/companyInfo";
@@ -584,8 +584,7 @@ export default function StatementModal({
     if (!docRef.current) return;
     setSending(true); setSentOk(false); setSentErr(""); setSendReport(null);
     try {
-      const canvas = await captureStatementToCanvas(docRef.current, { scale: 2 });
-      const imageBase64 = canvas.toDataURL("image/png", 0.92);
+      const imageBase64 = await captureStatementDataUrlForEmail(docRef.current);
       await updateDoc(doc(db, "ar_records", record.id), { contact_email: recipients.join(", ") });
       const { supplyBase: supplyTotal, vatTotal, grandTotal } = statementSupplyVatGrand(record);
 

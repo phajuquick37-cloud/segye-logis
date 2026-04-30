@@ -19,7 +19,23 @@ export async function postStatementMail(payload: Record<string, unknown>): Promi
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
-    const data = (await resp.json()) as { ok?: boolean; message?: string; messageId?: string; error?: string };
+    const raw = await resp.text();
+    let data: { ok?: boolean; message?: string; messageId?: string; error?: string } = {};
+    try {
+      data = raw ? (JSON.parse(raw) as typeof data) : {};
+    } catch {
+      const snippet = raw.trim().slice(0, 320).replace(/\s+/g, " ");
+      return {
+        to,
+        ok: false,
+        detail:
+          `서버가 JSON이 아닌 응답을 반환했습니다 (HTTP ${resp.status}).` +
+          (snippet ? ` ${snippet}` : "") +
+          (resp.status === 413
+            ? " — 첨부(이미지)가 너무 클 수 있습니다. PNG 저장은 그대로 두고 메일은 JPEG·축소본을 씁니다."
+            : ""),
+      };
+    }
     if (!resp.ok) {
       return { to, ok: false, detail: data.error ?? `HTTP ${resp.status}` };
     }

@@ -292,3 +292,37 @@ html, body { background: #ffffff !important; color: #111111 !important; }
     ...rest,
   });
 }
+
+/** 메일 API·Vercel 본문 한도 대비: data URL 문자 수 상한(대략) */
+const MAX_EMAIL_DATA_URL_CHARS = 2_400_000;
+
+/**
+ * 거래명세 메일 첨부용: scale 1 + JPEG, 필요 시 품질·해상도 축소.
+ * (scale 2 PNG는 base64 포함 시 8MB+ 로 Request Entity Too Large 등 비JSON 응답 유발)
+ */
+export async function captureStatementDataUrlForEmail(element: HTMLElement): Promise<string> {
+  let canvas = await captureStatementToCanvas(element, { scale: 1 });
+  const toJpeg = (c: HTMLCanvasElement, q: number) => c.toDataURL("image/jpeg", q);
+  let dataUrl = toJpeg(canvas, 0.82);
+  let q = 0.75;
+  while (dataUrl.length > MAX_EMAIL_DATA_URL_CHARS && q >= 0.52) {
+    dataUrl = toJpeg(canvas, q);
+    q -= 0.06;
+  }
+  if (dataUrl.length > MAX_EMAIL_DATA_URL_CHARS) {
+    const w = Math.max(480, Math.round(canvas.width * 0.68));
+    const h = Math.max(360, Math.round(canvas.height * 0.68));
+    const oc = document.createElement("canvas");
+    oc.width = w;
+    oc.height = h;
+    const ctx = oc.getContext("2d");
+    if (ctx) {
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(canvas, 0, 0, w, h);
+      canvas = oc;
+      dataUrl = toJpeg(canvas, 0.7);
+    }
+  }
+  return dataUrl;
+}

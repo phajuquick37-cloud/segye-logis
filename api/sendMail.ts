@@ -10,6 +10,29 @@ export const config = {
   },
 };
 
+/** Vercel/쉘에서 값에 따옴표를 넣으면 그대로 저장되는 경우가 있어 제거 */
+function stripOuterQuotes(s: string): string {
+  const t = s.trim();
+  if (t.length >= 2) {
+    const a = t[0];
+    const b = t[t.length - 1];
+    if ((a === '"' && b === '"') || (a === "'" && b === "'")) return t.slice(1, -1).trim();
+  }
+  return t;
+}
+
+function formatSmtpUserMessage(raw: string): string {
+  if (/535|BadCredentials|Username and Password not accepted|Invalid login/i.test(raw)) {
+    return (
+      "Gmail 로그인이 거절되었습니다(535). 서버의 GMAIL_USER(전체 주소)와 GMAIL_APP_PASSWORD가 맞는지 확인하세요. " +
+      "일반 Gmail 비밀번호는 SMTP에서 사용할 수 없습니다. 계정에 2단계 인증을 켠 뒤 " +
+      "https://myaccount.google.com/apppasswords 에서 '메일'용 앱 비밀번호 16자를 새로 발급해 Vercel 환경 변수에 저장하세요(따옴표 없이)." +
+      (raw.length ? ` 원문: ${raw.slice(0, 180)}` : "")
+    );
+  }
+  return `이메일 발송 실패: ${raw}`;
+}
+
 interface MailPayload {
   to: string;
   clientName: string;
@@ -45,12 +68,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ error: "필수 파라미터 누락 (to, clientName, billingMonth)" });
   }
 
-  const gmailUser = (process.env.GMAIL_USER || "").trim();
-  const gmailPass = (process.env.GMAIL_APP_PASSWORD || "").replace(/\s/g, "");
+  const gmailUser = stripOuterQuotes(process.env.GMAIL_USER || "").trim();
+  const gmailPass = stripOuterQuotes(process.env.GMAIL_APP_PASSWORD || "").replace(/\s/g, "");
   if (!gmailUser || !gmailPass) {
     return res.status(500).json({
       error: "서버 환경 변수(GMAIL_USER, GMAIL_APP_PASSWORD)가 설정되지 않았습니다.",
     });
+  }
+
+  const lowerUserEarly = gmailUser.toLowerCase();
+  const isDaumFamilyEarly =
+    lowerUserEarly.endsWith("@daum.net") || lowerUserEarly.endsWith("@hanmail.net");
+  if (!isDaumFamilyEarly) {
+    if (gmailPass.length !== 16 || !/^[a-z0-9]{16}$/i.test(gmailPass)) {
+      return res.status(500).json({
+        error:
+          "GMAIL_APP_PASSWORD 형식이 Google 앱 비밀번호와 다릅니다. 공백·따옴표를 제거한 뒤 영숫자 16자만 넣으세요. " +
+          "일반 로그인 비밀번호는 사용할 수 없습니다. https://myaccount.google.com/apppasswords",
+      });
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(gmailUser)) {
+      return res.status(500).json({
+        error: "GMAIL_USER는 발송에 쓰는 Gmail 전체 주소(예: name@gmail.com)여야 합니다.",
+      });
+    }
   }
 
   const [year, month] = billingMonth.split("-");
@@ -58,7 +99,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const fileSafe = String(clientName)
     .replace(/[\\/:*?"<>|]+/g, "_")
     .replace(/\s+/g, "_");
-  const pngFilename = `거래명세서_원본_${fileSafe}_${billingMonth}.png`;
   // 인라인(CID)과 첨부는 동일 바이트 — 첨부로 열면 대부분 메일 앱에서 원본 크기로 볼 수 있음
   const cidRef = `cid:${CID}`;
 
@@ -107,7 +147,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         <td style="padding:0 32px 12px;">
           <p style="font-size:12px;color:#64748b;margin:0 0 10px;line-height:1.5;">
             아래 <strong>이미지를 클릭</strong>하면 원본으로 열릴 수 있습니다(메일 앱에 따라 다를 수 있음).<br>
-            작게만 보이면 이메일 <strong>첨부 PNG</strong>를 열어 원본 크기로 확인하세요.
+            작게만 보이면 이메일 <strong>첨부 파일</strong>을 열어 원본 크기로 확인하세요.
           </p>
           <div style="border:1px solid #e2e8f0;border-radius:10px;overflow:hidden;text-align:center;
                       background:#f8fafc;">
@@ -183,7 +223,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           auth: { user: gmailUser, pass: gmailPass },
         }
       : {
-          service: "gmail",
+          host: "smtp.gmail.com",
+          port: 465,
+          secure: true,
           auth: { user: gmailUser, pass: gmailPass },
         }
   );
@@ -192,18 +234,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   type Attachment = Parameters<typeof transporter.sendMail>[0]["attachments"] extends (infer T)[] | undefined ? T : never;
   const attachments: Attachment[] = [];
   if (imageBase64) {
-    const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, "");
-    const pngBuf = Buffer.from(base64Data, "base64");
+    const mimeMatch = /^data:(image\/(?:png|jpe?g|webp));base64,/i.exec(imageBase64);
+    const contentType = mimeMatch?.[1]?.toLowerCase() ?? "image/png";
+    const ext =
+      contentType === "image/jpeg" || contentType === "image/jpg"
+        ? "jpg"
+        : contentType === "image/webp"
+          ? "webp"
+          : "png";
+    const base64Data = imageBase64.replace(/^data:image\/[\w+.-]+;base64,/i, "");
+    const imgBuf = Buffer.from(base64Data, "base64");
+    const attachNameMain = `거래명세서_${fileSafe}_${billingMonth}.${ext}`;
     attachments.push({
-      filename: `거래명세서_${fileSafe}_${billingMonth}.png`,
-      content: pngBuf,
+      filename: attachNameMain,
+      content: imgBuf,
       cid: CID,
-      contentType: "image/png",
+      contentType,
     });
     attachments.push({
-      filename: pngFilename,
-      content: pngBuf,
-      contentType: "image/png",
+      filename: `거래명세서_원본_${fileSafe}_${billingMonth}.${ext}`,
+      content: imgBuf,
+      contentType,
     });
   }
 
@@ -224,6 +275,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[sendMail] error:", message);
-    return res.status(500).json({ error: `이메일 발송 실패: ${message}` });
+    return res.status(500).json({ error: formatSmtpUserMessage(message) });
   }
 }
