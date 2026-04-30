@@ -49,8 +49,9 @@ function looksLikeNumericFee(s: string): boolean {
 }
 
 function roundTripCell(item: SettlementItem): string {
-  const dedicated = (item.round_trip ?? "").trim();
-  if (dedicated) {
+  // 왕복 전용 열이 저장돼 있으면(빈 문자열 포함) 그 값만 쓰고 비고·적요로 채우지 않음
+  if (Object.prototype.hasOwnProperty.call(item, "round_trip")) {
+    const dedicated = String(item.round_trip ?? "").trim();
     if (looksLikeNumericFee(dedicated)) return "";
     return dedicated;
   }

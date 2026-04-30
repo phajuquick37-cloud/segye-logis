@@ -567,7 +567,10 @@ function sheetToResult(
       vehicleNo:    str("vehicle_no")   || undefined,
       unloadClient: str("unload_client")|| undefined,
       rowClient:    str("row_client")   || undefined,
-      roundTrip:    str("round_trip")   || undefined,
+      roundTrip:
+        detectedIdx.round_trip !== -1
+          ? str("round_trip")
+          : undefined,
       _original,
     });
   }
@@ -694,7 +697,10 @@ export function reapplyColMap(
       vehicleNo:    str2(get(r._original, "vehicle_no"))   || undefined,
       unloadClient: str2(get(r._original, "unload_client"))|| undefined,
       rowClient:    str2(get(r._original, "row_client"))   || undefined,
-      roundTrip:    str2(get(r._original, "round_trip"))     || undefined,
+      roundTrip:
+        patched.round_trip !== -1
+          ? str2(get(r._original, "round_trip"))
+          : undefined,
       _original:    r._original,
     })).filter((r) => {
       if (isBlankCreditClientName(r.clientName)) return false;

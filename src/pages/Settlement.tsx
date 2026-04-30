@@ -496,7 +496,10 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
         driver:       strOpt("driver", row.driver),
         vehicleNo:    strOpt("vehicle_no", row.vehicleNo),
         unloadClient: strOpt("unload_client", row.unloadClient),
-        roundTrip:    strOpt("round_trip", row.roundTrip),
+        roundTrip:
+          patchedIdx.round_trip !== -1
+            ? String(getVal("round_trip")).trim()
+            : undefined,
         paymentLabel:
           patchedIdx.payment !== -1
             ? normalizePaymentCell(getVal("payment")) || undefined
@@ -631,7 +634,8 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
             if ((row as any).unloadClient) itemData.unload_client= (row as any).unloadClient;
             if ((row as any).rowClient)    itemData.row_client   = (row as any).rowClient;
             if ((row as any).jeeyo)       itemData.jeeyo        = (row as any).jeeyo;
-            if ((row as any).roundTrip)   itemData.round_trip   = (row as any).roundTrip;
+            if ((row as any).roundTrip !== undefined)
+              itemData.round_trip = (row as any).roundTrip;
             if ((row as any).paymentLabel) itemData.pay_type     = (row as any).paymentLabel;
             batch.set(doc(collection(db, "ar_records", arRef.id, "items")), itemData);
           });
