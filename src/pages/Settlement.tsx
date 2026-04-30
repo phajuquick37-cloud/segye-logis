@@ -26,6 +26,7 @@ import {
   normalizeCreditNameForLink,
   isBlankCreditClientName,
   normalizePaymentCell, isCreditPaymentForSettlement,
+  isIncludedStatusForCreditSettlement,
 } from "../utils/sheetParser";
 import {
   detectAllAliases, applyEntitySplit, aggregateToRecords,
@@ -99,6 +100,7 @@ const COL_LABEL: Record<ColKey, string> = {
   base_amount: "기본·기본요금(표시용)", discount_amount: "할인·할인요금(표시용)",
   amount: "요금(집계)",
   deliveryfee: "탁송료", payment: "지급(신용·선불·착불)",
+  row_status: "상태(완료만 집계)",
   memo: "비고", jeeyo: "적요", bizno: "사업자번호", duedate: "결제일",
   row_client: "고객명(상호)",
   departure: "출발동·출발지", destination: "도착동·도착지", vehicle_type: "차량·톤수",
@@ -268,6 +270,7 @@ function ColumnMappingPanel({ result, overrides, onOverride }: {
 }) {
   const REQUIRED: ColKey[] = ["client", "amount", "payment"];
   const OPTIONAL: ColKey[] = [
+    "row_status",
     "deliveryfee", "base_amount", "discount_amount", "duedate", "memo", "jeeyo", "date", "bizno",
     "row_client", "departure", "destination", "round_trip", "vehicle_type", "driver", "vehicle_no", "unload_client",
   ];
@@ -276,7 +279,7 @@ function ColumnMappingPanel({ result, overrides, onOverride }: {
     <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-2">
       <p className="text-sm font-bold text-slate-700">컬럼 매핑 확인</p>
       <p className="text-xs text-slate-500 leading-relaxed">
-        <strong className="text-slate-600">거래처명</strong>이 있어도 <strong className="text-slate-600">지급</strong>이 <strong>선불·착불</strong>이면 월별 신용내역·정산에서 <strong>제외</strong>됩니다. 예) 거래처명 「김희철」, 지급 「선불」→ 집계 안 됨. <strong>「신용」</strong>이 적힌 행만 집계됩니다.
+        <strong className="text-slate-600">거래처명</strong>이 있어도 <strong className="text-slate-600">지급</strong>이 <strong>선불·착불</strong>이면 월별 신용내역·정산에서 <strong>제외</strong>됩니다. 예) 거래처명 「김희철」, 지급 「선불」→ 집계 안 됨. <strong>「신용」</strong>이 적힌 행만 후보가 되며, <strong className="text-slate-700">상태</strong> 열이 있으면 값이 <strong>완료</strong>(배송완료 등)인 행만 요금에 반영하고 <strong>문의·취소</strong> 등은 제외됩니다.
       </p>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
         {([...REQUIRED, ...OPTIONAL] as ColKey[]).map((key) => {
@@ -516,12 +519,20 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
           patchedIdx.payment !== -1
             ? normalizePaymentCell(getVal("payment")) || undefined
             : undefined,
+        statusLabel:
+          patchedIdx.row_status !== -1
+            ? normalizePaymentCell(getVal("row_status")) || ""
+            : undefined,
       };
     });
     const creditRowsOnly = patched.filter((r) => {
       if (isBlankCreditClientName(r.clientName)) return false;
       if (patchedIdx.payment === -1) return false;
-      return isCreditPaymentForSettlement(r.paymentLabel ?? "");
+      if (!isCreditPaymentForSettlement(r.paymentLabel ?? "")) return false;
+      return isIncludedStatusForCreditSettlement(
+        patchedIdx.row_status !== -1 ? r.statusLabel ?? "" : null,
+        patchedIdx.row_status !== -1
+      );
     });
     setRemapEmptyClientDrop(Math.max(0, patched.length - creditRowsOnly.length));
     const split = applyEntitySplit(creditRowsOnly, splitRules);
@@ -740,9 +751,14 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
         )}
         <div className="flex flex-wrap gap-3 text-sm">
           <span className="flex items-center gap-1.5 bg-slate-100 rounded-full px-3 py-1"><FileText className="h-3.5 w-3.5 text-slate-500" /><strong>{currentResult.fileName}</strong></span>
-          <span className="flex items-center gap-1.5 bg-blue-100 text-blue-700 rounded-full px-3 py-1" title="거래처명 열에 값이 있는 행만">
-            <strong>{currentResult.rows.length}행</strong> 신용 마감 집계
+          <span className="flex items-center gap-1.5 bg-blue-100 text-blue-700 rounded-full px-3 py-1" title="지급 신용 + 거래처명 있음 (상태 열이 있으면 완료만 집계)">
+            <strong>{currentResult.rows.length}행</strong> 신용 마감 후보
           </span>
+          {currentResult.skippedNonCompleteStatusRows > 0 && (
+            <span className="flex items-center gap-1.5 bg-orange-50 text-orange-900 rounded-full px-3 py-1 text-xs border border-orange-200" title="상태가 문의·취소·공란·미완료 등인 신용 행">
+              상태 미집계(문의·취소·미완료 등) <strong>{currentResult.skippedNonCompleteStatusRows}행</strong> 제외
+            </span>
+          )}
           {currentResult.skippedNonCreditRows > 0 && (
             <span className="flex items-center gap-1.5 bg-slate-200 text-slate-700 rounded-full px-3 py-1 text-xs" title="거래처명이 공란인 행은 일반 고객으로 보고 제외">
               일반 고객(거래처명 공란) <strong>{currentResult.skippedNonCreditRows}행</strong> 제외
@@ -771,7 +787,7 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
             <span className="font-semibold text-slate-900">신용거래처 마감 규칙</span>
             <span className="block mt-1">
               <strong>거래처명</strong>에 상호가 있어도 <strong>지급</strong>이 <strong>선불·착불·선착불</strong>이면 <strong>월별 신용내역·정산에서 제외</strong>됩니다. (예: 거래처명 「김희철」, 지급 「선불」)
-              <strong>「신용」</strong>이 지급란에 있는 행만 집계됩니다. 지급 열은 컬럼 매핑에서 반드시 지정하세요.
+              <strong>「신용」</strong>인 행만 후보이며, 엑셀에 <strong>상태</strong> 열이 잡히면 값에 <strong>완료</strong>가 들어간 행만 요금에 넣고 <strong>문의·취소</strong>는 신용이어도 집계에서 제외합니다. 지급·상태 열은 컬럼 매핑에서 확인하세요.
             </span>
           </div>
         </div>
@@ -811,7 +827,7 @@ function UploadPanel({ onClose, onSaved }: { onClose: () => void; onSaved: (mont
             <div>
               <span className="font-semibold">거래처 정보 미등록</span>
               <div className="mt-0.5 text-xs">
-                엑셀 <strong>거래처명</strong> + <strong>지급「신용」</strong> 행만 신용 마감에 들어갑니다.
+                엑셀 <strong>거래처명</strong> + <strong>지급「신용」</strong> 행이 후보이며, <strong>상태</strong> 열이 있으면 <strong>완료</strong>만 집계됩니다.
                 잘못 포함된 상호는 <strong>신용내역</strong>에서 체크 후 <strong>선택 삭제</strong>하세요.
               </div>
             </div>

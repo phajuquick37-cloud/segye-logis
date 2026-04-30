@@ -4,7 +4,8 @@ import * as XLSX from "xlsx";
 // 컬럼 키 정의
 // ─────────────────────────────────────────────────────────────
 export type ColKey =
-  | "date" | "client" | "base_amount" | "discount_amount" | "amount" | "deliveryfee" | "payment" | "memo" | "jeeyo" | "bizno" | "duedate"
+  | "date" | "client" | "base_amount" | "discount_amount" | "amount" | "deliveryfee"
+  | "payment" | "row_status" | "memo" | "jeeyo" | "bizno" | "duedate"
   | "departure" | "destination" | "vehicle_type" | "driver" | "vehicle_no"
   | "unload_client" | "row_client" | "round_trip";
 
@@ -51,6 +52,11 @@ export const COL_HINTS: Record<ColKey, string[]> = {
   payment: [
     "지급구분", "결제구분", "수금구분", "결제방법", "수금방법", "정산구분",
     "선착불구분", "지급방식", "결제유형", "paytype", "paymenttype",
+  ],
+  /** 배차/마감 시트 「상태」: 완료만 요금 집계, 문의·취소는 지급이 신용이어도 제외 */
+  row_status: [
+    "상태", "처리상태", "진행상태", "배차상태", "진행 상태",
+    "orderstatus", "deliverystatus",
   ],
   memo: ["비고", "메모", "특이사항", "참고", "내용", "memo", "note", "notes"],
   // 래피드 양식 비고란 등 — 비고 열과 별도
@@ -105,6 +111,8 @@ export interface RawRow {
   roundTrip?: string;
   /** 지급란 원문(신용/선불/착불 등) — 신용 집계 판별용 */
   paymentLabel?: string;
+  /** 상태 열 원문(완료/문의/취소 등) — 매핑된 경우만 집계에 사용 */
+  statusLabel?: string;
   /** 원본 셀 값 전체 (컬럼 헤더 → 값) */
   _original: Record<string, any>;
 }
@@ -117,6 +125,7 @@ export interface DetectedCols {
   amount: string | null;
   deliveryfee: string | null;
   payment: string | null;
+  row_status: string | null;
   memo: string | null;
   jeeyo: string | null;
   bizno: string | null;
@@ -148,6 +157,11 @@ export interface ParseResult {
   skippedNonCreditRows: number;
   /** 지급란이 신용이 아니거나 공란·지급 열 없음으로 제외된 행 수 */
   skippedNonCreditPaymentRows: number;
+  /**
+   * 상태 열이 인식된 경우, 「완료」가 아닌(문의·취소·공란·미완료 등) 신용 행 수.
+   * (집계에는 넣지 않음 — 업로드 패널·재매핑과 동일 규칙)
+   */
+  skippedNonCompleteStatusRows: number;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -304,6 +318,22 @@ export function isCreditPaymentForSettlement(val: unknown): boolean {
   return /신용/.test(c);
 }
 
+/**
+ * 신용 요금 집계 시 상태 열이 매핑된 경우에만 적용.
+ * · 「완료」를 포함하고 문의·취소·미완료가 없으면 포함 (예: 배송완료, 처리완료)
+ * · 문의·취소가 셀에 있으면 지급이 신용이어도 제외
+ * · 열 미매핑이면 상태와 무관하게 기존처럼 지급·신용만으로 판단
+ */
+export function isIncludedStatusForCreditSettlement(cell: unknown, statusColumnMapped: boolean): boolean {
+  if (!statusColumnMapped) return true;
+  const s = normalizePaymentCell(cell).replace(/\s+/g, "");
+  if (!s) return false;
+  if (/문의/u.test(s)) return false;
+  if (/취소/u.test(s)) return false;
+  if (/미완료|미\s*완료/u.test(s)) return false;
+  return /완료/u.test(s);
+}
+
 /** 「지급」 단일 헤더는 지급기한 등과 혼동되지 않게 정확 일치로만 매핑 */
 const PAYMENT_HEADER_EXACT = [
   "지급",
@@ -315,6 +345,13 @@ const PAYMENT_HEADER_EXACT = [
   "정산구분",
   "선착불",
   "선착불구분",
+] as const;
+
+/** 「상태」열 — 지급·신용과 별도로 완료 건만 요금 반영 */
+const STATUS_HEADER_EXACT = [
+  "상태",
+  "처리상태",
+  "진행상태",
 ] as const;
 
 /** 신용 마감 기준 열: 헤더가 이 목록과 정확히 일치하면 최우선 매핑 */
@@ -471,6 +508,21 @@ function sheetToResult(
     return pickBest(COL_HINTS.payment);
   }
 
+  function pickStatusColumn(): number {
+    for (const ph of STATUS_HEADER_EXACT) {
+      const target = norm(ph);
+      for (let i = 0; i < headers.length; i++) {
+        if (usedIdx.has(i)) continue;
+        const hn = norm(String(headers[i] ?? ""));
+        if (hn && hn === target) {
+          usedIdx.add(i);
+          return i;
+        }
+      }
+    }
+    return pickBest(COL_HINTS.row_status);
+  }
+
   const detectedIdx: Record<ColKey, number> = {
     client:       pickClientColumn(),
     base_amount:  pickBest(COL_HINTS.base_amount),
@@ -480,6 +532,7 @@ function sheetToResult(
     date:         pickBest(COL_HINTS.date),
     duedate:      pickBest(COL_HINTS.duedate),
     payment:      pickPaymentColumn(),
+    row_status:   pickStatusColumn(),
     memo:         pickBest(COL_HINTS.memo),
     jeeyo:        pickBest(COL_HINTS.jeeyo),
     bizno:        pickBest(COL_HINTS.bizno),
@@ -521,6 +574,7 @@ function sheetToResult(
     amount:       h("amount"),
     deliveryfee:  h("deliveryfee"),
     payment:      h("payment"),
+    row_status:   h("row_status"),
     memo:         h("memo"),
     jeeyo:        h("jeeyo"),
     bizno:        h("bizno"),
@@ -565,6 +619,10 @@ function sheetToResult(
       continue;
     }
     const paymentLabel = normalizePaymentCell(payRaw) || undefined;
+    const statusLabel =
+      detectedIdx.row_status !== -1
+        ? normalizePaymentCell(get(row, "row_status")) || ""
+        : undefined;
 
     const _original: Record<string, any> = {};
     headers.forEach((h, idx) => { if (h) _original[h] = row[idx]; });
@@ -584,6 +642,7 @@ function sheetToResult(
       amount:       parseAmount(get(row, "amount")),
       deliveryFee:  parseAmount(get(row, "deliveryfee")),
       paymentLabel,
+      statusLabel,
       memo:         str("memo"),
       jeeyo:        str("jeeyo") || undefined,
       bizNo:        str("bizno"),
@@ -603,9 +662,14 @@ function sheetToResult(
     });
   }
 
+  const statusMapped = detectedIdx.row_status !== -1;
+  const skippedNonCompleteStatusRows = statusMapped
+    ? rows.filter((r) => !isIncludedStatusForCreditSettlement(r.statusLabel ?? "", true)).length
+    : 0;
+
   return {
     rows, detected, detectedIdx, fileName, sheetName, warnings,
-    skippedNonCreditRows, skippedNonCreditPaymentRows,
+    skippedNonCreditRows, skippedNonCreditPaymentRows, skippedNonCompleteStatusRows,
   };
 }
 
@@ -613,12 +677,12 @@ function emptyResult(fileName: string, sheetName: string, warnings: string[]): P
   return {
     rows: [],
     detected: {
-      date: null, client: null, base_amount: null, discount_amount: null, amount: null, deliveryfee: null, payment: null, memo: null, jeeyo: null, bizno: null, duedate: null,
+      date: null, client: null, base_amount: null, discount_amount: null, amount: null, deliveryfee: null, payment: null, row_status: null, memo: null, jeeyo: null, bizno: null, duedate: null,
       departure: null, destination: null, vehicle_type: null, driver: null, vehicle_no: null,
       unload_client: null, row_client: null, round_trip: null, allHeaders: [],
     },
     detectedIdx: {
-      date: -1, client: -1, base_amount: -1, discount_amount: -1, amount: -1, deliveryfee: -1, payment: -1, memo: -1, jeeyo: -1, bizno: -1, duedate: -1,
+      date: -1, client: -1, base_amount: -1, discount_amount: -1, amount: -1, deliveryfee: -1, payment: -1, row_status: -1, memo: -1, jeeyo: -1, bizno: -1, duedate: -1,
       departure: -1, destination: -1, vehicle_type: -1, driver: -1, vehicle_no: -1,
       unload_client: -1, row_client: -1, round_trip: -1,
     },
@@ -627,6 +691,7 @@ function emptyResult(fileName: string, sheetName: string, warnings: string[]): P
     warnings,
     skippedNonCreditRows: 0,
     skippedNonCreditPaymentRows: 0,
+    skippedNonCompleteStatusRows: 0,
   };
 }
 
@@ -737,13 +802,45 @@ export function reapplyColMap(
         patched.round_trip !== -1
           ? str2(get(r._original, "round_trip"))
           : undefined,
+      statusLabel:
+        patched.row_status !== -1
+          ? normalizePaymentCell(get(r._original, "row_status")) || ""
+          : undefined,
       _original:    r._original,
     })).filter((r) => {
       if (isBlankCreditClientName(r.clientName)) return false;
       if (patched.payment === -1) return false;
-      return isCreditPaymentForSettlement(get(r._original, "payment"));
+      if (!isCreditPaymentForSettlement(get(r._original, "payment"))) return false;
+      return isIncludedStatusForCreditSettlement(
+        patched.row_status !== -1 ? r.statusLabel ?? "" : null,
+        patched.row_status !== -1
+      );
     });
 
-    return { ...result, rows, detectedIdx: patched };
+    const skippedNonCompleteStatusRows =
+      patched.row_status !== -1
+        ? result.rows.filter((orig) => {
+            const clientName = normalizeCreditClientCell(get(orig._original, "client"));
+            if (isBlankCreditClientName(clientName)) return false;
+            if (patched.payment === -1) return false;
+            if (!isCreditPaymentForSettlement(get(orig._original, "payment"))) return false;
+            const st = normalizePaymentCell(get(orig._original, "row_status")) || "";
+            return !isIncludedStatusForCreditSettlement(st, true);
+          }).length
+        : 0;
+
+    return {
+      ...result,
+      rows,
+      detectedIdx: patched,
+      detected: {
+        ...result.detected,
+        row_status:
+          patched.row_status !== -1
+            ? result.detected.allHeaders[patched.row_status] ?? null
+            : null,
+      },
+      skippedNonCompleteStatusRows,
+    };
   });
 }
