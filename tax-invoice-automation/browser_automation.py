@@ -142,12 +142,138 @@ async def click_issue_approve_hunt(
 
 # ─── 사업자번호 입력 ──────────────────────────────────────────────────────────
 
+# 전국24시·한메일 게이트 등에서 사실상 사업자번호를 넣는 필드 (이름이 PASSWORD 인 경우 다수)
+_BIZ_GATE_INPUT_SELECTORS = (
+    'input[name="PASSWORD"]',
+    'input[name="password"]',
+    "input#PASSWORD",
+    "#PASSWORD",
+    'input[type="password"]',
+)
+
+CARGO24_FROM_MARK = "15997924"
+
+
+def _synthetic_cargo24_html_attachments(email_info: Dict) -> List[Dict]:
+    """
+    email_reader 에 HTML 첨부가 없을 때, 발신에 15997924 가 있으면
+    본문 html 이 첨부 대용인 경우를 보조한다.
+    """
+    if CARGO24_FROM_MARK not in (email_info.get("from") or ""):
+        return []
+    if email_info.get("html_attachments"):
+        return []
+    hb = (email_info.get("html_body") or "").strip()
+    if len(hb) < 150:
+        return []
+    hl = hb.lower()
+    head = hl[:1200]
+    looks_html = bool(
+        hb.lstrip().lower().startswith("<!")
+        or "<html" in head
+        or "<body" in head
+        or "<form" in head
+    )
+    if not looks_html:
+        return []
+    if (
+        "password" not in head
+        and "goview" not in head
+        and "세금" not in hb
+        and "실명" not in hb
+    ):
+        return []
+    return [{"filename": "cargo24_inline_body.html", "html": hb}]
+
+
+async def _try_goview_and_priority_confirm(page: Page) -> bool:
+    """goView() 후 확인·submit 우선 클릭 (세금 뷰어 게이트)."""
+    try:
+        await page.evaluate(
+            """() => {
+                try {
+                    if (typeof goView === 'function') goView();
+                } catch (e) {}
+            }"""
+        )
+        await asyncio.sleep(0.35)
+    except Exception:
+        pass
+    for selector in (
+        "button:has-text('확인')",
+        "a:has-text('확인')",
+        'input[type="submit"]',
+    ):
+        try:
+            loc = page.locator(selector).first
+            if await loc.is_visible(timeout=2200):
+                await loc.scroll_into_view_if_needed()
+                await loc.click(timeout=8000)
+                logger.info("확인(우선) 클릭: %s", selector)
+                try:
+                    await page.wait_for_load_state("domcontentloaded", timeout=35000)
+                except Exception:
+                    pass
+                return True
+        except Exception:
+            continue
+    return False
+
+
 async def find_biz_number_input(page: Page) -> Optional[ElementHandle]:
     """
     공통 속성 기반으로 사업자번호 입력창 탐색
-    input[type='text'], input[type='number'], input[type='tel'],
-    placeholder 키워드, name/id 키워드 순서로 시도
+    PASSWORD(게이트) → text 휴리스틱 → config 선택자 → 일반 input
     """
+    for selector in _BIZ_GATE_INPUT_SELECTORS:
+        try:
+            elements = await page.query_selector_all(selector)
+            for el in elements:
+                if await el.is_visible():
+                    return el
+        except Exception:
+            continue
+
+    try:
+        for el in await page.query_selector_all('input[type="text"]'):
+            if not await el.is_visible():
+                continue
+            if await el.get_attribute("readonly"):
+                continue
+            dis = await el.get_attribute("disabled")
+            if dis is not None and str(dis).lower() not in ("", "false", "0"):
+                continue
+            name = (await el.get_attribute("name") or "").lower()
+            id_ = (await el.get_attribute("id") or "").lower()
+            ph = (await el.get_attribute("placeholder") or "").lower()
+            ml = await el.get_attribute("maxlength")
+            ml_i = int(ml) if ml and ml.isdigit() else 99
+            if ml_i < 10:
+                continue
+            blob = f"{name} {id_} {ph}"
+            if any(
+                k in blob
+                for k in (
+                    "biz",
+                    "reg",
+                    "corp",
+                    "pw",
+                    "pass",
+                    "no",
+                    "num",
+                    "사업자",
+                    "열람",
+                    "인증",
+                    "password",
+                    "실명",
+                )
+            ):
+                return el
+            if 10 <= ml_i <= 14:
+                return el
+    except Exception:
+        pass
+
     for selector in BIZ_NUMBER_INPUT_SELECTORS:
         try:
             elements = await page.query_selector_all(selector)
@@ -157,7 +283,6 @@ async def find_biz_number_input(page: Page) -> Optional[ElementHandle]:
         except Exception:
             continue
 
-    # 최후 수단: 보이는 모든 input
     try:
         inputs = await page.query_selector_all("input:visible")
         for inp in inputs:
@@ -172,8 +297,11 @@ async def find_biz_number_input(page: Page) -> Optional[ElementHandle]:
 
 async def input_business_number(page: Page) -> bool:
     """사업자번호 자동 입력. 성공 시 True 반환."""
-    biz_no = BUSINESS_CONFIG["business_number"]        # 10자리 숫자
-    biz_no_fmt = BUSINESS_CONFIG["business_number_formatted"]  # 141-81-42581
+    biz_no = str(BUSINESS_CONFIG.get("business_number") or "1418142581")
+    biz_no_fmt = str(
+        BUSINESS_CONFIG.get("business_number_formatted")
+        or f"{biz_no[:3]}-{biz_no[3:5]}-{biz_no[5:]}"
+    )
 
     el = await find_biz_number_input(page)
     if not el:
@@ -184,25 +312,40 @@ async def input_business_number(page: Page) -> bool:
         await el.scroll_into_view_if_needed()
         await el.click()
         await el.fill("")
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.15)
 
-        # placeholder로 하이픈 포함 여부 결정
+        inp_type = (await el.get_attribute("type") or "text").lower()
+        inp_name = (await el.get_attribute("name") or "").upper()
+        force_digits_only = inp_type == "password" or inp_name == "PASSWORD"
+
         placeholder = (await el.get_attribute("placeholder") or "").lower()
         max_len_attr = await el.get_attribute("maxlength")
         max_len = int(max_len_attr) if max_len_attr and max_len_attr.isdigit() else 12
 
-        use_formatted = "-" in placeholder or max_len >= 12
-        value_to_type = biz_no_fmt if use_formatted else biz_no
+        if force_digits_only:
+            value_to_type = re.sub(r"\D", "", biz_no) or biz_no
+        else:
+            use_formatted = "-" in placeholder or max_len >= 12
+            value_to_type = biz_no_fmt if use_formatted else (re.sub(r"\D", "", biz_no) or biz_no)
 
-        await el.type(value_to_type, delay=60)
-        logger.info(f"사업자번호 입력 완료: {value_to_type}")
+        await el.fill(value_to_type)
+        try:
+            got = await el.input_value()
+            if not got or re.sub(r"\D", "", got) != re.sub(r"\D", "", value_to_type):
+                await el.click()
+                await el.fill("")
+                await el.type(value_to_type, delay=45)
+        except Exception:
+            await el.type(value_to_type, delay=45)
+
+        logger.info("사업자번호 입력 완료: %s", value_to_type[:20])
         try:
             await el.press("Enter")
-            await asyncio.sleep(0.4)
+            await asyncio.sleep(0.35)
         except Exception:
             try:
                 await page.keyboard.press("Enter")
-                await asyncio.sleep(0.4)
+                await asyncio.sleep(0.35)
             except Exception:
                 pass
         return True
@@ -215,8 +358,11 @@ async def input_business_number(page: Page) -> bool:
 
 async def click_confirm_button(page: Page) -> bool:
     """공통 선택자로 확인/조회 버튼 클릭"""
-    # 버튼 클릭 후 networkidle 대기 60초, 초과 시 domcontentloaded로 폴백
-    _WAIT_MS = 60000
+    if await _try_goview_and_priority_confirm(page):
+        return True
+
+    _DC_WAIT_MS = 35000
+    _NET_WAIT_MS = 22000
     sel_timeout = int(BROWSER_CONFIG.get("confirm_selector_timeout_ms", 10_000))
 
     for selector in CONFIRM_BUTTON_SELECTORS:
@@ -227,28 +373,27 @@ async def click_confirm_button(page: Page) -> bool:
                 await el.click()
                 logger.info(f"확인 버튼 클릭: {selector}")
                 try:
-                    await page.wait_for_load_state("networkidle", timeout=_WAIT_MS)
+                    await page.wait_for_load_state("domcontentloaded", timeout=_DC_WAIT_MS)
                 except Exception:
-                    logger.warning("networkidle 초과 — domcontentloaded로 폴백")
-                    try:
-                        await page.wait_for_load_state("domcontentloaded", timeout=_WAIT_MS)
-                    except Exception:
-                        pass
+                    pass
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=_NET_WAIT_MS)
+                except Exception:
+                    logger.warning("networkidle 초과 — 이미 domcontentloaded 처리됨")
                 return True
         except Exception:
             continue
 
-    # Enter 키 fallback
     try:
         await page.keyboard.press("Enter")
         try:
-            await page.wait_for_load_state("networkidle", timeout=_WAIT_MS)
+            await page.wait_for_load_state("domcontentloaded", timeout=_DC_WAIT_MS)
         except Exception:
-            logger.warning("Enter 후 networkidle 초과 — domcontentloaded로 폴백")
-            try:
-                await page.wait_for_load_state("domcontentloaded", timeout=_WAIT_MS)
-            except Exception:
-                pass
+            pass
+        try:
+            await page.wait_for_load_state("networkidle", timeout=_NET_WAIT_MS)
+        except Exception:
+            pass
         logger.info("Enter 키로 제출")
         return True
     except Exception as e:
@@ -439,57 +584,11 @@ class TaxInvoiceBrowser:
             await self.playwright.stop()
 
     async def _unlock_cargo24_attached_html(self, page: Page) -> None:
-        """전국24시화물콜 등 메일 HTML 첨부: PASSWORD에 사업자번호 입력 후 goView·확인."""
-        biz = str(BUSINESS_CONFIG.get("business_number") or "1418142581")
-        filled = False
-        for sel in (
-            'input[name="PASSWORD"]',
-            'input[name="password"]',
-            "input#PASSWORD",
-            "#PASSWORD",
-            'input[type="password"]',
-        ):
-            try:
-                loc = page.locator(sel).first
-                if await loc.is_visible(timeout=2000):
-                    await loc.fill("")
-                    await loc.fill(biz)
-                    filled = True
-                    logger.info("전국24시 HTML첨부: 사업자번호 입력 (%s)", sel)
-                    break
-            except Exception:
-                continue
-        if not filled:
-            logger.warning("전국24시 HTML첨부: PASSWORD 입력란 없음 — goView/확인만 시도")
-
-        try:
-            await page.evaluate(
-                """() => {
-                    try {
-                        if (typeof goView === 'function') goView();
-                    } catch (e) {}
-                }"""
-            )
-        except Exception as ex:
-            logger.debug("goView 호출: %s", ex)
-
-        await asyncio.sleep(0.7)
-
-        sel_timeout = 2800
-        for selector in CONFIRM_BUTTON_SELECTORS:
-            try:
-                el = await page.wait_for_selector(selector, timeout=sel_timeout, state="visible")
-                if el:
-                    await el.scroll_into_view_if_needed()
-                    await el.click(timeout=8000)
-                    logger.info("전국24시 HTML첨부: 확인 계열 클릭 — %s", selector)
-                    try:
-                        await page.wait_for_load_state("domcontentloaded", timeout=25000)
-                    except Exception:
-                        pass
-                    break
-            except Exception:
-                continue
+        """전국24시화물콜 HTML 첨부·본문: 사업자번호 입력 후 확인(goView 포함)."""
+        logger.info("전국24시 HTML: 사업자번호·확인 게이트 처리")
+        await input_business_number(page)
+        await asyncio.sleep(0.25)
+        await click_confirm_button(page)
 
     async def process_link(
         self,
@@ -585,6 +684,14 @@ class TaxInvoiceBrowser:
                 # 2. 팝업 처리
                 await handle_popups(page)
                 await click_issue_approve_if_present(page)
+
+                if not link_info.get("cargo24_html_attachment"):
+                    if await needs_biz_number(page):
+                        logger.info("🔐 게이트(선처리): 사업자번호 입력·확인")
+                        await input_business_number(page)
+                        await asyncio.sleep(0.25)
+                        await click_confirm_button(page)
+                        await asyncio.sleep(0.45)
 
                 # 3. 초기 스크린샷
                 init_ss = output_dir / "step1_initial.png"
@@ -759,11 +866,12 @@ class TaxInvoiceBrowser:
         """HTML첨부·링크·이미지 순으로 처리."""
         results: List[Dict] = []
         links = email_info.get("links") or []
-        html_attachments = email_info.get("html_attachments") or []
+        merged_html = list(email_info.get("html_attachments") or [])
+        merged_html.extend(_synthetic_cargo24_html_attachments(email_info))
 
         safe_subject = re.sub(r'[\\/:*?"<>|]', '_', email_info.get("subject", "unknown"))[:40]
 
-        for hidx, att in enumerate(html_attachments, 1):
+        for hidx, att in enumerate(merged_html, 1):
             link_dir = base_output_dir / f"{safe_subject}_html{hidx}"
             link_dir.mkdir(parents=True, exist_ok=True)
             raw_name = att.get("filename") or f"invoice_{hidx}.html"
@@ -781,7 +889,7 @@ class TaxInvoiceBrowser:
             logger.info(
                 "\nHTML첨부 처리 (%d/%d): %s",
                 hidx,
-                len(html_attachments),
+                len(merged_html),
                 safe_fn,
             )
             res = await self.process_link(pseudo, link_dir, email_info)
@@ -813,7 +921,7 @@ class TaxInvoiceBrowser:
             logger.info(f"📷 이미지형 메일 감지: [{email_info.get('subject', '')}]")
             return results + await self.process_image_email(email_info, base_output_dir)
 
-        if not html_attachments:
+        if not merged_html:
             logger.warning(
                 f"링크·이미지·HTML첨부 없음 건너뜀: [{email_info.get('subject', '')}]"
             )
