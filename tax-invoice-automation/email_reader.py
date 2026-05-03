@@ -598,15 +598,15 @@ class EmailReader:
                         before_n = len(links)
                         links = [lnk for lnk in links if not is_blocked_tax_invoice_url(lnk.get("url", ""))]
 
-                        # Qoo10 계열 URL 제거 (최종 확정 직전 추가 차단)
-                        links = [
-                            lnk
-                            for lnk in links
-                            if not any(
-                                b in lnk.get("url", "").lower()
-                                for b in QOO10_BLOCK
+                        # 링크 최종 확정 직후: Qoo10 계열 URL 제거
+                        before_qoo10 = len(links)
+                        links = [lnk for lnk in links if not any(b in lnk.get("url", "").lower() for b in QOO10_BLOCK)]
+                        if before_qoo10 > 0 and not links:
+                            logger.info(
+                                "⏭ Qoo10 링크만 있어 제외 — [%s]",
+                                subject[:50],
                             )
-                        ]
+                            continue
 
                         # 이미지형 메일 — 인라인/첨부 이미지 추출
                         images = extract_inline_images(msg)
