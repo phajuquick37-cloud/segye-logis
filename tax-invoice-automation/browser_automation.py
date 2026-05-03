@@ -438,6 +438,59 @@ class TaxInvoiceBrowser:
         if self.playwright:
             await self.playwright.stop()
 
+    async def _unlock_cargo24_attached_html(self, page: Page) -> None:
+        """전국24시화물콜 등 메일 HTML 첨부: PASSWORD에 사업자번호 입력 후 goView·확인."""
+        biz = str(BUSINESS_CONFIG.get("business_number") or "1418142581")
+        filled = False
+        for sel in (
+            'input[name="PASSWORD"]',
+            'input[name="password"]',
+            "input#PASSWORD",
+            "#PASSWORD",
+            'input[type="password"]',
+        ):
+            try:
+                loc = page.locator(sel).first
+                if await loc.is_visible(timeout=2000):
+                    await loc.fill("")
+                    await loc.fill(biz)
+                    filled = True
+                    logger.info("전국24시 HTML첨부: 사업자번호 입력 (%s)", sel)
+                    break
+            except Exception:
+                continue
+        if not filled:
+            logger.warning("전국24시 HTML첨부: PASSWORD 입력란 없음 — goView/확인만 시도")
+
+        try:
+            await page.evaluate(
+                """() => {
+                    try {
+                        if (typeof goView === 'function') goView();
+                    } catch (e) {}
+                }"""
+            )
+        except Exception as ex:
+            logger.debug("goView 호출: %s", ex)
+
+        await asyncio.sleep(0.7)
+
+        sel_timeout = 2800
+        for selector in CONFIRM_BUTTON_SELECTORS:
+            try:
+                el = await page.wait_for_selector(selector, timeout=sel_timeout, state="visible")
+                if el:
+                    await el.scroll_into_view_if_needed()
+                    await el.click(timeout=8000)
+                    logger.info("전국24시 HTML첨부: 확인 계열 클릭 — %s", selector)
+                    try:
+                        await page.wait_for_load_state("domcontentloaded", timeout=25000)
+                    except Exception:
+                        pass
+                    break
+            except Exception:
+                continue
+
     async def process_link(
         self,
         link_info: Dict,
@@ -475,12 +528,16 @@ class TaxInvoiceBrowser:
             email_from=email_info.get("from", ""),
             url=url,
         )
-        if is_excluded_tax_platform(result["platform"]):
+        if is_excluded_tax_platform(result["platform"]) and not link_info.get(
+            "cargo24_html_attachment"
+        ):
             result["error"] = "excluded_platform"
             logger.info(f"🚫 링크 스킵 (제외 플랫폼): {result['platform']}")
             return result
 
-        if _should_skip_browser_for_security_host(url):
+        if _should_skip_browser_for_security_host(url) and not str(url).lower().startswith(
+            "file:"
+        ):
             result["error"] = "security_mail_domain"
             logger.info("⏭ 보안페이지 도메인 건너뜀 — 브라우저 접속 불가: %s", url)
             return result
@@ -523,6 +580,8 @@ class TaxInvoiceBrowser:
                     "⏭ 보안페이지 도메인 건너뜀 — 브라우저 접속 불가: %s", landed
                 )
             else:
+                if link_info.get("cargo24_html_attachment"):
+                    await self._unlock_cargo24_attached_html(page)
                 # 2. 팝업 처리
                 await handle_popups(page)
                 await click_issue_approve_if_present(page)
@@ -697,25 +756,35 @@ class TaxInvoiceBrowser:
         return [result]
 
     async def process_email(self, email_info: Dict, base_output_dir: Path) -> List[Dict]:
-        """이메일의 모든 링크(또는 이미지) 순서대로 처리"""
-        results = []
-        links = email_info.get("links", [])
+        """HTML첨부·링크·이미지 순으로 처리."""
+        results: List[Dict] = []
+        links = email_info.get("links") or []
+        html_attachments = email_info.get("html_attachments") or []
 
-        # ── 이미지형 메일: 링크 없이 첨부 이미지만 있는 경우 ──
-        if not links:
-            if email_info.get("images"):
-                logger.info(f"📷 이미지형 메일 감지: [{email_info.get('subject', '')}]")
-                return await self.process_image_email(email_info, base_output_dir)
-            logger.warning(f"링크도 이미지도 없는 메일 건너뜀: [{email_info.get('subject', '')}]")
-            return []
+        safe_subject = re.sub(r'[\\/:*?"<>|]', '_', email_info.get("subject", "unknown"))[:40]
 
-        # ── 링크형 메일: 각 링크별 브라우저 처리 ──
-        for idx, link_info in enumerate(links, 1):
-            safe_subject = re.sub(r'[\\/:*?"<>|]', '_', email_info.get("subject", "unknown"))[:40]
-            link_dir = base_output_dir / f"{safe_subject}_link{idx}"
-
-            logger.info(f"\n링크 처리 ({idx}/{len(links)}): [{link_info.get('text','')}] {link_info['url'][:60]}")
-            res = await self.process_link(link_info, link_dir, email_info)
+        for hidx, att in enumerate(html_attachments, 1):
+            link_dir = base_output_dir / f"{safe_subject}_html{hidx}"
+            link_dir.mkdir(parents=True, exist_ok=True)
+            raw_name = att.get("filename") or f"invoice_{hidx}.html"
+            safe_fn = re.sub(r'[\\/:*?"<>|]', '_', str(raw_name))
+            if not safe_fn.lower().endswith((".html", ".htm")):
+                safe_fn = f"{safe_fn}.html"
+            path = link_dir / safe_fn
+            path.write_text(att.get("html") or "", encoding="utf-8")
+            file_uri = path.resolve().as_uri()
+            pseudo = {
+                "url": file_uri,
+                "text": str(raw_name),
+                "cargo24_html_attachment": True,
+            }
+            logger.info(
+                "\nHTML첨부 처리 (%d/%d): %s",
+                hidx,
+                len(html_attachments),
+                safe_fn,
+            )
+            res = await self.process_link(pseudo, link_dir, email_info)
             res["email_subject"] = email_info.get("subject")
             res["email_from"] = email_info.get("from")
             res["email_date"] = email_info.get("date")
@@ -724,6 +793,30 @@ class TaxInvoiceBrowser:
             res["text_body"] = email_info.get("text_body", "")
             results.append(res)
 
+        if links:
+            for idx, link_info in enumerate(links, 1):
+                link_dir = base_output_dir / f"{safe_subject}_link{idx}"
+                logger.info(
+                    f"\n링크 처리 ({idx}/{len(links)}): [{link_info.get('text','')}] {link_info['url'][:60]}"
+                )
+                res = await self.process_link(link_info, link_dir, email_info)
+                res["email_subject"] = email_info.get("subject")
+                res["email_from"] = email_info.get("from")
+                res["email_date"] = email_info.get("date")
+                res["rfc_message_id"] = email_info.get("rfc_message_id") or ""
+                res["html_body"] = email_info.get("html_body", "")
+                res["text_body"] = email_info.get("text_body", "")
+                results.append(res)
+            return results
+
+        if email_info.get("images"):
+            logger.info(f"📷 이미지형 메일 감지: [{email_info.get('subject', '')}]")
+            return results + await self.process_image_email(email_info, base_output_dir)
+
+        if not html_attachments:
+            logger.warning(
+                f"링크·이미지·HTML첨부 없음 건너뜀: [{email_info.get('subject', '')}]"
+            )
         return results
 
     async def __aenter__(self):

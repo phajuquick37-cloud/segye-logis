@@ -15,7 +15,7 @@ import logging
 from datetime import datetime, timezone
 from email.header import decode_header
 from email.message import Message
-from email.utils import parsedate_to_datetime
+from email.utils import parsedate_to_datetime, parseaddr
 from typing import List, Dict, Optional
 from zoneinfo import ZoneInfo
 from bs4 import BeautifulSoup
@@ -395,6 +395,76 @@ def extract_inline_images(msg: Message) -> List[Dict]:
     return images
 
 
+# 전국24시화물콜 등 (tax12@15997924.com …) — 링크 대신 HTML 첨부
+CARGO24_SENDER_DOMAIN = "15997924.com"
+
+
+def is_cargo24_email_sender(from_header: str) -> bool:
+    _, addr = parseaddr((from_header or "").strip())
+    if not addr or "@" not in addr:
+        return False
+    return addr.lower().endswith("@" + CARGO24_SENDER_DOMAIN)
+
+
+def extract_html_attachments(msg: Message) -> List[Dict[str, str]]:
+    """
+    HTML 첨부 추출 (text/html 또는 HTML로 식별되는 application/octet-stream).
+    Returns: [{"filename": str, "html": str}, ...]
+    """
+    out: List[Dict[str, str]] = []
+    seen_hashes: set = set()
+
+    for part in msg.walk():
+        if part.is_multipart():
+            continue
+        ct = (part.get_content_type() or "").lower()
+        if ct.startswith(("multipart/", "image/", "audio/", "video/")):
+            continue
+
+        cd = str(part.get("Content-Disposition") or "").lower()
+        filename = ""
+        try:
+            raw_fn = part.get_filename()
+            if raw_fn:
+                filename = decode_str(raw_fn)
+        except Exception:
+            filename = ""
+
+        has_attachment = "attachment" in cd
+        has_inline_named = "inline" in cd and bool(filename)
+        name_htmlish = bool(filename) and filename.lower().endswith((".html", ".htm"))
+        treat_as_attachment = has_attachment or has_inline_named or name_htmlish
+
+        if ct == "text/html":
+            if not treat_as_attachment:
+                continue
+        elif ct in (
+            "application/octet-stream",
+            "application/x-unknown-content-type",
+            "binary/octet-stream",
+        ):
+            if not treat_as_attachment:
+                continue
+        else:
+            continue
+
+        s = _decode_part_to_string(part)
+        if not s or not _sniff_html_content(s):
+            continue
+
+        h = hash(s[:24_000])
+        if h in seen_hashes:
+            continue
+        seen_hashes.add(h)
+
+        safe_name = (filename.strip() or f"invoice_{len(out) + 1}.html").replace("\r", "").replace("\n", "")
+        if not safe_name.lower().endswith((".html", ".htm")):
+            safe_name = f"{safe_name}.html"
+        out.append({"filename": safe_name, "html": s})
+
+    return out
+
+
 # ─── 메인 리더 클래스 ─────────────────────────────────────────────────────────
 
 class EmailReader:
@@ -618,6 +688,13 @@ class EmailReader:
 
                         # 이미지형 메일 — 인라인/첨부 이미지 추출
                         images = extract_inline_images(msg)
+
+                        html_attachments = (
+                            extract_html_attachments(msg)
+                            if is_cargo24_email_sender(from_addr)
+                            else []
+                        )
+
                         # 링크는 있었으나 전부 차단(예: Qoo10)인 경우: 이미지가 있어도 동일 메일로 스팸
                         # (마케팅 이미지 + 쇼핑 링크가 동시에 있는 경우) → 수집하지 않음
                         if before_n > 0 and not links:
@@ -627,12 +704,17 @@ class EmailReader:
                             )
                             continue
 
-                        # 링크도 없고 이미지도 없으면 건너뜀
-                        if not links and not images:
-                            logger.warning(f"링크·이미지 모두 없음 — [{subject}]")
+                        # 링크·이미지·(전국24시) HTML첨부 모두 없으면 건너뜀
+                        if not links and not images and not html_attachments:
+                            logger.warning(f"링크·이미지·HTML첨부 모두 없음 — [{subject}]")
                             continue
 
-                        email_type = "link" if links else "image"
+                        if links:
+                            email_type = "link"
+                        elif html_attachments:
+                            email_type = "html_attachment"
+                        else:
+                            email_type = "image"
                         email_info = {
                             "msg_id": msg_id.decode(),
                             "rfc_message_id": mid,
@@ -641,6 +723,7 @@ class EmailReader:
                             "date": received_date.isoformat(),
                             "links": links,
                             "images": images,
+                            "html_attachments": html_attachments,
                             "email_type": email_type,
                             "html_body": body["html"],
                             "text_body": body["text"],
@@ -649,7 +732,8 @@ class EmailReader:
                         seen_dedupe_keys.add(dedupe_key)
                         logger.info(
                             f"📧 [{subject[:40]}] | 발신: {from_addr[:30]} "
-                            f"| 유형: {email_type} | 링크 {len(links)}개 | 이미지 {len(images)}개"
+                            f"| 유형: {email_type} | 링크 {len(links)}개 | 이미지 {len(images)}개 | "
+                            f"HTML첨부 {len(html_attachments)}개"
                         )
 
                         if EMAIL_FILTER.get("mark_as_read"):
