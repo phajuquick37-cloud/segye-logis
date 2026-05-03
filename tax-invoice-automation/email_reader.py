@@ -72,6 +72,14 @@ IMAGE_EXTENSIONS = (
     ".bmp",
     ".tif",
     ".tiff",
+    ".css",
+    ".js",
+    ".woff",
+    ".woff2",
+    ".ttf",
+    ".eot",
+    ".otf",
+    ".map",
 )
 
 QOO10_BLOCK = (
