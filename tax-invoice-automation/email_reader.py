@@ -61,6 +61,20 @@ def decode_str(value: str) -> str:
 
 # ─── 링크 추출 ────────────────────────────────────────────────────────────────
 
+IMAGE_EXTENSIONS = (
+    ".gif",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+    ".svg",
+    ".ico",
+    ".bmp",
+    ".tif",
+    ".tiff",
+)
+
+
 def extract_button_links(html: str) -> List[Dict]:
     """
     HTML에서 '확인하기', '상세보기' 등 버튼 텍스트를 가진 링크를 우선 추출.
@@ -77,6 +91,11 @@ def extract_button_links(html: str) -> List[Dict]:
 
             if not href or href.startswith("mailto:") or href.startswith("#"):
                 continue
+
+            if any(
+                href.lower().split("?")[0].endswith(ext) for ext in IMAGE_EXTENSIONS
+            ):
+                continue  # 이미지 URL 건너뜀
 
             # 버튼 텍스트 매칭 (높은 우선순위)
             is_button = any(kw in tag_text for kw in button_keywords)
@@ -265,6 +284,8 @@ def extract_urls_deep_scan(msg: Message) -> List[str]:
             continue
         for u in _URL_SCAN_RE.findall(s):
             u = u.rstrip(").,;]'\"")
+            if any(u.lower().split("?")[0].endswith(ext) for ext in IMAGE_EXTENSIONS):
+                continue  # 이미지 URL 건너뜀
             if u not in seen:
                 seen.add(u)
                 found.append(u)
@@ -277,6 +298,8 @@ def extract_all_links(html: str, text: str) -> List[Dict]:
     """
     results = []
     for url in _URL_SCAN_RE.findall(text or ""):
+        if any(url.lower().split("?")[0].endswith(ext) for ext in IMAGE_EXTENSIONS):
+            continue  # 이미지 URL 건너뜀
         results.append({"url": url, "text": "", "priority": 3})
 
     # HTML 모든 링크
@@ -286,7 +309,14 @@ def extract_all_links(html: str, text: str) -> List[Dict]:
             for a in soup.find_all(["a", "area"], href=True):
                 href = a["href"]
                 if href.startswith("http"):
-                    results.append({"url": href, "text": a.get_text(strip=True), "priority": 3})
+                    if any(
+                        href.lower().split("?")[0].endswith(ext)
+                        for ext in IMAGE_EXTENSIONS
+                    ):
+                        continue  # 이미지 URL 건너뜀
+                    results.append(
+                        {"url": href, "text": a.get_text(strip=True), "priority": 3}
+                    )
         except Exception:
             pass
 

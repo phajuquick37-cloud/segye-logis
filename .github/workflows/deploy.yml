@@ -106,10 +106,10 @@ jobs:
           env_updates = {
               "TAX_COLLECT_SECRET": tax_collect.strip(),
               "TAX_EMAIL_SINCE_MIN": "2026-04-10",
-              "TAX_INVOICE_SUBJECT_STRICT": "true",
+              "TAX_INVOICE_SUBJECT_STRICT": "false",
               "TAX_SCHEDULE_INTERVAL_MINUTES": "60",
               "TAX_MAIL_LOOKBACK_DAYS": "30",
-              "TAX_REQUIRE_ETAX_OR_NTS_SIGNAL": "true",
+              "TAX_REQUIRE_ETAX_OR_NTS_SIGNAL": "false",
               "TAX_STARTUP_PIPELINE_DELAY_SEC": "90",
               "TAX_PIPELINE_TIMEOUT_SEC": "3300",
           }
