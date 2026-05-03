@@ -112,6 +112,8 @@ jobs:
               "TAX_REQUIRE_ETAX_OR_NTS_SIGNAL": "false",
               "TAX_STARTUP_PIPELINE_DELAY_SEC": "90",
               "TAX_PIPELINE_TIMEOUT_SEC": "3300",
+              "TAX_IMAP_EMAIL": "phajuquick@hanmail.net",
+              "TAX_IMAP_APP_PASSWORD": "gjeyucewxopshpyb",
           }
 
           cmd = [
