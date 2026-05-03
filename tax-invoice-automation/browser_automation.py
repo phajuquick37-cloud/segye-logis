@@ -22,6 +22,16 @@ from platform_detector import detect_platform, extract_platform_from_page
 
 logger = logging.getLogger(__name__)
 
+# 브라우저로 열면 SecurityMailViewServlet 등 보안 로그인 페이지에서 장시간 대기만 하는 호스트
+SECURITY_PAGE_BROWSER_SKIP_HOSTS = ("tax.15887924.com",)
+
+
+def _should_skip_browser_for_security_host(url: str) -> bool:
+    if not url:
+        return False
+    u = url.lower()
+    return any(host in u for host in SECURITY_PAGE_BROWSER_SKIP_HOSTS)
+
 
 def _attach_image_request_logging(page: Page, label: str) -> None:
     """gif/jpg 등 이미지 요청 URL을 로그로 남김."""
@@ -470,6 +480,11 @@ class TaxInvoiceBrowser:
             logger.info(f"🚫 링크 스킵 (제외 플랫폼): {result['platform']}")
             return result
 
+        if _should_skip_browser_for_security_host(url):
+            result["error"] = "security_mail_domain"
+            logger.info("⏭ 보안페이지 도메인 건너뜀 — 브라우저 접속 불가: %s", url)
+            return result
+
         output_dir.mkdir(parents=True, exist_ok=True)
         page = await self.context.new_page()
         page_tag = (link_info.get("text") or "link")[:24]
@@ -497,94 +512,105 @@ class TaxInvoiceBrowser:
                     # 페이지가 부분 로드된 경우에도 계속 처리
             await asyncio.sleep(2)
 
-            # 2. 팝업 처리
-            await handle_popups(page)
-            await click_issue_approve_if_present(page)
-
-            # 3. 초기 스크린샷
-            init_ss = output_dir / "step1_initial.png"
-            await page.screenshot(path=str(init_ss), full_page=False)
-            result["screenshots"].append(str(init_ss))
-
-            # 4. 사업자번호 입력 (한메일 보안 등 — 최대 2회 시도)
-            for biz_round in range(2):
-                if not await needs_biz_number(page):
-                    break
+            landed = ""
+            try:
+                landed = page.url or ""
+            except Exception:
+                landed = ""
+            if _should_skip_browser_for_security_host(landed):
+                result["error"] = "security_mail_domain"
                 logger.info(
-                    "🔐 사업자번호 입력 화면 감지 (%d/2) — 사장님 번호 입력 후 진행",
-                    biz_round + 1,
+                    "⏭ 보안페이지 도메인 건너뜀 — 브라우저 접속 불가: %s", landed
                 )
-                ok_in = await input_business_number(page)
-                if not ok_in:
-                    logger.warning("사업자 입력창 조작 실패 — 계속 확인/열람 시도")
-                await asyncio.sleep(0.5)
-
-                input_ss = output_dir / f"step2_after_input_r{biz_round}.png"
-                await page.screenshot(path=str(input_ss), full_page=False)
-                result["screenshots"].append(str(input_ss))
-
-                await click_confirm_button(page)
-
-                hunt_ms = int(BROWSER_CONFIG.get("issue_approve_hunt_ms", 30_000))
-                await click_issue_approve_hunt(page, hunt_ms)
-
-                img_ms = int(BROWSER_CONFIG.get("image_load_wait_ms", 30_000))
-                await _wait_for_invoice_images_loaded(page, img_ms)
-                await _log_page_image_elements(page, "after-img-wait")
-
-                await asyncio.sleep(0.5)
-                confirm_ss = output_dir / f"step3_after_confirm_r{biz_round}.png"
-                await page.screenshot(path=str(confirm_ss), full_page=False)
-                result["screenshots"].append(str(confirm_ss))
-
-                await click_issue_approve_if_present(page)
-                await handle_popups(page)
-
-            if await needs_biz_number(page):
-                logger.warning(
-                    "사업자번호 화면이 남아 있을 수 있음 — 추가 승인/열람 버튼 탐색"
-                )
-                await click_issue_approve_hunt(
-                    page,
-                    int(BROWSER_CONFIG.get("issue_approve_hunt_ms", 30_000)),
-                )
-
-            # 재차 팝업 처리
-            await handle_popups(page)
-            await asyncio.sleep(1)
-            await click_issue_approve_if_present(page)
-
-            # 6. 페이지 내 플랫폼 재감지
-            try:
-                page_text_preview = (await page.inner_text("body"))[:300]
-                page_platform = extract_platform_from_page(await page.title(), page_text_preview)
-                if page_platform:
-                    result["platform"] = page_platform
-            except Exception:
-                pass
-
-            # 7. 테이블 감지 + 캡처
-            table_screenshots = await capture_invoice_area(page, output_dir)
-            result["screenshots"].extend(table_screenshots)
-
-            # 8. DOM 데이터 추출
-            result["dom_data"] = await extract_dom_data(page)
-            try:
-                page_url = page.url or ""
-            except Exception:
-                page_url = ""
-            if is_blocked_tax_invoice_url(page_url):
-                result["error"] = "blocked_url_after_redirect"
-                result["success"] = False
-                logger.info(f"🚫 리다이렉트 후 차단 URL — 스킵: {page_url[:80]}")
-            elif is_excluded_tax_platform(result["platform"]):
-                result["error"] = "excluded_platform"
-                result["success"] = False
-                logger.info(f"🚫 제외 플랫폼(페이지 반영 후) — 스킵: {result['platform']}")
             else:
-                result["success"] = True
-            if result["success"]:
-                logger.info(f"✅ 처리 완료 | 플랫폼: {result['platform']} | 스크린샷: {len(result['screenshots'])}개")
+                # 2. 팝업 처리
+                await handle_popups(page)
+                await click_issue_approve_if_present(page)
+
+                # 3. 초기 스크린샷
+                init_ss = output_dir / "step1_initial.png"
+                await page.screenshot(path=str(init_ss), full_page=False)
+                result["screenshots"].append(str(init_ss))
+
+                # 4. 사업자번호 입력 (한메일 보안 등 — 최대 2회 시도)
+                for biz_round in range(2):
+                    if not await needs_biz_number(page):
+                        break
+                    logger.info(
+                        "🔐 사업자번호 입력 화면 감지 (%d/2) — 사장님 번호 입력 후 진행",
+                        biz_round + 1,
+                    )
+                    ok_in = await input_business_number(page)
+                    if not ok_in:
+                        logger.warning("사업자 입력창 조작 실패 — 계속 확인/열람 시도")
+                    await asyncio.sleep(0.5)
+
+                    input_ss = output_dir / f"step2_after_input_r{biz_round}.png"
+                    await page.screenshot(path=str(input_ss), full_page=False)
+                    result["screenshots"].append(str(input_ss))
+
+                    await click_confirm_button(page)
+
+                    hunt_ms = int(BROWSER_CONFIG.get("issue_approve_hunt_ms", 30_000))
+                    await click_issue_approve_hunt(page, hunt_ms)
+
+                    img_ms = int(BROWSER_CONFIG.get("image_load_wait_ms", 30_000))
+                    await _wait_for_invoice_images_loaded(page, img_ms)
+                    await _log_page_image_elements(page, "after-img-wait")
+
+                    await asyncio.sleep(0.5)
+                    confirm_ss = output_dir / f"step3_after_confirm_r{biz_round}.png"
+                    await page.screenshot(path=str(confirm_ss), full_page=False)
+                    result["screenshots"].append(str(confirm_ss))
+
+                    await click_issue_approve_if_present(page)
+                    await handle_popups(page)
+
+                if await needs_biz_number(page):
+                    logger.warning(
+                        "사업자번호 화면이 남아 있을 수 있음 — 추가 승인/열람 버튼 탐색"
+                    )
+                    await click_issue_approve_hunt(
+                        page,
+                        int(BROWSER_CONFIG.get("issue_approve_hunt_ms", 30_000)),
+                    )
+
+                # 재차 팝업 처리
+                await handle_popups(page)
+                await asyncio.sleep(1)
+                await click_issue_approve_if_present(page)
+
+                # 6. 페이지 내 플랫폼 재감지
+                try:
+                    page_text_preview = (await page.inner_text("body"))[:300]
+                    page_platform = extract_platform_from_page(await page.title(), page_text_preview)
+                    if page_platform:
+                        result["platform"] = page_platform
+                except Exception:
+                    pass
+
+                # 7. 테이블 감지 + 캡처
+                table_screenshots = await capture_invoice_area(page, output_dir)
+                result["screenshots"].extend(table_screenshots)
+
+                # 8. DOM 데이터 추출
+                result["dom_data"] = await extract_dom_data(page)
+                try:
+                    page_url = page.url or ""
+                except Exception:
+                    page_url = ""
+                if is_blocked_tax_invoice_url(page_url):
+                    result["error"] = "blocked_url_after_redirect"
+                    result["success"] = False
+                    logger.info(f"🚫 리다이렉트 후 차단 URL — 스킵: {page_url[:80]}")
+                elif is_excluded_tax_platform(result["platform"]):
+                    result["error"] = "excluded_platform"
+                    result["success"] = False
+                    logger.info(f"🚫 제외 플랫폼(페이지 반영 후) — 스킵: {result['platform']}")
+                else:
+                    result["success"] = True
+                if result["success"]:
+                    logger.info(f"✅ 처리 완료 | 플랫폼: {result['platform']} | 스크린샷: {len(result['screenshots'])}개")
 
         except Exception as e:
             result["error"] = str(e)
