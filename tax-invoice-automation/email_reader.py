@@ -15,7 +15,7 @@ import logging
 from datetime import datetime, timezone
 from email.header import decode_header
 from email.message import Message
-from email.utils import parsedate_to_datetime, parseaddr
+from email.utils import parsedate_to_datetime
 from typing import List, Dict, Optional
 from zoneinfo import ZoneInfo
 from bs4 import BeautifulSoup
@@ -395,23 +395,16 @@ def extract_inline_images(msg: Message) -> List[Dict]:
     return images
 
 
-# 전국24시화물콜 등 (tax12@15997924.com …) — 링크 대신 HTML 첨부
-CARGO24_SENDER_DOMAIN = "15997924.com"
+# 전국24시화물콜 — 발신 헤더에 "15997924" 포함 시 HTML 첨부(바이트) 수집
+CARGO24_SENDER_MARK = "15997924"
 
 
-def is_cargo24_email_sender(from_header: str) -> bool:
-    _, addr = parseaddr((from_header or "").strip())
-    if not addr or "@" not in addr:
-        return False
-    return addr.lower().endswith("@" + CARGO24_SENDER_DOMAIN)
-
-
-def extract_html_attachments(msg: Message) -> List[Dict[str, str]]:
+def extract_cargo24_html_attachment_bytes(msg: Message) -> List[bytes]:
     """
-    HTML 첨부 추출 (text/html 또는 HTML로 식별되는 application/octet-stream).
-    Returns: [{"filename": str, "html": str}, ...]
+    Content-Type: text/html 이거나 파일명이 .html/.htm 인 파트의 원본 바이트.
+    Returns: [bytes, ...] — email_info["html_attachments"] 용
     """
-    out: List[Dict[str, str]] = []
+    out: List[bytes] = []
     seen_hashes: set = set()
 
     for part in msg.walk():
@@ -430,37 +423,31 @@ def extract_html_attachments(msg: Message) -> List[Dict[str, str]]:
         except Exception:
             filename = ""
 
-        has_attachment = "attachment" in cd
-        has_inline_named = "inline" in cd and bool(filename)
-        name_htmlish = bool(filename) and filename.lower().endswith((".html", ".htm"))
-        treat_as_attachment = has_attachment or has_inline_named or name_htmlish
+        name_html = bool(filename) and filename.lower().endswith((".html", ".htm"))
+        is_html_ct = ct == "text/html"
 
-        if ct == "text/html":
-            if not treat_as_attachment:
+        if is_html_ct:
+            if not name_html and "attachment" not in cd and "inline" not in cd:
                 continue
-        elif ct in (
-            "application/octet-stream",
-            "application/x-unknown-content-type",
-            "binary/octet-stream",
-        ):
-            if not treat_as_attachment:
+            if "inline" in cd and not filename and not name_html:
                 continue
+        elif name_html:
+            pass
         else:
             continue
 
-        s = _decode_part_to_string(part)
-        if not s or not _sniff_html_content(s):
+        raw = _decode_raw_payload(part)
+        if not raw or len(raw) < 80:
+            continue
+        preview = raw[:24_000].decode("utf-8", errors="ignore")
+        if not _sniff_html_content(preview):
             continue
 
-        h = hash(s[:24_000])
+        h = hash(raw[:50_000])
         if h in seen_hashes:
             continue
         seen_hashes.add(h)
-
-        safe_name = (filename.strip() or f"invoice_{len(out) + 1}.html").replace("\r", "").replace("\n", "")
-        if not safe_name.lower().endswith((".html", ".htm")):
-            safe_name = f"{safe_name}.html"
-        out.append({"filename": safe_name, "html": s})
+        out.append(bytes(raw))
 
     return out
 
@@ -689,9 +676,9 @@ class EmailReader:
                         # 이미지형 메일 — 인라인/첨부 이미지 추출
                         images = extract_inline_images(msg)
 
-                        html_attachments = (
-                            extract_html_attachments(msg)
-                            if is_cargo24_email_sender(from_addr)
+                        html_attachments: List[bytes] = (
+                            extract_cargo24_html_attachment_bytes(msg)
+                            if CARGO24_SENDER_MARK in (from_addr or "")
                             else []
                         )
 

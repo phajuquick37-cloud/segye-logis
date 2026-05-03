@@ -6,7 +6,9 @@
 
 import asyncio
 import logging
+import os
 import re
+import tempfile
 import time
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -151,39 +153,7 @@ _BIZ_GATE_INPUT_SELECTORS = (
     'input[type="password"]',
 )
 
-CARGO24_FROM_MARK = "15997924"
-
-
-def _synthetic_cargo24_html_attachments(email_info: Dict) -> List[Dict]:
-    """
-    email_reader 에 HTML 첨부가 없을 때, 발신에 15997924 가 있으면
-    본문 html 이 첨부 대용인 경우를 보조한다.
-    """
-    if CARGO24_FROM_MARK not in (email_info.get("from") or ""):
-        return []
-    if email_info.get("html_attachments"):
-        return []
-    hb = (email_info.get("html_body") or "").strip()
-    if len(hb) < 150:
-        return []
-    hl = hb.lower()
-    head = hl[:1200]
-    looks_html = bool(
-        hb.lstrip().lower().startswith("<!")
-        or "<html" in head
-        or "<body" in head
-        or "<form" in head
-    )
-    if not looks_html:
-        return []
-    if (
-        "password" not in head
-        and "goview" not in head
-        and "세금" not in hb
-        and "실명" not in hb
-    ):
-        return []
-    return [{"filename": "cargo24_inline_body.html", "html": hb}]
+# 전국24시화물콜: 발신에 15997924 포함 시 email_reader 가 html_attachments(bytes) 전달
 
 
 async def _try_goview_and_priority_confirm(page: Page) -> bool:
@@ -863,43 +833,58 @@ class TaxInvoiceBrowser:
         return [result]
 
     async def process_email(self, email_info: Dict, base_output_dir: Path) -> List[Dict]:
-        """HTML첨부·링크·이미지 순으로 처리."""
+        """전국24시(15997924) HTML 바이트(/tmp) → 링크 → 이미지 순."""
         results: List[Dict] = []
         links = email_info.get("links") or []
-        merged_html = list(email_info.get("html_attachments") or [])
-        merged_html.extend(_synthetic_cargo24_html_attachments(email_info))
-
         safe_subject = re.sub(r'[\\/:*?"<>|]', '_', email_info.get("subject", "unknown"))[:40]
 
-        for hidx, att in enumerate(merged_html, 1):
-            link_dir = base_output_dir / f"{safe_subject}_html{hidx}"
-            link_dir.mkdir(parents=True, exist_ok=True)
-            raw_name = att.get("filename") or f"invoice_{hidx}.html"
-            safe_fn = re.sub(r'[\\/:*?"<>|]', '_', str(raw_name))
-            if not safe_fn.lower().endswith((".html", ".htm")):
-                safe_fn = f"{safe_fn}.html"
-            path = link_dir / safe_fn
-            path.write_text(att.get("html") or "", encoding="utf-8")
-            file_uri = path.resolve().as_uri()
-            pseudo = {
-                "url": file_uri,
-                "text": str(raw_name),
-                "cargo24_html_attachment": True,
-            }
-            logger.info(
-                "\nHTML첨부 처리 (%d/%d): %s",
-                hidx,
-                len(merged_html),
-                safe_fn,
-            )
-            res = await self.process_link(pseudo, link_dir, email_info)
-            res["email_subject"] = email_info.get("subject")
-            res["email_from"] = email_info.get("from")
-            res["email_date"] = email_info.get("date")
-            res["rfc_message_id"] = email_info.get("rfc_message_id") or ""
-            res["html_body"] = email_info.get("html_body", "")
-            res["text_body"] = email_info.get("text_body", "")
-            results.append(res)
+        raw_list = email_info.get("html_attachments") or []
+        first_html_bytes: Optional[bytes] = None
+        if raw_list:
+            head = raw_list[0]
+            if isinstance(head, (bytes, bytearray)):
+                first_html_bytes = bytes(head)
+            elif isinstance(head, dict) and head.get("html"):
+                first_html_bytes = str(head["html"]).encode("utf-8")
+
+        processed_15997924_html = False
+        if first_html_bytes:
+            # ① /tmp/cargo24_XXXXX.html  ② page.goto(file://…) ③ input_business_number
+            # ④ click_confirm_button  ⑤ 세금계산서 로드·캡처 → process_link 가 일괄 수행
+            tmp_root = "/tmp" if os.path.isdir("/tmp") else tempfile.gettempdir()
+            fd, tmp_path = tempfile.mkstemp(prefix="cargo24_", suffix=".html", dir=tmp_root)
+            try:
+                os.write(fd, first_html_bytes)
+            finally:
+                os.close(fd)
+            try:
+                file_uri = Path(tmp_path).resolve().as_uri()
+                link_dir = base_output_dir / f"{safe_subject}_cargo24"
+                link_dir.mkdir(parents=True, exist_ok=True)
+                pseudo = {
+                    "url": file_uri,
+                    "text": "15997924_html_attachment",
+                    "cargo24_html_attachment": True,
+                }
+                logger.info(
+                    "15997924: ①저장 %s (%d bytes) → ②file:// ③사업자입력 ④확인 ⑤캡처",
+                    tmp_path,
+                    len(first_html_bytes),
+                )
+                res = await self.process_link(pseudo, link_dir, email_info)
+                res["email_subject"] = email_info.get("subject")
+                res["email_from"] = email_info.get("from")
+                res["email_date"] = email_info.get("date")
+                res["rfc_message_id"] = email_info.get("rfc_message_id") or ""
+                res["html_body"] = email_info.get("html_body", "")
+                res["text_body"] = email_info.get("text_body", "")
+                results.append(res)
+                processed_15997924_html = True
+            finally:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
 
         if links:
             for idx, link_info in enumerate(links, 1):
@@ -921,7 +906,7 @@ class TaxInvoiceBrowser:
             logger.info(f"📷 이미지형 메일 감지: [{email_info.get('subject', '')}]")
             return results + await self.process_image_email(email_info, base_output_dir)
 
-        if not merged_html:
+        if not processed_15997924_html:
             logger.warning(
                 f"링크·이미지·HTML첨부 없음 건너뜀: [{email_info.get('subject', '')}]"
             )
