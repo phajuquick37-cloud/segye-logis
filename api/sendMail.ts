@@ -21,8 +21,22 @@ function stripOuterQuotes(s: string): string {
   return t;
 }
 
-function formatSmtpUserMessage(raw: string): string {
+/** 발신 SMTP 분기: 한메일·다음은 smtp.daum.net, 그 외는 Gmail SMTP */
+function smtpIsDaumFamily(address: string): boolean {
+  const u = stripOuterQuotes(address).trim().toLowerCase();
+  const host = u.includes("@") ? u.split("@").pop() ?? "" : "";
+  return host === "hanmail.net" || host === "daum.net";
+}
+
+function formatSmtpUserMessage(raw: string, senderWasDaum: boolean): string {
   if (/535|BadCredentials|Username and Password not accepted|Invalid login/i.test(raw)) {
+    if (senderWasDaum) {
+      return (
+        "한메일/다음 SMTP 로그인이 거절되었습니다(535). Vercel의 GMAIL_USER 또는 TAX_IMAP_EMAIL 이 @hanmail.net / @daum.net 전체 주소인지, " +
+        "GMAIL_APP_PASSWORD 또는 TAX_IMAP_APP_PASSWORD 에 한메일·다음 앱 비밀번호(또는 허용된 SMTP용 비밀번호)가 맞는지 확인하세요(smtp.daum.net:465 SSL)." +
+        (raw.length ? ` 원문: ${raw.slice(0, 180)}` : "")
+      );
+    }
     return (
       "Gmail 로그인이 거절되었습니다(535). 서버의 GMAIL_USER(전체 주소)와 GMAIL_APP_PASSWORD가 맞는지 확인하세요. " +
       "일반 Gmail 비밀번호는 SMTP에서 사용할 수 없습니다. 계정에 2단계 인증을 켠 뒤 " +
@@ -68,17 +82,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ error: "필수 파라미터 누락 (to, clientName, billingMonth)" });
   }
 
-  const gmailUser = stripOuterQuotes(process.env.GMAIL_USER || "").trim();
-  const gmailPass = stripOuterQuotes(process.env.GMAIL_APP_PASSWORD || "").replace(/\s/g, "");
+  const gmailUser = stripOuterQuotes(
+    process.env.GMAIL_USER || process.env.TAX_IMAP_EMAIL || ""
+  ).trim();
+  const gmailPass = stripOuterQuotes(
+    process.env.GMAIL_APP_PASSWORD || process.env.TAX_IMAP_APP_PASSWORD || ""
+  ).replace(/\s/g, "");
   if (!gmailUser || !gmailPass) {
     return res.status(500).json({
-      error: "서버 환경 변수(GMAIL_USER, GMAIL_APP_PASSWORD)가 설정되지 않았습니다.",
+      error:
+        "서버 환경 변수가 설정되지 않았습니다. 다음 중 발신에 쓸 주소·비밀번호 조합을 넣으세요: " +
+        "(GMAIL_USER 또는 TAX_IMAP_EMAIL), (GMAIL_APP_PASSWORD 또는 TAX_IMAP_APP_PASSWORD).",
     });
   }
 
-  const lowerUserEarly = gmailUser.toLowerCase();
-  const isDaumFamilyEarly =
-    lowerUserEarly.endsWith("@daum.net") || lowerUserEarly.endsWith("@hanmail.net");
+  const isDaumFamilyEarly = smtpIsDaumFamily(gmailUser);
   if (!isDaumFamilyEarly) {
     if (gmailPass.length !== 16 || !/^[a-z0-9]{16}$/i.test(gmailPass)) {
       return res.status(500).json({
@@ -210,10 +228,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 </body>
 </html>`;
 
-  // ── Nodemailer 트랜스포터 (Gmail: service / 한메일·다음: smtp.daum.net) ──
-  const lowerUser = gmailUser.toLowerCase();
-  const isDaumFamily =
-    lowerUser.endsWith("@daum.net") || lowerUser.endsWith("@hanmail.net");
+  // ── Nodemailer: 한메일·다음 → smtp.daum.net:465 SSL / 그 외 → Gmail SMTP ──
+  const isDaumFamily = smtpIsDaumFamily(gmailUser);
   const transporter = nodemailer.createTransport(
     isDaumFamily
       ? {
@@ -275,6 +291,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("[sendMail] error:", message);
-    return res.status(500).json({ error: formatSmtpUserMessage(message) });
+    return res.status(500).json({ error: formatSmtpUserMessage(message, isDaumFamily) });
   }
 }
