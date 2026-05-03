@@ -74,6 +74,13 @@ IMAGE_EXTENSIONS = (
     ".tiff",
 )
 
+QOO10_BLOCK = (
+    "university.qoo10.jp",
+    "qoo10.jp",
+    "qoo10.com",
+    "qoo10.co.kr",
+)
+
 
 def extract_button_links(html: str) -> List[Dict]:
     """
@@ -590,6 +597,16 @@ class EmailReader:
                         # 차단 URL 제거 (허용 발신자 메일에 마켓/교육 링크가 섞인 경우)
                         before_n = len(links)
                         links = [lnk for lnk in links if not is_blocked_tax_invoice_url(lnk.get("url", ""))]
+
+                        # Qoo10 계열 URL 제거 (최종 확정 직전 추가 차단)
+                        links = [
+                            lnk
+                            for lnk in links
+                            if not any(
+                                b in lnk.get("url", "").lower()
+                                for b in QOO10_BLOCK
+                            )
+                        ]
 
                         # 이미지형 메일 — 인라인/첨부 이미지 추출
                         images = extract_inline_images(msg)
